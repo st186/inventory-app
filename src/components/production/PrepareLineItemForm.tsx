@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react';
 import { PlusCircle } from 'lucide-react';
 import { MOMO_TYPES, getMomoType } from '../../constants/momoTypes';
+import { Button } from '../ui/button';
+import { Checkbox } from '../ui/checkbox';
+import { Field } from '../ui/field';
+import { Input } from '../ui/input';
+import { NativeSelect } from '../ui/select';
+import { useT } from '../../utils/i18n';
+import { momoName } from '../stock/stockShared';
+import { looksLikeGrams } from './ledgerKg';
 
 type Props = {
   disabled?: boolean;
@@ -8,31 +16,32 @@ type Props = {
   onAdd: (momoKey: string, globalPoolQty: number, perTypePoolQty: number) => void | Promise<void>;
 };
 
-// Logs one prepared line item: pick a momo type, log how much of its own pool (stuffing or
-// coating) was just prepared for it. Dough/batter is NOT asked here by default - it's a
-// shared pool logged once for the whole day (see LogSharedPoolForm above this) - except for
-// the rare momo type that needs its own dedicated dough/batter instead of drawing from the
-// shared pool, offered as an explicit opt-in toggle rather than a field that's always there
-// asking to be filled in "just in case". Submits immediately per item (eager-persist)
-// rather than batching into one big form - matches this app's existing pattern elsewhere.
+// Logs one prepared line item: a momo type and how much of its own pool (stuffing or coating)
+// was just prepared for it. Dough/batter is the shared pool (LogSharedPoolForm) unless a type
+// needs its own, offered as an opt-in tick. Saved straight away, one item at a time.
 export function PrepareLineItemForm({ disabled, submitting, onAdd }: Props) {
+  const { t, lang } = useT();
   const [momoKey, setMomoKey] = useState(MOMO_TYPES[0].key);
   const [perTypeQty, setPerTypeQty] = useState('');
   const [hasUniqueGlobal, setHasUniqueGlobal] = useState(false);
   const [uniqueGlobalQty, setUniqueGlobalQty] = useState('');
 
   const momoType = getMomoType(momoKey) || MOMO_TYPES[0];
-  const globalFieldLabel = momoType.globalPoolField === 'dough' ? 'Dough' : 'Batter';
-  const perTypeLabel = momoType.perTypePoolField === 'stuffing' ? 'Stuffing (kg)' : 'Coating Mix (kg)';
+  const globalLabel = momoType.globalPoolField === 'dough' ? t('stock.prod.dough') : t('stock.prod.batter');
+  const globalWord = globalLabel.replace(/ \(.*\)$/, '');
+  const perTypeLabel = momoType.perTypePoolField === 'stuffing' ? t('stock.prod.stuffingKg') : t('stock.prod.coatingKg');
+  const typeName = momoName(lang, momoType.inventoryKey, momoType.label);
 
-  // Switching momo type mid-entry with the toggle still on from a previous type would carry
-  // a stale "unique dough" amount over to a type that never asked for one - reset instead.
+  // A stale "own dough" amount must not carry over to a different type.
   useEffect(() => {
     setHasUniqueGlobal(false);
     setUniqueGlobalQty('');
   }, [momoKey]);
 
+  const grams = looksLikeGrams(perTypeQty) || (hasUniqueGlobal && looksLikeGrams(uniqueGlobalQty));
+
   const handleAdd = async () => {
+    if (grams) return;
     const p = parseFloat(perTypeQty) || 0;
     const g = hasUniqueGlobal ? (parseFloat(uniqueGlobalQty) || 0) : 0;
     if (p <= 0 && g <= 0) return;
@@ -43,80 +52,29 @@ export function PrepareLineItemForm({ disabled, submitting, onAdd }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Log Prepared Batch</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Momo Type</label>
-          <select
-            value={momoKey}
-            onChange={(e) => setMomoKey(e.target.value as typeof MOMO_TYPES[number]['key'])}
-            disabled={disabled}
-            className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-          >
-            {MOMO_TYPES.map((t) => (
-              <option key={t.key} value={t.key}>{t.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">{perTypeLabel}</label>
-          <input
-            type="number"
-            step="0.01"
-            value={perTypeQty}
-            onChange={(e) => setPerTypeQty(e.target.value)}
-            disabled={disabled}
-            placeholder="0.00"
-            className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-          />
-        </div>
-        <div className="flex items-center h-[52px]">
-          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={hasUniqueGlobal}
-              onChange={(e) => setHasUniqueGlobal(e.target.checked)}
-              disabled={disabled}
-              className="w-4 h-4 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
-            />
-            Unique {globalFieldLabel.toLowerCase()} for this?
-          </label>
-        </div>
+    <section className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={t('stock.prod.momoType')}>
+          <NativeSelect value={momoKey} onChange={(e) => setMomoKey(e.target.value as typeof MOMO_TYPES[number]['key'])} disabled={disabled}>
+            {MOMO_TYPES.map((m) => <option key={m.key} value={m.key}>{momoName(lang, m.inventoryKey, m.label)}</option>)}
+          </NativeSelect>
+        </Field>
+        <Field label={perTypeLabel} error={looksLikeGrams(perTypeQty) ? t('stock.prod.looksLikeGrams') : undefined}>
+          <Input type="text" inputMode="decimal" className="num" value={perTypeQty} onChange={(e) => setPerTypeQty(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
+        </Field>
       </div>
-
+      <label htmlFor="prep-unique" className="flex min-h-11 cursor-pointer items-center gap-3">
+        <Checkbox id="prep-unique" checked={hasUniqueGlobal} onCheckedChange={(v) => setHasUniqueGlobal(v === true)} disabled={disabled} />
+        <span className="text-body-sm text-text">{t('stock.prod.uniqueDough', { pool: globalWord.toLowerCase() })}</span>
+      </label>
       {hasUniqueGlobal && (
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {globalFieldLabel} for {momoType.label} only (kg)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              value={uniqueGlobalQty}
-              onChange={(e) => setUniqueGlobalQty(e.target.value)}
-              disabled={disabled}
-              placeholder="0.00"
-              autoFocus
-              className="w-full px-4 py-3 text-base border-2 border-orange-300 bg-orange-50 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Kept separate from the shared {globalFieldLabel.toLowerCase()} pool above - won't count against or draw from it.
-            </p>
-          </div>
-        </div>
+        <Field label={t('stock.prod.uniqueDoughKg', { pool: globalWord, type: typeName })} helper={t('stock.prod.uniqueDoughHint')} error={looksLikeGrams(uniqueGlobalQty) ? t('stock.prod.looksLikeGrams') : undefined}>
+          <Input type="text" inputMode="decimal" className="num" value={uniqueGlobalQty} onChange={(e) => setUniqueGlobalQty(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" autoFocus />
+        </Field>
       )}
-
-      <button
-        type="button"
-        onClick={handleAdd}
-        disabled={disabled || submitting || (!perTypeQty && !(hasUniqueGlobal && uniqueGlobalQty))}
-        className="mt-4 px-6 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-semibold text-sm"
-      >
-        <PlusCircle className="w-4 h-4" />
-        {submitting ? 'Adding…' : 'Add to Today\'s Batches'}
-      </button>
-    </div>
+      <Button variant="secondary" className="self-start" leadingIcon={<PlusCircle />} loading={submitting} disabled={disabled || grams || (!perTypeQty && !(hasUniqueGlobal && uniqueGlobalQty))} onClick={handleAdd}>
+        {t('stock.prod.addToBatches')}
+      </Button>
+    </section>
   );
 }

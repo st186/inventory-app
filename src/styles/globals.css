@@ -1,52 +1,308 @@
-@custom-variant dark (&:is(.dark *));
+/*
+ * "Warm ledger" design tokens.
+ *
+ * White surfaces on warm paper, ink text, one action colour (deep chilli orange) and the
+ * bunny's saffron as a small brand accent. Status colours appear only when something has a
+ * status, and always with an icon or a word.
+ *
+ * Every colour lives here as a CSS variable on :root and is exposed to Tailwind through
+ * `@theme inline` below, so components write `bg-surface`, `text-text-2`, `border-border-strong`,
+ * `bg-success-soft` and so on - never raw hex or palette classes. The `[data-theme="dark"]` block
+ * below redefines the same variables for the dark theme (owner, 28 Oct 2026: "night mode"),
+ * chosen in the Account sheet - utils/appTheme.ts sets data-theme on <html>.
+ */
+
+@custom-variant dark (&:is([data-theme="dark"] *));
 
 :root {
+  /* Brand */
+  --brand-ink: #1C1917;
+  --brand-saffron: #F7B24C;          /* bunny cheeks: decoration only, never text on white */
+  --brand-saffron-soft: #FEF3DC;     /* "brand" chips, highlights */
+  --brand-saffron-border: #F7D9A8;
+
+  /* Primary action: white text on it is 5.18:1 */
+  --primary: #C2410C;
+  --primary-hover: #9A3412;
+  --primary-pressed: #7C2D12;
+  --primary-soft: #FFF1E7;           /* active nav pill, selected day / chip; primary text 4.68:1 */
+  --on-primary: #FFFFFF;
+
+  /* Neutrals (warm stone) */
+  --bg: #FAF8F5;                     /* app background ("paper") */
+  --surface: #FFFFFF;                /* cards, sheets, bars */
+  --surface-2: #F5F3F0;              /* icon wells, segmented track, pressed rows */
+  --surface-3: #ECE9E4;              /* avatars, pressed state on surface-2 */
+  --border: #E7E5E4;
+  --border-strong: #D6D3D1;          /* input borders, dividers that must show */
+  --text: #1C1917;                   /* 17.5:1 */
+  --text-2: #57534E;                 /* secondary, 7.6:1 */
+  --text-3: #78716C;                 /* captions and meta, 4.8:1 on white */
+  --text-disabled: #A8A29E;
+  --scrim: rgb(28 25 23 / 0.5);
+  --on-scrim: #FFFFFF;               /* text and icons over a photo or the scrim, in both themes */
+
+  /* Semantic: always paired with an icon or a word */
+  --success: #15803D;
+  --success-soft: #F0FDF4;
+  --success-border: #BBF7D0;
+  --warning: #A16207;
+  --warning-soft: #FEFCE8;
+  --warning-border: #FDE68A;
+  --danger: #B91C1C;
+  --danger-soft: #FEF2F2;
+  --danger-border: #FECACA;
+  --info: #1D4ED8;
+  --info-soft: #EFF6FF;
+  --info-border: #BFDBFE;
+  --danger-hover: #991B1B;           /* pressed/hover on a filled danger button */
+  --on-danger: #FFFFFF;
+
+  /* Pastel tints: one soft colour per kind of figure (ui/tints.ts). Label and ink are the same
+     hue's dark stops, 4.5:1 or better on the tint. */
+  --tint-mint: #E1F5EE;              /* sales, profit */
+  --tint-mint-label: #0F6E56;
+  --tint-mint-ink: #085041;
+  --tint-peach: #FAECE7;             /* cash, spending */
+  --tint-peach-label: #993C1D;
+  --tint-peach-ink: #712B13;
+  --tint-sky: #E6F1FB;               /* Paytm, online */
+  --tint-sky-label: #185FA5;
+  --tint-sky-ink: #0C447C;
+  --tint-lavender: #EEEDFE;          /* approvals, requests */
+  --tint-lavender-label: #534AB7;
+  --tint-lavender-ink: #3C3489;
+  --tint-butter: #FAEEDA;            /* stock, momos, production */
+  --tint-butter-label: #854F0B;
+  --tint-butter-ink: #633806;
+  --tint-rose: #FBEAF0;              /* team, pay */
+  --tint-rose-label: #993556;
+  --tint-rose-ink: #72243E;
+
+  /* Data viz */
+  --chart-1: #C2410C;                /* primary series */
+  --chart-2: #0F766E;                /* teal, second series */
+  --chart-3: #B7791F;                /* deep saffron */
+  --chart-4: #1D4ED8;                /* blue */
+  --chart-5: #78716C;                /* "other" / previous period (dashed) */
+  --chart-grid: #ECE9E4;
+  --channel-counter: #44403C;        /* channel identity only; label every bar */
+  --channel-zomato: #E23744;
+  --channel-swiggy: #F97316;
+
+  /* shadcn names mapped onto the tokens, so older ui/* code and theme classes follow along */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary-foreground: var(--on-primary);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-2);
+  --accent: var(--primary-soft);
+  --accent-foreground: var(--primary-hover);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--on-danger);
+  --input: var(--border-strong);
+  --input-background: var(--surface);
+  --switch-background: var(--border-strong);
+  --ring: var(--primary);
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--on-primary);
+  --sidebar-accent: var(--primary-soft);
+  --sidebar-accent-foreground: var(--primary-hover);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--primary);
+
+  /* Shape, depth, motion, layering */
   --font-size: 16px;
-  --background: #fffbf5;
-  --foreground: #292524;
-  --card: #ffffff;
-  --card-foreground: #292524;
-  --popover: #ffffff;
-  --popover-foreground: #292524;
-  --primary: #ea580c;
-  --primary-foreground: #ffffff;
-  --secondary: #fff1e6;
-  --secondary-foreground: #292524;
-  --muted: #f5f0ea;
-  --muted-foreground: #78716c;
-  --accent: #fff1e6;
-  --accent-foreground: #ea580c;
-  --destructive: #dc2626;
-  --destructive-foreground: #ffffff;
-  --border: rgba(41, 37, 36, 0.1);
-  --input: transparent;
-  --input-background: #f5f0ea;
-  --switch-background: #d6cfc7;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: #ea580c;
-  --chart-1: #ea580c;
-  --chart-2: #0d9488;
-  --chart-3: #f59e0b;
-  --chart-4: #e11d48;
-  --chart-5: #2563eb;
-  --radius: 0.625rem;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #292524;
-  --sidebar-primary: #1c1917;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #fff1e6;
-  --sidebar-accent-foreground: #ea580c;
-  --sidebar-border: rgba(41, 37, 36, 0.1);
-  --sidebar-ring: #ea580c;
+  --radius: 10px;
+  --elevation-1: 0 1px 2px rgb(28 25 23 / 0.06);
+  --elevation-2: 0 4px 12px rgb(28 25 23 / 0.08);
+  --elevation-3: 0 12px 32px rgb(28 25 23 / 0.16);
+  --dur-fast: 120ms;                 /* press */
+  --dur: 200ms;                      /* enter */
+  --dur-exit: 150ms;
+  --dur-sheet: 260ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 1, 1);
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-nav: 20;
+  --z-fab: 30;
+  --z-overlay: 40;
+  --z-sheet: 50;
+  --z-toast: 60;
+
+  /* Shell measurements other packages can read (the toast sits above the bottom nav) */
+  --top-bar-h: 56px;
+  --bottom-nav-h: 64px;
+  --toast-bottom: calc(var(--bottom-nav-h) + 16px + env(safe-area-inset-bottom, 0px));
 }
 
-/* Remove dark mode - keeping empty rule to prevent any dark class from activating */
-.dark {
-  /* Dark mode disabled - using light theme only */
+@media (min-width: 1024px) {
+  :root {
+    /* No bottom nav on desktop */
+    --toast-bottom: 24px;
+  }
+}
+
+/* Dark theme: warm near-black paper, the same hues lifted so text stays 4.5:1 or better. On a
+   filled button or chip the text turns dark (on-primary / on-danger), since the lighter fills can't
+   carry white text. Ratios are against --surface. */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --brand-ink: #F5F2EE;
+  --brand-saffron: #F7B24C;
+  --brand-saffron-soft: #3A2D16;
+  --brand-saffron-border: #5E4722;
+
+  --primary: #FB923C;                /* 7:1 as text; dark text on it 7.7:1 */
+  --primary-hover: #FDBA74;
+  --primary-pressed: #F97316;
+  --primary-soft: #3A2214;           /* primary text on it 6.5:1 */
+  --on-primary: #1C1917;
+
+  --bg: #121110;
+  --surface: #1C1A18;
+  --surface-2: #262320;
+  --surface-3: #322E2A;
+  --border: #2F2B27;
+  --border-strong: #48423C;
+  --text: #F5F2EE;                   /* 15:1 */
+  --text-2: #CFC8C0;                 /* 10:1 */
+  --text-3: #A69D93;                 /* 6.3:1 */
+  --text-disabled: #6F675F;
+  --scrim: rgb(0 0 0 / 0.6);
+
+  --success: #4ADE80;
+  --success-soft: #10291A;
+  --success-border: #1F4D30;
+  --warning: #FACC15;
+  --warning-soft: #2D2610;
+  --warning-border: #574814;
+  --danger: #F87171;
+  --danger-soft: #2E1515;
+  --danger-border: #5C2626;
+  --info: #60A5FA;
+  --info-soft: #111F36;
+  --info-border: #213C66;
+  --danger-hover: #EF4444;
+  --on-danger: #1C1917;
+
+  --tint-mint: #0E2A22;
+  --tint-mint-label: #5DCAA5;
+  --tint-mint-ink: #9FE1CB;
+  --tint-peach: #2E1A12;
+  --tint-peach-label: #F0997B;
+  --tint-peach-ink: #F5C4B3;
+  --tint-sky: #0F2133;
+  --tint-sky-label: #85B7EB;
+  --tint-sky-ink: #B5D4F4;
+  --tint-lavender: #1E1C38;
+  --tint-lavender-label: #AFA9EC;
+  --tint-lavender-ink: #CECBF6;
+  --tint-butter: #2B2110;
+  --tint-butter-label: #EF9F27;
+  --tint-butter-ink: #FAC775;
+  --tint-rose: #2E1520;
+  --tint-rose-label: #ED93B1;
+  --tint-rose-ink: #F4C0D1;
+
+  --chart-1: #FB923C;
+  --chart-2: #2DD4BF;
+  --chart-3: #FACC15;
+  --chart-4: #60A5FA;
+  --chart-5: #A8A29E;
+  --chart-grid: #2F2B27;
+  --channel-counter: #D6D3D1;
+  --channel-zomato: #F87171;
+  --channel-swiggy: #FB923C;
+
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.5);
+  --elevation-2: 0 4px 12px rgb(0 0 0 / 0.5);
+  --elevation-3: 0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-e1: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-e2: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-e3: 0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-sheet: 0 -12px 32px rgb(0 0 0 / 0.6);
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-xl: 0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-2xl: 0 12px 32px rgb(0 0 0 / 0.6);
+}
+
+/* The bunny is black line art with a white face on a clear background. In the dark theme it is
+   swapped for public/bunny-logo-dark.png: light outline, ears and whiskers, the face still white
+   with black eyes and saffron cheeks (inverting it made the face a black hole, owner 28 Oct 2026). */
+[data-theme="dark"] img[src$="bunny-logo.png"] {
+  content: url("/bunny-logo-dark.png");
+}
+
+@theme {
+  --font-sans: "Inter Variable", "Noto Sans Bengali Variable", "Noto Sans Devanagari Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Type scale (px so it never shrinks with the root size). Nothing below 12. */
+  --text-display: 32px;
+  --text-display--line-height: 38px;
+  --text-display--font-weight: 600;
+  --text-title-lg: 22px;
+  --text-title-lg--line-height: 28px;
+  --text-title: 18px;
+  --text-title--line-height: 24px;
+  --text-subtitle: 16px;
+  --text-subtitle--line-height: 22px;
+  --text-body: 16px;
+  --text-body--line-height: 24px;
+  --text-body-md: 15px;              /* list-row titles, button labels, amounts (wireframes) */
+  --text-body-md--line-height: 20px;
+  --text-body-sm: 14px;
+  --text-body-sm--line-height: 20px;
+  --text-label: 13px;
+  --text-label--line-height: 18px;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-overline: 12px;
+  --text-overline--line-height: 16px;
+  --text-overline--letter-spacing: 0.04em;
+  --text-overline--font-weight: 600;
+
+  /* Radius */
+  --radius-xs: 6px;                  /* badges, inner chips */
+  --radius-sm: 8px;                  /* small buttons, segments */
+  --radius-md: 10px;                 /* buttons, inputs */
+  --radius-lg: 14px;                 /* cards, list groups */
+  --radius-xl: 20px;                 /* top corners of sheets, dialogs */
+
+  /* Elevation. Older screens' shadow-sm/md/lg/xl/2xl are calmed onto the same three levels. */
+  --shadow-e1: 0 1px 2px rgb(28 25 23 / 0.06);
+  --shadow-e2: 0 4px 12px rgb(28 25 23 / 0.08);
+  --shadow-e3: 0 12px 32px rgb(28 25 23 / 0.16);
+  --shadow-sheet: 0 -12px 32px rgb(28 25 23 / 0.16);
+  --shadow-xs: 0 1px 2px rgb(28 25 23 / 0.06);
+  --shadow-sm: 0 1px 2px rgb(28 25 23 / 0.06);
+  --shadow-md: 0 4px 12px rgb(28 25 23 / 0.08);
+  --shadow-lg: 0 4px 12px rgb(28 25 23 / 0.08);
+  --shadow-xl: 0 12px 32px rgb(28 25 23 / 0.16);
+  --shadow-2xl: 0 12px 32px rgb(28 25 23 / 0.16);
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 1, 1);
 }
 
 @theme inline {
+  /* shadcn names */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -68,15 +324,6 @@
   --color-input-background: var(--input-background);
   --color-switch-background: var(--switch-background);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -85,54 +332,126 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Warm ledger names */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-disabled: var(--text-disabled);
+  --color-scrim: var(--scrim);
+  --color-on-scrim: var(--on-scrim);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-pressed: var(--primary-pressed);
+  --color-primary-soft: var(--primary-soft);
+  --color-on-primary: var(--on-primary);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-saffron: var(--brand-saffron);
+  --color-brand-saffron-soft: var(--brand-saffron-soft);
+  --color-brand-saffron-border: var(--brand-saffron-border);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-border: var(--danger-border);
+  --color-danger-hover: var(--danger-hover);
+  --color-on-danger: var(--on-danger);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-border: var(--info-border);
+
+  /* Pastel tints */
+  --color-tint-mint: var(--tint-mint);
+  --color-tint-mint-label: var(--tint-mint-label);
+  --color-tint-mint-ink: var(--tint-mint-ink);
+  --color-tint-peach: var(--tint-peach);
+  --color-tint-peach-label: var(--tint-peach-label);
+  --color-tint-peach-ink: var(--tint-peach-ink);
+  --color-tint-sky: var(--tint-sky);
+  --color-tint-sky-label: var(--tint-sky-label);
+  --color-tint-sky-ink: var(--tint-sky-ink);
+  --color-tint-lavender: var(--tint-lavender);
+  --color-tint-lavender-label: var(--tint-lavender-label);
+  --color-tint-lavender-ink: var(--tint-lavender-ink);
+  --color-tint-butter: var(--tint-butter);
+  --color-tint-butter-label: var(--tint-butter-label);
+  --color-tint-butter-ink: var(--tint-butter-ink);
+  --color-tint-rose: var(--tint-rose);
+  --color-tint-rose-label: var(--tint-rose-label);
+  --color-tint-rose-ink: var(--tint-rose-ink);
+
+  /* Charts */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-grid: var(--chart-grid);
+  --color-channel-counter: var(--channel-counter);
+  --color-channel-zomato: var(--channel-zomato);
+  --color-channel-swiggy: var(--channel-swiggy);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
-  }
-
-  body {
-    @apply bg-background text-foreground;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  /* Mobile optimizations - better touch targets and spacing */
-  @media (max-width: 768px) {
-    button, a[role="button"] {
-      min-height: 44px; /* Apple's recommended touch target size */
-      min-width: 44px;
-    }
-    
-    /* Reduce font size slightly on mobile for better density */
-    html {
-      font-size: 15px;
-    }
-  }
-
-  button, a, input, select, textarea {
-    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
-  }
-
-  /* Chart tap/hover on mobile - without this, tapping a Recharts chart to see its
-     tooltip triggers the browser's default tap-highlight (a translucent gray/black
-     wash across the whole chart) and, on a long press, the native text-selection
-     callout menu. Both make the chart look "washed out" the moment you touch it,
-     even though the chart itself isn't meant to be a tappable/selectable control -
-     the highlight is for buttons and links, not data visualizations. */
-  .recharts-wrapper, .recharts-responsive-container, .recharts-surface {
-    -webkit-tap-highlight-color: transparent;
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
+    @apply border-border;
+    outline-color: var(--ring);
   }
 
   html {
     -webkit-text-size-adjust: 100%;
     -moz-text-size-adjust: 100%;
     text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Bengali and Hindi need taller lines so matras and conjuncts don't clip. Overline caps and
+     tracking are for Latin only. */
+  :lang(bn),
+  :lang(hi) {
+    line-height: 1.6;
+  }
+
+  /* Legacy shim, kept until WP1-WP6 land: older screens size their own small buttons, so
+     phones get a 44 px minimum on every button. ui/* components set their own sizes (utility
+     classes win over this base rule). */
+  @media (max-width: 768px) {
+    button, a[role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+
+  button, a, input, select, textarea, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* Chart tap/hover on mobile - without this, tapping a Recharts chart to see its
+     tooltip triggers the browser's default tap-highlight (a translucent wash across the
+     whole chart) and, on a long press, the native text-selection callout menu. */
+  .recharts-wrapper, .recharts-responsive-container, .recharts-surface {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .overflow-x-auto {
@@ -152,26 +471,27 @@
 }
 
 /**
- * Base typography. This is not applied to elements which have an ancestor with a Tailwind text class.
+ * Base typography for older screens. Not applied to elements which have an ancestor with a
+ * Tailwind text class.
  */
 @layer base {
   :where(:not(:has([class*=' text-']), :not(:has([class^='text-'])))) {
     h1 {
       font-size: var(--text-2xl);
-      font-weight: var(--font-weight-medium);
-      line-height: 1.5;
+      font-weight: 600;
+      line-height: 1.4;
     }
 
     h2 {
       font-size: var(--text-xl);
-      font-weight: var(--font-weight-medium);
-      line-height: 1.5;
+      font-weight: 600;
+      line-height: 1.4;
     }
 
     h3 {
       font-size: var(--text-lg);
-      font-weight: var(--font-weight-medium);
-      line-height: 1.5;
+      font-weight: 600;
+      line-height: 1.4;
     }
 
     h4 {
@@ -204,7 +524,159 @@ html {
   font-size: var(--font-size);
 }
 
-/* Custom animations for production requests */
+/* Utilities */
+
+/* Tabular figures for every amount, count and time */
+@utility num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Section header in More / Settings lists (ListGroup overline). Caps and tracking only for Latin.
+   Not called "overline": Tailwind already has an `overline` text-decoration utility. */
+@utility overline-label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  &:lang(bn), &:lang(hi) {
+    letter-spacing: 0;
+    text-transform: none;
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Horizontal scrollers (tabs, day strip, chip rows) fade out at the edges instead of being cut */
+@utility scroll-fade-x {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+}
+
+/* One-sided fades for scrollers that track their scroll position (DateStrip) */
+@utility scroll-fade-start {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 24px);
+  mask-image: linear-gradient(to right, transparent 0, black 24px);
+}
+
+@utility scroll-fade-end {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+}
+
+@utility scroll-fade-both {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 24px, black calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 24px, black calc(100% - 24px), transparent 100%);
+}
+
+/* A 44 x 44 touch area around a visually smaller control (36 px chips, small buttons). The
+   element must be position: relative (the zero-specificity rule below gives it that unless a
+   utility such as `absolute` says otherwise). */
+@utility hit-44 {
+  &::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+
+:where(.hit-44) {
+  position: relative;
+}
+
+/* Skeleton shimmer: the only infinite animation the design allows */
+@utility skeleton-shimmer {
+  background-color: var(--surface-2);
+  background-image: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Performance helpers kept for older screens */
+@layer utilities {
+  .gpu-accelerate {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+
+  .smooth-scroll {
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+
+  /* Reduce motion for users who prefer it */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  .mobile-card {
+    @apply rounded-lg p-4;
+  }
+
+  @media (min-width: 768px) {
+    .mobile-card {
+      @apply rounded-lg p-5;
+    }
+  }
+}
+
+/* Older screens' skeleton class */
+.skeleton {
+  background-color: var(--surface-2);
+  background-image: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/*
+ * Legacy shims for screens that haven't moved to ui/* yet.
+ */
+
+/* Hand-rolled modal backdrops: the warm scrim instead of pure black. Tailwind v3's
+   bg-opacity-* utilities are gone in v4 (they rendered a solid black backdrop); if one comes
+   back, it still gets the scrim. */
+.fixed.inset-0.bg-black\/40,
+.fixed.inset-0.bg-black\/50,
+.fixed.inset-0.bg-black\/60,
+.fixed.inset-0.bg-black\/70,
+.fixed.inset-0.bg-gray-900\/30,
+.bg-black.bg-opacity-40,
+.bg-black.bg-opacity-50,
+.bg-black.bg-opacity-60 {
+  background-color: var(--scrim);
+}
+
+.hover\:bg-white.hover\:bg-opacity-20:hover {
+  background-color: rgb(255 255 255 / 0.2);
+}
+
+/* Kept for production request headers until WP4 restyles them */
 @keyframes gradient-x {
   0%, 100% {
     background-position: 0% 50%;
@@ -219,61 +691,7 @@ html {
   background-size: 200% 200%;
 }
 
-/* Performance optimizations */
-@layer utilities {
-  /* Hardware acceleration for smooth animations */
-  .gpu-accelerate {
-    transform: translateZ(0);
-    will-change: transform;
-  }
-  
-  /* Optimize scrolling performance */
-  .smooth-scroll {
-    -webkit-overflow-scrolling: touch;
-    scroll-behavior: smooth;
-  }
-  
-  /* Reduce motion for users who prefer it */
-  @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-      scroll-behavior: auto !important;
-    }
-  }
-  
-  /* Mobile-optimized cards */
-  .mobile-card {
-    @apply rounded-lg p-4;
-  }
-  
-  @media (min-width: 768px) {
-    .mobile-card {
-      @apply rounded-xl p-6;
-    }
-  }
-}
-
-/* Loading states - prevent layout shift */
-.skeleton {
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-@keyframes shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
-}
-
-/* App boot/loading screen: bunny "eats" its way across a row of momos */
+/* App boot/loading screen (App.tsx, replaced by WP0b) */
 @keyframes bunny-walk {
   0% {
     left: 0%;

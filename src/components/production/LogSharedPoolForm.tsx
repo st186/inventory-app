@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { PlusCircle } from 'lucide-react';
+import { Button } from '../ui/button';
+import { Field } from '../ui/field';
+import { Input } from '../ui/input';
+import { useT } from '../../utils/i18n';
 
 type Props = {
   disabled?: boolean;
@@ -9,17 +13,18 @@ type Props = {
   onAdd: (poolKey: 'GLOBAL_DOUGH' | 'GLOBAL_BATTER', qty: number) => void | Promise<void>;
 };
 
-// Dough/batter is a shared kitchen resource used by every momo type in its group, not
-// something that makes sense to re-measure and re-enter on every single batch logged below.
-// This logs it once, directly against the shared pool - "Log Prepared Batch" then only
-// needs to ask for that batch's own stuffing/coating, with dough/batter left out entirely
-// unless a batch explicitly needs its own dedicated portion (see the "Unique dough for
-// this?" toggle there). Eager-persist per pool, same pattern as every other entry here.
+// Dough/batter is shared by every momo type in its group: logged once a day here, not per batch.
+import { looksLikeGrams } from './ledgerKg';
+
 export function LogSharedPoolForm({ disabled, submitting, onAdd }: Props) {
+  const { t } = useT();
   const [doughQty, setDoughQty] = useState('');
   const [batterQty, setBatterQty] = useState('');
 
+  const grams = looksLikeGrams(doughQty) || looksLikeGrams(batterQty);
+
   const handleAdd = async () => {
+    if (grams) return;
     const dough = parseFloat(doughQty) || 0;
     const batter = parseFloat(batterQty) || 0;
     if (dough <= 0 && batter <= 0) return;
@@ -30,46 +35,19 @@ export function LogSharedPoolForm({ disabled, submitting, onAdd }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-1">Log Today's Dough / Batter</h2>
-      <p className="text-sm text-gray-500 mb-4">
-        Shared across every momo type - log the total prepared today once here, not per batch below.
-      </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Dough (kg)</label>
-          <input
-            type="number"
-            step="0.01"
-            value={doughQty}
-            onChange={(e) => setDoughQty(e.target.value)}
-            disabled={disabled}
-            placeholder="0.00"
-            className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Batter (kg)</label>
-          <input
-            type="number"
-            step="0.01"
-            value={batterQty}
-            onChange={(e) => setBatterQty(e.target.value)}
-            disabled={disabled}
-            placeholder="0.00"
-            className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200 disabled:bg-gray-100"
-          />
-        </div>
+    <section className="flex flex-col gap-3">
+      <h3 className="mx-1 text-body-md font-semibold text-text">{t('stock.prod.logShared')}</h3>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={t('stock.prod.dough')} error={looksLikeGrams(doughQty) ? t('stock.prod.looksLikeGrams') : undefined}>
+          <Input type="text" inputMode="decimal" className="num" value={doughQty} onChange={(e) => setDoughQty(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
+        </Field>
+        <Field label={t('stock.prod.batter')} error={looksLikeGrams(batterQty) ? t('stock.prod.looksLikeGrams') : undefined}>
+          <Input type="text" inputMode="decimal" className="num" value={batterQty} onChange={(e) => setBatterQty(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
+        </Field>
       </div>
-      <button
-        type="button"
-        onClick={handleAdd}
-        disabled={disabled || submitting || (!doughQty && !batterQty)}
-        className="mt-4 px-6 py-3 bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-lg hover:from-amber-600 hover:to-amber-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-semibold text-sm"
-      >
-        <PlusCircle className="w-4 h-4" />
-        {submitting ? 'Logging…' : "Log Today's Prep"}
-      </button>
-    </div>
+      <Button variant="secondary" className="self-start" leadingIcon={<PlusCircle />} loading={submitting} disabled={disabled || grams || (!doughQty && !batterQty)} onClick={handleAdd}>
+        {t('stock.prod.logPrep')}
+      </Button>
+    </section>
   );
 }

@@ -1,12 +1,16 @@
 import { useState, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, Package, AlertTriangle, Activity, Target, DollarSign } from 'lucide-react';
-import { Card } from './ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Badge } from './ui/badge';
-import { INVENTORY_CATEGORIES } from '../utils/inventoryData';
+import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Factory, Store } from 'lucide-react';
+import { CHART_COLORS, ChartLegendChips, ChartTooltipCard, chartAreaFillOpacity, chartAxisProps, chartCursor, chartGridProps } from './ui/chart-theme';
+import { EmptyState } from './ui/empty-state';
+import { ListGroup, ListRow } from './ui/list-row';
+import { Money } from './ui/money';
+import { SegmentedControl } from './ui/segmented-control';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { INVENTORY_CATEGORIES, expenseCategoryLabel } from '../utils/inventoryData';
 
 type Props = {
   context: InventoryContextType;
@@ -157,7 +161,7 @@ export function InventoryDashboard({ context, stores }: Props) {
     context.inventory
       .filter(item => new Date(item.date) >= cutoffDate)
       .forEach(item => {
-        const category = (INVENTORY_CATEGORIES as Record<string, string>)[item.category]
+        const category = (expenseCategoryLabel(item.category) !== item.category ? expenseCategoryLabel(item.category) : null)
           || item.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         inventoryCostByCategory[category] = (inventoryCostByCategory[category] || 0) + item.totalCost;
       });
@@ -182,198 +186,104 @@ export function InventoryDashboard({ context, stores }: Props) {
   }, [context, stores, timeframe]);
 
   const getHealthIndicator = (value: number, thresholds: { good: number; fair: number }) => {
-    if (value >= thresholds.good) return { color: 'text-green-600', bg: 'bg-green-100', label: 'Excellent' };
-    if (value >= thresholds.fair) return { color: 'text-yellow-600', bg: 'bg-yellow-100', label: 'Fair' };
-    return { color: 'text-red-600', bg: 'bg-red-100', label: 'Needs Attention' };
+    if (value >= thresholds.good) return { tone: 'success' as const, label: 'Excellent' };
+    if (value >= thresholds.fair) return { tone: 'warning' as const, label: 'Fair' };
+    return { tone: 'danger' as const, label: 'Needs attention' };
   };
 
   const turnoverHealth = getHealthIndicator(analytics.inventoryTurnover, { good: 80, fair: 60 });
-  const fulfillmentHealth = getHealthIndicator(analytics.fulfillmentRate, { good: 90, fair: 70 });
+
+  const trendEmpty = analytics.comparisonData.length === 0;
+  const costEmpty = analytics.costData.length === 0;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
-            <Activity className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Inventory Dashboard</h2>
-            <p className="text-sm sm:text-base text-gray-500">Advanced analytics and performance metrics</p>
-          </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex min-w-0 flex-col">
+          <h2 className="text-title font-semibold text-text">Overview</h2>
+          <p className="text-body-sm text-text-2">Production, stock requests and sales over a period</p>
         </div>
-        <select
+        <SegmentedControl
+          aria-label="Period"
+          size="sm"
           value={timeframe}
-          onChange={(e) => setTimeframe(e.target.value as any)}
-          className="px-4 py-2 border rounded-lg bg-background"
-        >
-          <option value="7days">Last 7 Days</option>
-          <option value="30days">Last 30 Days</option>
-          <option value="90days">Last 90 Days</option>
-        </select>
+          onValueChange={(v) => setTimeframe(v as '7days' | '30days' | '90days')}
+          options={[{ value: '7days', label: '7 days' }, { value: '30days', label: '30 days' }, { value: '90days', label: '90 days' }]}
+        />
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 shadow-lg shadow-blue-500/20 text-white">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs uppercase tracking-wide text-blue-100">Total Production</p>
-            <Package className="h-5 w-5 text-blue-100" />
-          </div>
-          <p className="text-2xl font-semibold mb-1">{analytics.totalProduction.toLocaleString()}</p>
-          <p className="text-xs text-blue-100">
-            Avg: {Math.round(analytics.avgDailyProduction)}/day
-          </p>
-        </div>
+      <StatGrid>
+        <StatTile label="Production" value={<span className="num">{analytics.totalProduction.toLocaleString('en-IN')}</span>} caption={`About ${Math.round(analytics.avgDailyProduction)} a day`} />
+        <StatTile label="Stock requests sent" value={<span className="num">{analytics.totalStockRequests.toLocaleString('en-IN')}</span>} caption={`${analytics.fulfillmentRate.toFixed(1)}% of asked`} />
+        <StatTile
+          label="Turnover"
+          value={<span className="num">{analytics.inventoryTurnover.toFixed(1)}%</span>}
+          chip={<StatusChip tone={turnoverHealth.tone} size="sm">{turnoverHealth.label}</StatusChip>}
+        />
+        <StatTile label="Sales" value={<Money value={analytics.totalSales} />} />
+      </StatGrid>
 
-        <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-2xl p-6 shadow-lg shadow-teal-500/20 text-white">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs uppercase tracking-wide text-teal-100">Stock Requests</p>
-            <TrendingUp className="h-5 w-5 text-teal-100" />
-          </div>
-          <p className="text-2xl font-semibold mb-1">{analytics.totalStockRequests.toLocaleString()}</p>
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-white" />
-            <p className="text-xs text-teal-100">
-              {analytics.fulfillmentRate.toFixed(1)}% fulfilled
-            </p>
-          </div>
-        </div>
+      <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" aria-label="Production, sales and stock requests trend">
+        <h3 className="text-subtitle font-semibold text-text">Production, sales and stock requests</h3>
+        <ChartLegendChips items={[{ label: 'Production', color: CHART_COLORS.primary }, { label: 'Stock requests', color: CHART_COLORS.secondary }, { label: 'Sales (₹)', color: CHART_COLORS.tertiary }]} />
+        {trendEmpty ? (
+          <EmptyState compact title="Nothing in this period" />
+        ) : (
+          <ResponsiveContainer width="100%" height={280}>
+            <AreaChart data={analytics.comparisonData} margin={{ left: -12, right: 8 }}>
+              <CartesianGrid {...chartGridProps} />
+              <XAxis dataKey="date" {...chartAxisProps} minTickGap={24} />
+              <YAxis {...chartAxisProps} width={56} />
+              <Tooltip content={<ChartTooltipCard />} cursor={chartCursor} />
+              <Area type="monotone" dataKey="production" stroke={CHART_COLORS.primary} fill={CHART_COLORS.primary} fillOpacity={chartAreaFillOpacity} strokeWidth={2} name="Production" />
+              <Area type="monotone" dataKey="stockRequests" stroke={CHART_COLORS.secondary} fill={CHART_COLORS.secondary} fillOpacity={chartAreaFillOpacity} strokeWidth={2} name="Stock requests" />
+              <Area type="monotone" dataKey="sales" stroke={CHART_COLORS.tertiary} fill={CHART_COLORS.tertiary} fillOpacity={chartAreaFillOpacity} strokeWidth={2} name="Sales" />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </section>
 
-        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl p-6 shadow-lg shadow-emerald-500/20 text-white">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs uppercase tracking-wide text-emerald-100">Inventory Turnover</p>
-            <Target className="h-5 w-5 text-emerald-100" />
-          </div>
-          <p className="text-2xl font-semibold mb-1">{analytics.inventoryTurnover.toFixed(1)}%</p>
-          <div className="flex items-center gap-2">
-            <Badge className="bg-white/20 text-white text-xs border-0">
-              {turnoverHealth.label}
-            </Badge>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-6 shadow-lg shadow-orange-500/20 text-white">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs uppercase tracking-wide text-orange-100">Total Sales</p>
-            <DollarSign className="h-5 w-5 text-orange-100" />
-          </div>
-          <p className="text-2xl font-semibold mb-1">₹{analytics.totalSales.toLocaleString()}</p>
-          <p className="text-xs text-orange-100">Revenue from sales</p>
-        </div>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <ListGroup title="Production houses" empty={<EmptyState compact icon={Factory} title="No production houses" />}>
+          {analytics.productionHousePerformance.map((house) => (
+            <ListRow
+              key={house.name}
+              icon={Factory}
+              title={house.name}
+              subtitle={`Made ${house.production.toLocaleString('en-IN')} · ${house.fulfillments} requests fulfilled`}
+              trailing={<StatusChip tone="neutral" size="sm">{house.currentStock} in stock</StatusChip>}
+            />
+          ))}
+        </ListGroup>
+        <ListGroup title="Stores" empty={<EmptyState compact icon={Store} title="No stores" />}>
+          {analytics.storePerformance.map((store) => (
+            <ListRow
+              key={store.name}
+              icon={Store}
+              title={store.name}
+              subtitle={`Asked ${store.requested} · received ${store.received} · sales ₹${store.sales.toLocaleString('en-IN')}`}
+              trailing={<StatusChip tone={store.fulfillmentRate >= 90 ? 'success' : store.fulfillmentRate >= 70 ? 'warning' : 'danger'} size="sm">{store.fulfillmentRate.toFixed(0)}% fulfilled</StatusChip>}
+            />
+          ))}
+        </ListGroup>
       </div>
 
-      {/* Production vs Sales Chart */}
-      <Card className="p-6 rounded-2xl">
-        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Production, Sales & Stock Requests Trend</h3>
-        <ResponsiveContainer width="100%" height={350}>
-          <AreaChart data={analytics.comparisonData}>
-            <defs>
-              <linearGradient id="colorProduction" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#0d9488" stopOpacity={0.8}/>
-                <stop offset="95%" stopColor="#0d9488" stopOpacity={0}/>
-              </linearGradient>
-              <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#e11d48" stopOpacity={0.8}/>
-                <stop offset="95%" stopColor="#e11d48" stopOpacity={0}/>
-              </linearGradient>
-              <linearGradient id="colorStock" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
-                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} />
-            <Tooltip />
-            <Legend />
-            <Area type="monotone" dataKey="production" stroke="#0d9488" fillOpacity={1} fill="url(#colorProduction)" name="Production" />
-            <Area type="monotone" dataKey="stockRequests" stroke="#10b981" fillOpacity={1} fill="url(#colorStock)" name="Stock Requests" />
-            <Area type="monotone" dataKey="sales" stroke="#e11d48" fillOpacity={1} fill="url(#colorSales)" name="Sales" />
-          </AreaChart>
-        </ResponsiveContainer>
-      </Card>
-
-      {/* Performance Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Production House Performance */}
-        <Card className="p-6 rounded-2xl">
-          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Production House Performance</h3>
-          <div className="space-y-3">
-            {analytics.productionHousePerformance.map(house => (
-              <div key={house.name} className="p-4 bg-gray-50 rounded-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-bold text-gray-900">{house.name}</h4>
-                  <Badge className="bg-teal-100 text-teal-800">
-                    {house.currentStock} in stock
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">Production</p>
-                    <p className="text-lg">{house.production.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Fulfillments</p>
-                    <p className="text-lg">{house.fulfillments}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {/* Store Performance */}
-        <Card className="p-6 rounded-2xl">
-          <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Store Performance</h3>
-          <div className="space-y-3">
-            {analytics.storePerformance.map(store => (
-              <div key={store.name} className="p-4 bg-gray-50 rounded-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-bold text-gray-900">{store.name}</h4>
-                  <Badge className={`${
-                    store.fulfillmentRate >= 90 ? 'bg-green-100 text-green-800' :
-                    store.fulfillmentRate >= 70 ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-red-100 text-red-800'
-                  }`}>
-                    {store.fulfillmentRate.toFixed(0)}% fulfilled
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">Requested</p>
-                    <p className="text-lg">{store.requested}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Received</p>
-                    <p className="text-lg">{store.received}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Sales</p>
-                    <p className="text-lg">₹{store.sales.toLocaleString()}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Inventory Cost Analysis */}
-      <Card className="p-6 rounded-2xl">
-        <h3 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4">Inventory Cost by Category</h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={analytics.costData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} angle={-45} textAnchor="end" height={100} />
-            <YAxis tick={{ fontSize: 12 }} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="value" fill="#e11d48" name="Cost (₹)" />
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
+      <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" aria-label="Spending by category">
+        <h3 className="text-subtitle font-semibold text-text">Spending by category</h3>
+        {costEmpty ? (
+          <EmptyState compact title="No purchases in this period" />
+        ) : (
+          <ResponsiveContainer width="100%" height={Math.max(160, analytics.costData.length * 36)}>
+            <BarChart data={analytics.costData} layout="vertical" margin={{ left: 8, right: 16 }}>
+              <CartesianGrid {...chartGridProps} vertical horizontal={false} />
+              <XAxis type="number" {...chartAxisProps} />
+              <YAxis type="category" dataKey="name" {...chartAxisProps} width={120} />
+              <Tooltip content={<ChartTooltipCard money />} cursor={chartCursor} />
+              <Bar dataKey="value" fill={CHART_COLORS.primary} radius={[0, 4, 4, 0]} name="Spent" />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </section>
     </div>
   );
 }

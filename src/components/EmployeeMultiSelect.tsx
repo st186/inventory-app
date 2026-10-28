@@ -1,4 +1,6 @@
-import { Employee } from '../utils/api';
+import { useId } from 'react';
+import type { Employee } from '../utils/api';
+import { Checkbox } from './ui/checkbox';
 
 type Props = {
   employees: Employee[];
@@ -7,7 +9,10 @@ type Props = {
   label?: string;
 };
 
+// Tick everyone an expense covers. Each row is a 52 px tappable label with a checkbox, name and
+// employee ID; the count shows underneath.
 export function EmployeeMultiSelect({ employees, selectedIds, onChange, label = 'Employees Covered' }: Props) {
+  const groupId = useId();
   const toggle = (employeeId: string) => {
     if (selectedIds.includes(employeeId)) {
       onChange(selectedIds.filter((id) => id !== employeeId));
@@ -17,33 +22,36 @@ export function EmployeeMultiSelect({ employees, selectedIds, onChange, label = 
   };
 
   return (
-    <div>
-      <label className="block text-sm text-gray-700 mb-1">
+    <div role="group" aria-labelledby={`${groupId}-label`} className="flex flex-col gap-1.5">
+      <span id={`${groupId}-label`} className="text-body-sm font-medium text-text">
         {label}
-        <span className="text-xs text-gray-500 ml-2">(select everyone this covers)</span>
-      </label>
-      <div className="border border-gray-300 rounded-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
+        <span className="font-normal text-text-3"> · select everyone this covers</span>
+      </span>
+      <div className="max-h-56 overflow-y-auto rounded-md border border-border-strong bg-surface [&>*+*]:border-t [&>*+*]:border-border">
         {employees.length === 0 && (
-          <p className="text-sm text-gray-500 p-3">No employees available</p>
+          <p className="p-3 text-body-sm text-text-3">No employees available</p>
         )}
-        {employees.map((emp) => (
-          <label
-            key={emp.employeeId}
-            className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer"
-          >
-            <input
-              type="checkbox"
-              checked={selectedIds.includes(emp.employeeId)}
-              onChange={() => toggle(emp.employeeId)}
-              className="w-5 h-5 text-orange-600 rounded focus:ring-orange-500 flex-shrink-0"
-            />
-            <span className="text-sm text-gray-900">{emp.name}</span>
-            <span className="text-xs text-gray-500">{emp.employeeId}</span>
-          </label>
-        ))}
+        {employees.map((emp) => {
+          const id = `${groupId}-${emp.employeeId}`;
+          return (
+            <label
+              key={emp.employeeId}
+              htmlFor={id}
+              className="flex min-h-13 cursor-pointer items-center gap-3 px-4 py-2 hover:bg-surface-2/60 active:bg-surface-2"
+            >
+              <Checkbox
+                id={id}
+                checked={selectedIds.includes(emp.employeeId)}
+                onCheckedChange={() => toggle(emp.employeeId)}
+              />
+              <span className="min-w-0 flex-1 text-body-md text-text">{emp.name}</span>
+              <span className="num text-label text-text-3">{emp.employeeId}</span>
+            </label>
+          );
+        })}
       </div>
       {selectedIds.length > 0 && (
-        <p className="text-xs text-gray-500 mt-1">{selectedIds.length} employee(s) selected</p>
+        <p className="num text-caption text-text-3">{selectedIds.length} employee(s) selected</p>
       )}
     </div>
   );

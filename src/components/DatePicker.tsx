@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { Calendar } from 'lucide-react';
+import React, { useId, useRef } from 'react';
+import { CalendarDays } from 'lucide-react';
 import { formatDateIST } from '../utils/timezone';
 
 interface DatePickerProps {
@@ -11,8 +11,11 @@ interface DatePickerProps {
   max?: string;
 }
 
+// A date field showing "31 Dec 2025" (IST). Tapping it opens the phone's own date picker -
+// that works inside the older pop-ups too, which a calendar sheet stacked on top would not.
 export function DatePicker({ value, onChange, label, className = '', min, max }: DatePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const id = useId();
 
   const handleContainerClick = () => {
     // Try to use showPicker() if available, but gracefully fall back if blocked (e.g., in cross-origin iframes)
@@ -35,26 +38,31 @@ export function DatePicker({ value, onChange, label, className = '', min, max }:
   return (
     <div className={isFullWidth ? `w-full ${className}` : `flex items-center gap-2 ${className}`}>
       {label && (
-        <label className={`text-sm text-gray-600 ${isFullWidth ? 'block mb-2' : 'whitespace-nowrap'}`}>
+        <label
+          htmlFor={id}
+          className={`text-body-sm font-medium ${isFullWidth ? 'mb-1.5 block text-text' : 'whitespace-nowrap text-text-2'}`}
+        >
           {label}
         </label>
       )}
       <div
         onClick={handleContainerClick}
-        className={`relative flex items-center gap-2 px-4 py-2 border-2 border-gray-300 rounded-xl bg-white hover:border-orange-400 hover:bg-orange-50 transition-all cursor-pointer group ${isFullWidth ? 'w-full' : 'min-w-[160px]'}`}
+        className={`group relative flex cursor-pointer items-center gap-2 rounded-md border border-border-strong bg-surface px-3 transition-colors hover:bg-surface-2 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary ${isFullWidth ? 'h-12 w-full' : 'h-11 min-w-[160px]'}`}
       >
-        <Calendar className="w-4 h-4 text-gray-500 group-hover:text-orange-600 transition-colors flex-shrink-0" />
-        <span className="text-sm text-gray-700 group-hover:text-orange-700 transition-colors flex-1">
+        <CalendarDays className="size-5 shrink-0 text-text-3" aria-hidden="true" />
+        <span className={`num flex-1 text-body-md ${value ? 'text-text' : 'text-text-3'}`}>
           {formatDisplayDate(value)}
         </span>
         <input
+          id={id}
           ref={inputRef}
           type="date"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           min={min}
           max={max}
-          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+          aria-label={label ? undefined : 'Date'}
+          className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
         />
       </div>
     </div>

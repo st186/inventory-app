@@ -1,93 +1,84 @@
-import { memo } from 'react';
-import { Store, MapPin, ChevronDown } from 'lucide-react';
-import * as api from '../utils/api';
+import { Suspense, lazy, memo, useState } from 'react';
+import { ChevronDown, Store } from 'lucide-react';
+import type * as api from '../utils/api';
+import { SelectChip } from './ui/chip';
+import { cn } from './ui/utils';
+import { useT } from '../utils/i18n';
+
+// The sheet's code loads on the first tap (the chip itself is on screen from the first frame).
+const PickerSheet = lazy(() => import('./ui/picker-sheet').then((m) => ({ default: m.PickerSheet })));
+
+// The owner's store choice for the whole app (Home, Insights, Money, Team, reports). Shown only
+// when there is more than one store: a chip under the top bar on phones and tablets, a full-width
+// switcher in the desktop sidebar. Opens a searchable sheet.
 
 type StoreSelectorProps = {
   stores: api.Store[];
   selectedStoreId: string | null;
   onStoreChange: (storeId: string | null) => void;
   showAllStores?: boolean;
+  variant?: 'chip' | 'sidebar';
 };
 
-export const StoreSelector = memo(function StoreSelector({ stores, selectedStoreId, onStoreChange, showAllStores = true }: StoreSelectorProps) {
-  const selectedStore = stores.find(s => s.id === selectedStoreId);
-  const isAllStores = !selectedStoreId;
+export const StoreSelector = memo(function StoreSelector({ stores, selectedStoreId, onStoreChange, showAllStores = true, variant = 'chip' }: StoreSelectorProps) {
+  const { t } = useT();
+  const [open, setOpenRaw] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const setOpen = (next: boolean) => {
+    if (next) setMounted(true);
+    setOpenRaw(next);
+  };
+  const selected = stores.find((s) => s.id === selectedStoreId);
+  const label = selected ? selected.name : t('shell.allStores');
+  const items = [
+    ...(showAllStores ? [{ value: 'all', label: t('shell.allStores'), description: t('shell.storesCount', { n: stores.length }) }] : []),
+    ...stores.map((s) => ({ value: s.id, label: s.name, description: s.location || undefined })),
+  ];
 
   return (
-    <div className="relative">
-      {/* The single store selector for the whole app - used to also be paired with a
-          second "quick pills" row right below doing the exact same job, plus a third,
-          separate dropdown duplicated inside Analytics. Consolidated down to just this
-          one control (see Analytics.tsx for the other removal). Restyled to the same
-          dark-hero/icon-chip language as Analytics.tsx's other header cards, instead of
-          the pale gradient-border card it used to be. */}
-      <div className="relative overflow-hidden rounded-2xl shadow-xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
-        <div className="absolute -top-14 -right-8 w-40 h-40 bg-orange-500/20 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative flex items-center gap-4">
-          {/* Icon Section */}
-          <div className="flex-shrink-0">
-            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-amber-500 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/40">
-              <Store className="w-6 h-6 text-white" />
-            </div>
-          </div>
-
-          {/* Store Info and Selector */}
-          <div className="flex-1 min-w-0">
-            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">
-              Current Store View
-            </div>
-            <div className="relative">
-              <select
-                value={selectedStoreId || 'all'}
-                onChange={(e) => onStoreChange(e.target.value === 'all' ? null : e.target.value)}
-                className="w-full appearance-none bg-transparent border-none text-base font-semibold text-white focus:ring-0 focus:outline-none cursor-pointer pr-8"
-                style={{ paddingRight: '2rem' }}
-              >
-                {showAllStores && (
-                  <option value="all" style={{ color: '#111827', backgroundColor: '#ffffff' }}>🌐 All Stores (Combined View)</option>
-                )}
-                {stores.map((store) => (
-                  <option key={store.id} value={store.id} style={{ color: '#111827', backgroundColor: '#ffffff' }}>
-                    🍜 {store.name} {store.location && `- ${store.location}`}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-5 h-5 text-orange-400 pointer-events-none" />
-            </div>
-            {/* Location Display */}
-            {selectedStore?.location && (
-              <div className="flex items-center gap-1 mt-1 text-sm text-slate-400">
-                <MapPin className="w-3 h-3" />
-                <span>{selectedStore.location}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Store Count Badge */}
-          <div className="flex-shrink-0">
-            <div className="bg-white/10 backdrop-blur-sm px-4 py-2 rounded-xl border border-white/10">
-              <div className="text-[11px] text-slate-400 text-center">Total Stores</div>
-              <div className="text-2xl font-bold text-white text-center">{stores.length}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Status Indicator */}
-        <div className="relative mt-3 pt-3 border-t border-white/10">
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${isAllStores ? 'bg-blue-400' : 'bg-emerald-400'} animate-pulse`}></div>
-              <span className="text-slate-400">
-                {isAllStores ? 'Viewing all store data' : `Viewing ${selectedStore?.name || 'store'} only`}
-              </span>
-            </div>
-            <span className="text-orange-400 font-medium">
-              {isAllStores ? stores.length : 1} store{(isAllStores && stores.length !== 1) || (!isAllStores && false) ? 's' : ''} active
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <>
+      {variant === 'chip' ? (
+        <SelectChip
+          onClick={() => setOpen(true)}
+          leadingIcon={<Store aria-hidden="true" />}
+          trailingIcon={<ChevronDown aria-hidden="true" />}
+          aria-label={`${t('shell.chooseStore')}: ${label}`}
+        >
+          {label}
+        </SelectChip>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={`${t('shell.chooseStore')}: ${label}`}
+          className={cn(
+            'flex min-h-11 w-full items-center gap-2.5 rounded-md border border-border-strong bg-surface px-3 text-left outline-none',
+            'transition-colors duration-(--dur-fast) hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring',
+          )}
+        >
+          <Store className="size-5 shrink-0 text-text-2" aria-hidden="true" />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="text-caption text-text-3">{t('shell.store')}</span>
+            <span className="truncate text-body-sm font-semibold text-text">{label}</span>
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-text-3" aria-hidden="true" />
+        </button>
+      )}
+      {mounted && (
+        <Suspense fallback={null}>
+          <PickerSheet
+            open={open}
+            onOpenChange={setOpen}
+            title={t('shell.chooseStore')}
+            items={items}
+            value={selectedStoreId || 'all'}
+            onSelect={(value) => {
+              onStoreChange(value === 'all' ? null : value);
+              setOpen(false);
+            }}
+          />
+        </Suspense>
+      )}
+    </>
   );
 });

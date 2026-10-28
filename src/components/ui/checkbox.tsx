@@ -2,10 +2,12 @@
 
 import * as React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox@1.1.4";
-import { CheckIcon } from "lucide-react@0.487.0";
+import { CheckIcon, MinusIcon } from "lucide-react@0.487.0";
 
 import { cn } from "./utils";
 
+// Checkbox: a 20 px box in a 44 px touch area (negative margin keeps the layout at 20 px).
+// Best inside a row whose whole <label> is tappable.
 function Checkbox({
   className,
   ...props
@@ -14,17 +16,25 @@ function Checkbox({
     <CheckboxPrimitive.Root
       data-slot="checkbox"
       className={cn(
-        "peer border bg-input-background dark:bg-input/30 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground dark:data-[state=checked]:bg-primary data-[state=checked]:border-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive size-4 shrink-0 rounded-[4px] border shadow-xs transition-shadow outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+        "group/checkbox peer relative -m-3 inline-flex size-11 min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md outline-none disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...props}
     >
-      <CheckboxPrimitive.Indicator
-        data-slot="checkbox-indicator"
-        className="flex items-center justify-center text-current transition-none"
+      <span
+        aria-hidden="true"
+        className={cn(
+          "flex size-5 items-center justify-center rounded-xs border-[1.5px] border-border-strong bg-surface text-on-primary transition-colors duration-(--dur-fast)",
+          "group-data-[state=checked]/checkbox:border-primary group-data-[state=checked]/checkbox:bg-primary",
+          "group-data-[state=indeterminate]/checkbox:border-primary group-data-[state=indeterminate]/checkbox:bg-primary",
+          "group-aria-[invalid=true]/checkbox:border-danger",
+          "group-focus-visible/checkbox:ring-2 group-focus-visible/checkbox:ring-ring group-focus-visible/checkbox:ring-offset-2 group-focus-visible/checkbox:ring-offset-surface",
+        )}
       >
-        <CheckIcon className="size-3.5" />
-      </CheckboxPrimitive.Indicator>
+        <CheckboxPrimitive.Indicator data-slot="checkbox-indicator" className="flex items-center justify-center">
+          {props.checked === "indeterminate" ? <MinusIcon className="size-3.5" strokeWidth={3} /> : <CheckIcon className="size-3.5" strokeWidth={3} />}
+        </CheckboxPrimitive.Indicator>
+      </span>
     </CheckboxPrimitive.Root>
   );
 }

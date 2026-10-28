@@ -1,8 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { Package, Info } from 'lucide-react';
-import { Card } from './ui/card';
+import { Package } from 'lucide-react';
+import { Callout } from './ui/callout';
+import { EmptyState } from './ui/empty-state';
+import { ErrorState } from './ui/error-state';
+import { Field } from './ui/field';
+import { ListGroup, ListRow } from './ui/list-row';
+import { NativeSelect } from './ui/select';
+import { SkeletonListRows, SkeletonStatTiles } from './ui/skeleton';
+import { StatGrid, StatTile } from './ui/stat-tile';
 
 type Props = {
   context: InventoryContextType;
@@ -18,6 +25,7 @@ export function UtilitiesStockStatus({ context, stores }: Props) {
   const [selectedStore, setSelectedStore] = useState<string | null>(null);
   const [consumption, setConsumption] = useState<api.UtilitiesConsumption | null>(null);
   const [loading, setLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!context.user?.accessToken) return;
@@ -26,7 +34,7 @@ export function UtilitiesStockStatus({ context, stores }: Props) {
       .then(setConsumption)
       .catch(() => setConsumption(null))
       .finally(() => setLoading(false));
-  }, [selectedStore, context.user?.accessToken]);
+  }, [selectedStore, context.user?.accessToken, reloadKey]);
 
   // Purchased totals come from the store's own logged inventory purchases (already
   // loaded in context) - every purchase ever logged counts, regardless of date (stock
@@ -35,7 +43,7 @@ export function UtilitiesStockStatus({ context, stores }: Props) {
   // start from UTILITIES_START_DATE, since that's as far back as POS order data is synced.
   const purchasedPackaging = useMemo(() => {
     const relevant = context.inventory.filter((item) => {
-      if (item.category !== 'packaging') return false;
+      if (item.category !== 'packaging' && item.category !== 'packaging_bulk') return false;
       if (selectedStore && item.storeId !== selectedStore) return false;
       return true;
     });
@@ -59,102 +67,77 @@ export function UtilitiesStockStatus({ context, stores }: Props) {
   }, [context.inventory, selectedStore]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
-            <Package className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Utilities Stock Status</h1>
-            <p className="text-sm sm:text-base text-gray-500">Momo box/tray and beverage stock, from real POS order data</p>
-          </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex min-w-0 flex-col">
+          <h2 className="text-title font-semibold text-text">Boxes, trays and drinks</h2>
+          <p className="text-body-sm text-text-2">Bought (logged purchases) − used (POS orders)</p>
         </div>
-        <select
-          value={selectedStore || 'all'}
-          onChange={(e) => setSelectedStore(e.target.value === 'all' ? null : e.target.value)}
-          className="px-4 py-2 border rounded-lg bg-background"
-        >
-          <option value="all">All Stores</option>
-          {stores.map((store) => (
-            <option key={store.id} value={store.id}>{store.name}</option>
-          ))}
-        </select>
+        <Field label="Store" className="sm:w-64">
+          <NativeSelect value={selectedStore || 'all'} onChange={(e) => setSelectedStore(e.target.value === 'all' ? null : e.target.value)}>
+            <option value="all">All stores</option>
+            {stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+          </NativeSelect>
+        </Field>
       </div>
 
       {loading ? (
-        <Card className="p-8 text-center text-muted-foreground">Loading consumption data...</Card>
+        <>
+          <SkeletonStatTiles count={2} />
+          <SkeletonListRows count={4} leading="none" />
+        </>
       ) : !consumption ? (
-        <Card className="p-8 text-center text-muted-foreground">Couldn't load consumption data. Try again.</Card>
+        <ErrorState body="Couldn't load the POS usage. Try again." onRetry={() => setReloadKey((k) => k + 1)} />
       ) : (
         <>
-          <Card className="p-4 rounded-2xl bg-gradient-to-r from-sky-50 to-blue-50 border-2 border-sky-200">
-            <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-sky-600 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-sky-800">
-                Consumption tracked from real POS order data since <strong>{UTILITIES_START_DATE}</strong>, through <strong>{consumption.endDate}</strong> ({consumption.daysWithData} day{consumption.daysWithData === 1 ? '' : 's'} synced).
-                Box = TakeAway + delivery (Zomato/Swiggy) orders, one per plate/unit sold. Tray = dine-in orders, same basis.
-                {consumption.unattributedOrders > 0 && (
-                  <> <strong>{consumption.unattributedOrders}</strong> order(s) had no recognizable order type and aren't counted in either bucket.</>
-                )}
-              </p>
-            </div>
-          </Card>
+          <Callout tone="info" title={`Usage from POS orders since ${UTILITIES_START_DATE}, through ${consumption.endDate}`}>
+            {consumption.daysWithData} day{consumption.daysWithData === 1 ? '' : 's'} synced. Box = takeaway and delivery (Zomato/Swiggy), one per plate or unit sold; tray = dine-in, same basis.
+            {consumption.unattributedOrders > 0 && ` ${consumption.unattributedOrders} order(s) had no order type and aren't counted in either.`}
+          </Callout>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <StatGrid>
             {([
-              { label: 'Momo Box', purchased: purchasedPackaging.box, consumed: consumption.boxesUsed },
-              { label: 'Momo Tray', purchased: purchasedPackaging.tray, consumed: consumption.traysUsed },
+              { label: 'Momo boxes left', purchased: purchasedPackaging.box, consumed: consumption.boxesUsed },
+              { label: 'Momo trays left', purchased: purchasedPackaging.tray, consumed: consumption.traysUsed },
             ]).map(({ label, purchased, consumed }) => {
               const remaining = purchased - consumed;
               return (
-                <Card key={label} className="p-5 rounded-2xl">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-sky-500 flex items-center justify-center">
-                      <Package className="h-5 w-5 text-white" />
-                    </div>
-                    <h3 className="text-lg font-bold text-gray-900 tracking-tight">{label}</h3>
-                  </div>
-                  <p className={`text-2xl font-semibold ${remaining < 0 ? 'text-red-600' : 'text-gray-900'}`}>{remaining.toLocaleString()} pcs remaining</p>
-                  <div className="flex justify-between text-sm text-muted-foreground mt-2 pt-2 border-t">
-                    <span>Purchased: {purchased.toLocaleString()}</span>
-                    <span>Used: {consumed.toLocaleString()}</span>
-                  </div>
-                </Card>
+                <StatTile
+                  key={label}
+                  label={label}
+                  value={<span className="num">{remaining.toLocaleString('en-IN')}</span>}
+                  caption={`Bought ${purchased.toLocaleString('en-IN')} · used ${consumed.toLocaleString('en-IN')}`}
+                  tone={remaining < 0 ? 'danger' : 'default'}
+                />
               );
             })}
-          </div>
+          </StatGrid>
 
-          <Card className="p-5 rounded-2xl">
-            <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-3">Beverages</h3>
-            {(() => {
-              const allNames = new Set([...Object.keys(purchasedBeverages), ...Object.keys(consumption.beverageConsumption)]);
-              if (allNames.size === 0) {
-                return <p className="text-sm text-muted-foreground">No beverage purchases or sales found in this period.</p>;
-              }
-              return (
-                <div className="space-y-2">
-                  {[...allNames].sort().map((name) => {
-                    const purchased = purchasedBeverages[name] || 0;
-                    const consumed = consumption.beverageConsumption[name] || 0;
-                    const remaining = purchased - consumed;
-                    return (
-                      <div key={name} className="flex items-center justify-between p-3 rounded-lg border bg-gray-50">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{name}</p>
-                          <p className="text-xs text-muted-foreground">Purchased: {purchased.toLocaleString()} · Sold: {consumed.toLocaleString()}</p>
-                        </div>
-                        <span className={`text-lg font-semibold ${remaining < 0 ? 'text-red-600' : 'text-gray-900'}`}>{remaining.toLocaleString()}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-            <p className="text-xs text-muted-foreground mt-3">
-              Matched by exact item name between purchases and POS sales - if a name here shows 0 purchased despite real sales, log its purchase under that same name so stock tracks correctly.
-            </p>
-          </Card>
+          {(() => {
+            const allNames = new Set([...Object.keys(purchasedBeverages), ...Object.keys(consumption.beverageConsumption)]);
+            return (
+              <ListGroup
+                title="Drinks"
+                footer="Matched by exact item name between purchases and POS sales: if a drink shows 0 bought despite sales, log its purchase under the same name."
+                empty={<EmptyState compact icon={Package} title="No drink purchases or sales in this period" />}
+              >
+                {[...allNames].sort().map((name) => {
+                  const purchased = purchasedBeverages[name] || 0;
+                  const consumed = consumption.beverageConsumption[name] || 0;
+                  const remaining = purchased - consumed;
+                  return (
+                    <ListRow
+                      key={name}
+                      density="compact"
+                      title={name}
+                      subtitle={`Bought ${purchased.toLocaleString('en-IN')} · sold ${consumed.toLocaleString('en-IN')}`}
+                      trailing={<span className={`num text-body-md font-semibold ${remaining < 0 ? 'text-danger' : 'text-text'}`}>{remaining.toLocaleString('en-IN')}</span>}
+                    />
+                  );
+                })}
+              </ListGroup>
+            );
+          })()}
         </>
       )}
     </div>

@@ -1,9 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Trash2, Loader2 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { X, Trash2, Plus } from 'lucide-react';
+import { toast } from './ui/sonner';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Field } from './ui/field';
+import { IconButton } from './ui/icon-button';
+import { Input } from './ui/input';
+import { NativeSelect } from './ui/select';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SkeletonListRows } from './ui/skeleton';
+import { Textarea } from './ui/textarea';
+import { t as tSaved, useT } from '../utils/i18n';
+import { KeyValue, momoName, reasonLabel } from './stock/stockShared';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { DatePicker } from './DatePicker';
+import { WASTE_REASONS, isPhase1Live } from '../utils/batches';
 
 interface StockWastageModalProps {
   context: InventoryContextType;
@@ -17,20 +29,37 @@ function todayISO(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// Daily, store-side momo wastage in pieces - one number per momo type (all 7 canonical
-// types, including both kurkure varieties, via the same dynamic finishedProducts list
-// ProductionRequests.tsx already builds from active inventory items). Tracked from this
-// feature's launch (2026-08-30) forward only - there's no reliable historical wastage data
-// to backfill.
+const STORE_REASONS = WASTE_REASONS.filter((r) => r.where !== 'production');
+
+interface Line {
+  id: number;
+  type: string;
+  qty: string;
+  reason: string; // '' only on totals saved before reason codes
+}
+
+let nextLineId = 1;
+const newLine = (type: string, qty = '', reason = ''): Line => ({ id: nextLineId++, type, qty, reason });
+
+// Daily, store-side momo wastage in pieces - one line per momo type and reason (SOP manual
+// 1.7 codes, same letters as the paper waste log), so the day's total also says why. Staff
+// meals (S) go here too on their own lines: not waste, but they leave stock the same way.
+// Pieces short or damaged at a delivery are added automatically under Q when the store
+// receives it. Tracked from this feature's launch (2026-08-30) forward only.
 export function StockWastageModal({ context, storeId, finishedProducts, onClose }: StockWastageModalProps) {
+  const { t, lang } = useT();
+  const [open, setOpen] = useState(true);
+  const [attempted, setAttempted] = useState(false);
+  const [touched, setTouched] = useState(false);
   const [date, setDate] = useState(todayISO());
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [lines, setLines] = useState<Line[]>([]);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [existingId, setExistingId] = useState<string | null>(null);
 
   const accessToken = context.user?.accessToken || '';
+  const defaultType = finishedProducts[0]?.camelKey || 'chicken';
 
   useEffect(() => {
     let cancelled = false;
@@ -41,140 +70,143 @@ export function StockWastageModal({ context, storeId, finishedProducts, onClose 
         if (entry) {
           setExistingId(entry.id);
           setNotes(entry.notes || '');
-          const next: Record<string, string> = {};
+          const loaded: Line[] = [];
           finishedProducts.forEach(({ camelKey }) => {
-            const v = entry.wastage?.[camelKey];
-            if (v) next[camelKey] = String(v);
+            const total = entry.wastage?.[camelKey] || 0;
+            const byCode = entry.reasons?.[camelKey] || {};
+            let coded = 0;
+            Object.entries(byCode).forEach(([code, n]) => {
+              if (n > 0) {
+                loaded.push(newLine(camelKey, String(n), code));
+                coded += n;
+              }
+            });
+            if (total > coded) loaded.push(newLine(camelKey, String(total - coded), ''));
           });
-          setValues(next);
+          setLines(loaded.length > 0 ? loaded : [newLine(defaultType)]);
         } else {
           setExistingId(null);
           setNotes('');
-          setValues({});
+          setLines([newLine(defaultType)]);
         }
       })
       .catch(() => {
-        if (!cancelled) toast.error('Could not load existing wastage entry for this date');
+        if (!cancelled) toast.error(tSaved('stock.wastage.loadFailed'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [accessToken, storeId, date, finishedProducts]);
+  }, [accessToken, storeId, date, finishedProducts, defaultType]);
 
-  const total = useMemo(() => {
-    return Object.values(values).reduce((sum, v) => sum + (parseInt(v, 10) || 0), 0);
-  }, [values]);
+  const updateLine = (id: number, patch: Partial<Line>) => {
+    setTouched(true);
+    setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  };
+  const dirty = touched;
+
+  const totals = useMemo(() => {
+    let waste = 0;
+    let meals = 0;
+    lines.forEach((l) => {
+      const n = parseInt(l.qty || '0', 10) || 0;
+      if (l.reason === 'S') meals += n; else waste += n;
+    });
+    return { waste, meals };
+  }, [lines]);
 
   const handleSave = async () => {
+    const filled = lines.filter((l) => (parseInt(l.qty || '0', 10) || 0) > 0);
+    // A reason on every line is required from Phase 1 go-live; optional before it.
+    if (isPhase1Live(date) && filled.some((l) => !l.reason)) {
+      setAttempted(true);
+      toast.error(tSaved('stock.wastage.reasonEach'));
+      return;
+    }
     setSaving(true);
     try {
       const wastage: Record<string, number> = {};
-      finishedProducts.forEach(({ camelKey }) => {
-        const n = parseInt(values[camelKey] || '0', 10);
-        if (n > 0) wastage[camelKey] = n;
+      const reasons: Record<string, Record<string, number>> = {};
+      filled.forEach((l) => {
+        const n = parseInt(l.qty, 10) || 0;
+        wastage[l.type] = (wastage[l.type] || 0) + n;
+        if (l.reason) reasons[l.type] = { ...(reasons[l.type] || {}), [l.reason]: (reasons[l.type]?.[l.reason] || 0) + n };
       });
-      await api.saveStockWastageEntry(accessToken, storeId, date, wastage, notes);
-      toast.success(`Wastage saved for ${date}`);
+      await api.saveStockWastageEntry(accessToken, storeId, date, wastage, notes, reasons);
+      toast.success(tSaved('stock.wastage.saved', { date }));
       onClose();
     } catch (error) {
       console.error('Error saving stock wastage:', error);
-      toast.error('Failed to save wastage entry');
+      toast.error(tSaved('stock.wastage.failed'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full my-8">
-        <div className="relative overflow-hidden bg-gradient-to-r from-red-600 via-rose-500 to-red-600 p-6 rounded-t-2xl">
-          <div className="absolute inset-0 bg-white/10" />
-          <div className="relative flex items-center justify-between gap-3">
-            <div className="flex items-center gap-4 min-w-0">
-              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
-                <Trash2 className="w-6 h-6 text-white" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-white tracking-tight">Stock Wastage</h2>
-                <p className="text-white/80 text-xs">Pieces wasted, by momo type</p>
-              </div>
-            </div>
-            <button onClick={onClose} className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition-all flex-shrink-0">
-              <X className="w-5 h-5 text-white" />
-            </button>
-          </div>
-        </div>
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(o) => { if (!o) setOpen(false); }}
+      onClosed={onClose}
+      dirty={dirty && !saving}
+      title={t('stock.wastage.title')}
+      description={t('stock.wastage.caption')}
+      footer={
+        <Button size="lg" className="flex-1" leadingIcon={<Trash2 />} loading={saving} disabled={loading} onClick={handleSave}>
+          {t('stock.wastage.save')}
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-5" lang={lang}>
+        <DatePicker label={t('stock.wastage.date')} className="w-full" value={date} onChange={setDate} max={todayISO()} />
 
-        <div className="p-5 space-y-4">
-          <DatePicker label="Date" value={date} onChange={setDate} max={todayISO()} />
-
-          {loading ? (
-            <div className="flex items-center justify-center py-10 text-gray-500 gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Loading...</span>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                {finishedProducts.map(({ camelKey, label }) => (
-                  <div key={camelKey} className="flex items-center justify-between gap-3">
-                    <label htmlFor={`wastage-${camelKey}`} className="text-sm text-gray-700">{label}</label>
-                    <input
-                      id={`wastage-${camelKey}`}
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      placeholder="0"
-                      value={values[camelKey] || ''}
-                      onChange={(e) => setValues((prev) => ({ ...prev, [camelKey]: e.target.value }))}
-                      className="w-24 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-right"
-                    />
+        {loading ? (
+          <SkeletonListRows count={2} leading="none" />
+        ) : (
+          <>
+            <div className="flex flex-col gap-3">
+              {lines.map((l, index) => {
+                const needsReason = !l.reason && isPhase1Live(date);
+                return (
+                  <div key={l.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
+                    <div className="flex items-end gap-2">
+                      <Field label={t('stock.wastage.type')} className="flex-1">
+                        <NativeSelect value={l.type} onChange={(e) => updateLine(l.id, { type: e.target.value })}>
+                          {finishedProducts.map(({ camelKey, label }) => <option key={camelKey} value={camelKey}>{momoName(lang, camelKey, label)}</option>)}
+                        </NativeSelect>
+                      </Field>
+                      <Field label={t('stock.wastage.pieces')} className="w-24">
+                        <Input type="text" inputMode="numeric" value={l.qty} placeholder="0" onChange={(e) => updateLine(l.id, { qty: e.target.value.replace(/[^\d]/g, '') })} className="num text-right" />
+                      </Field>
+                      <IconButton label={t('stock.wastage.removeLine')} icon={<X />} onClick={() => setLines((prev) => prev.filter((x) => x.id !== l.id))} />
+                    </div>
+                    <Field label={t('stock.wastage.reason')} required={isPhase1Live(date)} error={needsReason && (parseInt(l.qty || '0', 10) || 0) > 0 && attempted ? t('stock.wastage.reasonEach') : undefined}>
+                      <NativeSelect value={l.reason} onChange={(e) => updateLine(l.id, { reason: e.target.value })}>
+                        <option value="">{l.qty && existingId ? t('stock.wastage.noReasonSaved') : t('stock.wastage.pickReason')}</option>
+                        {STORE_REASONS.map((r) => <option key={r.code} value={r.code}>{r.code} · {reasonLabel(lang, 'waste', r.code, r.label)}</option>)}
+                      </NativeSelect>
+                    </Field>
                   </div>
-                ))}
-              </div>
+                );
+              })}
+              <Button variant="secondary" leadingIcon={<Plus />} className="self-start" onClick={() => setLines((prev) => [...prev, newLine(defaultType)])}>
+                {t('stock.wastage.addLine')}
+              </Button>
+            </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-sm font-semibold text-gray-900">
-                <span>Total wasted</span>
-                <span className="tabular-nums">{total} pcs</span>
-              </div>
+            <div className="rounded-lg border border-border bg-surface px-4 py-1.5">
+              <KeyValue label={t('stock.wastage.total')} value={t('stock.pcs', { n: totals.waste })} />
+              {totals.meals > 0 && <KeyValue label={t('stock.wastage.meals')} value={t('stock.pcs', { n: totals.meals })} />}
+            </div>
 
-              <div>
-                <label htmlFor="wastage-notes" className="text-xs font-medium text-gray-600">Notes (optional)</label>
-                <textarea
-                  id="wastage-notes"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  placeholder="e.g. spoiled overnight, dropped during prep..."
-                  className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none"
-                />
-              </div>
+            <Field label={t('stock.req.notes')} optional>
+              <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('stock.wastage.notesPlaceholder')} />
+            </Field>
 
-              {existingId && (
-                <p className="text-xs text-amber-600">An entry already exists for this date - saving will overwrite it.</p>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="flex gap-3 p-5 pt-0">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all text-sm font-semibold"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || loading}
-            className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-            {saving ? 'Saving...' : 'Save Wastage'}
-          </button>
-        </div>
+            {existingId && <Callout tone="warning" title={t('stock.wastage.overwrite')} />}
+          </>
+        )}
       </div>
-    </div>
+    </ResponsiveModal>
   );
 }

@@ -1,23 +1,58 @@
+// Add expense sheet (wireframe AddExpense): say it, Store / Production, what it was for (with
+// suggestions from the item list), how much, the amount with a price check, who paid, the date;
+// Save expense or Save + another. Matching, voice fill, price checks and the saved payloads are
+// the same as before; saving goes through the outbox (App.tsx).
 import { useEffect, useMemo, useState } from 'react';
-import { X, Loader2, Check, AlertTriangle } from 'lucide-react';
+import { Check, Plus, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import * as api from '../utils/api';
 import {
-  INVENTORY_CATEGORIES,
   SELECTABLE_INVENTORY_CATEGORIES,
   STORE_SELECTABLE_INVENTORY_CATEGORIES,
   OVERHEAD_CATEGORIES,
   STORE_OVERHEAD_CATEGORY_KEYS,
   RESTRICTED_OVERHEAD_CATEGORIES,
-  FIXED_COST_CATEGORIES,
+  SELECTABLE_OVERHEAD_CATEGORY_KEYS,
+  SELECTABLE_FIXED_COST_CATEGORIES,
 } from '../utils/inventoryData';
 import {
   ExpenseCandidate,
-  ExpenseEntity,
   ExpenseEntryType,
   ExpenseSuggestion,
   buildExpenseCandidates,
   searchExpenseCandidates,
 } from '../utils/expenseMatcher';
+import { useCashCover, type LoadCashCover } from './useCashCover';
+import { ProductionCashChoice } from './ProductionCashChoice';
+import { PriceWarning } from './PriceCheck';
+import { VoiceButton } from './VoiceButton';
+import { AssetHint } from './assets/AssetHint';
+import { BillFields, billNeedsMonth, defaultBillMonth } from './money/BillFields';
+import { BillPhotoField, RepairFields, emptyRepair, repairMissing } from './money/RepairDetails';
+import { APPROVAL_ABOVE, BILL_PHOTO_ABOVE, needsPaperwork, uploadBill, type RepairInfo } from './money/paperworkApi';
+import { MEALS_STOPPED_TEXT, mealsStopped } from '../utils/inventoryData';
+import type { FixedCostItem } from '../App';
+import { idbGet, idbSet } from '../utils/idbStore';
+import { useT } from '../utils/i18n';
+import { formatDateIST, getTodayIST } from '../utils/timezone';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { ChoiceChips } from './ui/chip';
+import { DateStrip } from './ui/date-strip';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { MoneyInput, formatINR } from './ui/money';
+import { PickerField } from './ui/picker-sheet';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { MoneyWaiting } from './money/DayCloseParts';
+import { PaidFromField, SplitAmounts } from './money/PaidFromField';
+import { categoryText, stripEmoji } from './money/categoryDisplay';
+import { pricePerUnitLine } from './money/expenseHelpers';
+import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
+
+// The shared item catalog (same for everyone), kept on the phone for offline suggestions.
+const CUSTOM_ITEMS_KEY = 'shared:custom-items';
 
 type Props = {
   selectedDate: string;
@@ -28,6 +63,8 @@ type Props = {
   onSubmitInventory: (item: any) => Promise<void>;
   onSubmitOverhead: (item: any) => Promise<void>;
   onSubmitFixedCost: (item: any) => Promise<void>;
+  /** Bills already logged, so rent can say when a month is paid twice or missing. */
+  fixedCosts?: FixedCostItem[];
   // Only cluster heads can add a name to the reusable catalog (see /custom-items on the
   // server). Everyone else can still log a purchase of something unrecognized, but it
   // won't be remembered - the item will show as "new" again next time until the cluster
@@ -37,12 +74,19 @@ type Props = {
   // Cluster head only - unlocks RESTRICTED_OVERHEAD_CATEGORIES (fuel), which is otherwise
   // hidden from search and the manual category list (the server rejects it too).
   canUseRestrictedCategories?: boolean;
+  // Cluster head: choose where the money came from (own money, the entity's cash, or Paytm),
+  // and which store when no single store is selected.
+  ownerPaymentOption?: boolean;
+  storeOptions?: { id: string; name: string }[];
+  // Cluster head: the production house linked to a store, and both tills' cash for the day, so
+  // a store bill the store's cash can't cover is paid from production's cash instead.
+  productionHouseForStore?: (storeId: string) => string | null;
+  loadCashCover?: LoadCashCover;
+  // What each item usually costs and the unit it's usually bought in (utils/expenseChecks.ts).
+  priceGuide?: PriceGuide;
+  accessToken?: string; // for voice entry (server reads what was said)
 };
 
-const ENTITY_LABEL: Record<'store' | 'production_house', string> = {
-  store: 'Store',
-  production_house: 'Production House',
-};
 
 export function QuickAddExpense({
   selectedDate,
@@ -55,8 +99,24 @@ export function QuickAddExpense({
   onSubmitFixedCost,
   canCreateNewItems = true,
   canUseRestrictedCategories = false,
+  ownerPaymentOption = false,
+  storeOptions,
+  productionHouseForStore,
+  loadCashCover,
+  priceGuide,
+  accessToken,
+  fixedCosts,
 }: Props) {
   const [amount, setAmount] = useState('');
+  // Default: the expense's own cash (store cash for a store bill, production cash for production).
+  const [paidFrom, setPaidFrom] = useState<'owner' | 'cash' | 'online' | 'both'>('cash');
+  const [splitCash, setSplitCash] = useState('');
+  const [splitOnline, setSplitOnline] = useState('');
+  // The day this expense is for: the page's day unless changed here.
+  const [entryDate, setEntryDate] = useState(selectedDate);
+  const [keepOpen, setKeepOpen] = useState(false);
+  const { t, lang } = useT();
+  const [pickedStoreId, setPickedStoreId] = useState(effectiveStoreId || storeOptions?.[0]?.id || '');
   const [query, setQuery] = useState('');
   const [customItems, setCustomItems] = useState<api.CustomItem[]>([]);
   const [matched, setMatched] = useState<ExpenseSuggestion | null>(null);
@@ -92,8 +152,17 @@ export function QuickAddExpense({
   const [manualType, setManualType] = useState<ExpenseEntryType>('inventory');
   const [manualCategory, setManualCategory] = useState('');
 
+  // The item catalog, from the copy saved on the phone first so suggestions work without signal.
   useEffect(() => {
-    api.getCustomItems().then(setCustomItems).catch(() => {});
+    let fresh = false;
+    idbGet<api.CustomItem[]>('cache', CUSTOM_ITEMS_KEY).then((saved) => {
+      if (!fresh && Array.isArray(saved)) setCustomItems(saved);
+    });
+    api.getCustomItems().then((items) => {
+      fresh = true;
+      setCustomItems(items);
+      idbSet('cache', CUSTOM_ITEMS_KEY, items);
+    }).catch(() => {});
   }, []);
 
   const candidates: ExpenseCandidate[] = useMemo(
@@ -114,10 +183,11 @@ export function QuickAddExpense({
     }
     if (manualType === 'overhead') {
       const entries = Object.entries(OVERHEAD_CATEGORIES)
+        .filter(([key]) => SELECTABLE_OVERHEAD_CATEGORY_KEYS.includes(key))
         .filter(([key]) => canUseRestrictedCategories || !RESTRICTED_OVERHEAD_CATEGORIES.includes(key));
       return entity === 'store' ? entries.filter(([key]) => STORE_OVERHEAD_CATEGORY_KEYS.includes(key)) : entries;
     }
-    return Object.entries(FIXED_COST_CATEGORIES);
+    return Object.entries(SELECTABLE_FIXED_COST_CATEGORIES);
   }, [manualType, entity, canUseRestrictedCategories]);
 
   useEffect(() => {
@@ -134,8 +204,11 @@ export function QuickAddExpense({
     // normally a store item) overrode a deliberate Production House selection without
     // the user noticing, so the item saved under the wrong entity. The informational
     // "Filed under X" hint below is enough - it shouldn't also force the choice.
+    // Start from the unit this item is usually bought in - always starting at "pcs" is how
+    // a carrot came to be saved as "1 pcs ₹60" and a Coke crate as "1 pcs ₹470".
     if (s.entryType === 'inventory') {
-      setUnit('pcs');
+      const usual = priceGuide?.usualUnit.get(priceItemKey(s.label));
+      setUnit(usual && UNIT_PILLS.includes(usual) ? usual : 'pcs');
       setQuantity('1');
     }
   };
@@ -150,13 +223,60 @@ export function QuickAddExpense({
   const entityFieldsFor = (targetEntity: 'store' | 'production_house') =>
     targetEntity === 'production_house'
       ? { entityType: 'production_house' as const, productionHouseId: targetProductionHouseId }
-      : { entityType: 'store' as const, storeId: effectiveStoreId || undefined };
+      : { entityType: 'store' as const, storeId: (storeOptions?.length ? pickedStoreId : effectiveStoreId) || undefined };
+
+  // A store bill comes off the store's own cash. The owner gets a tick box (unticked) to take it
+  // from the linked production house's cash instead - whenever the store has one, not only when
+  // the store's cash falls short (owner, 27 Oct 2026; staff never see it, as before).
+  const storeIdForCash = (storeOptions?.length ? pickedStoreId : effectiveStoreId) || '';
+  const productionCashHouseId = ownerPaymentOption && entity === 'store' && storeIdForCash
+    ? productionHouseForStore?.(storeIdForCash) || null
+    : null;
+  const cashCover = useCashCover(productionCashHouseId ? loadCashCover : undefined, productionCashHouseId ? storeIdForCash : null, entryDate);
+  const [fromProductionCash, setFromProductionCash] = useState(false);
+  const enteredAmount = parseFloat(amount) || 0;
+  const productionCanCover = paidFrom === 'cash' && !!productionCashHouseId;
+  const useProductionCash = productionCanCover && fromProductionCash;
+
+  // Split: the two parts as typed (the same shape the edit forms save).
+  const paymentFieldsFor = (amt: number) =>
+    paidFrom === 'both'
+      ? { paymentMethod: 'both' as const, cashAmount: Math.round((parseFloat(splitCash) || 0) * 100) / 100, onlineAmount: Math.round((parseFloat(splitOnline) || 0) * 100) / 100 }
+      : paidFrom === 'online'
+      ? { paymentMethod: 'online' as const, cashAmount: 0, onlineAmount: amt }
+      : paidFrom === 'owner'
+      ? { paymentMethod: 'owner' as const, cashAmount: 0, onlineAmount: 0 }
+      : useProductionCash
+      ? { paymentMethod: 'cash' as const, cashAmount: amt, onlineAmount: 0, paidFromProductionHouseId: productionCashHouseId }
+      : { paymentMethod: 'cash' as const, cashAmount: amt, onlineAmount: 0 };
 
   // Resolved outside handleSubmit too, so the render below can decide whether to show
   // the beverage packaging UI instead of a plain quantity/unit field.
   const resolved = matched || (hasStrongMatch ? bestMatch : null);
   const currentEntryType: ExpenseEntryType = resolved ? resolved.entryType : manualType;
   const currentCategory = resolved ? resolved.category : manualCategory;
+  // Rent and electricity: the month the bill is for, and electricity's meter units.
+  const [billMonth, setBillMonth] = useState('');
+  const [meterUnits, setMeterUnits] = useState('');
+  const isBill = currentEntryType === 'fixedcost' && billNeedsMonth(currentCategory);
+  useEffect(() => {
+    setBillMonth(isBill ? defaultBillMonth(currentCategory, entryDate) : '');
+    // Only when the kind of bill changes, not when the date does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBill, currentCategory]);
+  // Repairs, labour and equipment (the expenses plan): which machine, what was wrong, who did it,
+  // the bill photo above BILL_PHOTO_ABOVE; above APPROVAL_ABOVE the owner is asked to OK it.
+  const [repairInfo, setRepairInfo] = useState<RepairInfo>(emptyRepair);
+  const [billPhoto, setBillPhoto] = useState<string | null>(null);
+  const serviceKind: 'repair' | 'labour' | null = currentEntryType === 'overhead'
+    ? (currentCategory === 'repair' ? 'repair' : currentCategory === 'labour_charge' ? 'labour' : null)
+    : null;
+  const paperwork = !!currentCategory && !!query.trim() && needsPaperwork(currentEntryType === 'inventory' ? 'inventory' : 'overhead', { category: currentCategory, itemName: query, description: query });
+  const billRequired = paperwork && enteredAmount > BILL_PHOTO_ABOVE;
+  const needsOwnerOk = paperwork && enteredAmount > APPROVAL_ABOVE && !ownerPaymentOption;
+  const repairPlace = entity === 'production_house'
+    ? (targetProductionHouseId ? { kind: 'production_house' as const, id: targetProductionHouseId } : null)
+    : (storeIdForCash ? { kind: 'store' as const, id: storeIdForCash } : null);
   const isBeverage = currentEntryType === 'inventory' && currentCategory === 'beverages';
   const beverageTotalPieces = packageType === 'carton'
     ? (parseFloat(cartonCount) || 0) * (parseFloat(piecesPerCarton) || 0)
@@ -166,15 +286,93 @@ export function QuickAddExpense({
   // initialization" on every render (a real TDZ crash, not conditional on role/user).
   const isBundlePurchase = !isBeverage && isBundleMode && (unit === 'pcs' || unit === 'units');
 
+  // Price check on what's typed so far: a price several times off the item's usual one is
+  // almost always a unit slip (grams for kg, a crate as 1 piece).
+  const priceFlag = priceGuide && currentEntryType === 'inventory' && query.trim() && enteredAmount > 0
+    ? checkPurchase({
+        itemName: query,
+        quantity: isBeverage ? beverageTotalPieces : (isBundlePurchase ? bundleTotalPieces : (parseFloat(quantity) || 0)),
+        unit: isBeverage || isBundlePurchase ? 'pcs' : unit,
+        totalCost: enteredAmount,
+        packageType: isBundlePurchase || (isBeverage && packageType === 'carton') ? 'carton' : undefined,
+      }, priceGuide)
+    : null;
+  const applyPriceFix = (fix: PriceFix) => {
+    if (isBeverage) {
+      setPackageType('pieces');
+      setPieceCount(String(fix.quantity));
+      return;
+    }
+    setIsBundleMode(false);
+    setUnit(fix.unit);
+    setQuantity(String(fix.quantity));
+  };
+
+  // Voice: "ajke 3kg chicken niyeche 600 taka" fills amount ₹600, Chicken, 3 kg - to check, then save.
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceHeard, setVoiceHeard] = useState<string | null>(null);
+  const fillFromVoice = async (text: string) => {
+    if (!accessToken) return;
+    setVoiceBusy(true);
+    try {
+      const f = await api.voiceFill(accessToken, 'expense', text);
+      const [first, ...rest] = f.items || [];
+      setVoiceHeard(`"${text}"${rest.length ? ` - ${rest.length + 1} items heard; filled the first, add ${rest.map((r) => r.name).join(', ')} after saving` : ''}${f.unclear ? ` - not used: ${f.unclear}` : ''}`);
+      if (!first) {
+        toast.error('No item found in that. Try: "3 kg chicken 600 taka"');
+        return;
+      }
+      // Packs ("5 burger packs of 4"): filled as a bundle - packs x pieces per pack.
+      const packs = first.packs && first.packs > 0 ? first.packs : null;
+      const perPack = first.perPack && first.perPack > 0 ? first.perPack : null;
+      const total = first.amount ?? (first.pricePerPack != null ? first.pricePerPack * (packs || first.quantity || 1) : null);
+      if (total !== null) setAmount(String(Math.round(total * 100) / 100));
+      const top = searchExpenseCandidates(first.name, candidates, 1)[0];
+      const best = top && top.score >= 0.85 ? top : null;
+      if (best) selectSuggestion(best);
+      else resetMatchIfTyping(first.name);
+      const unitSaid = first.unit === 'packet' ? 'pcs' : first.unit;
+      if (best?.category === 'beverages') {
+        if (packs && perPack) {
+          setPackageType('carton');
+          setCartonCount(String(packs));
+          setPiecesPerCarton(String(perPack));
+        } else {
+          setPackageType('pieces');
+          if (first.quantity !== null) setPieceCount(String(first.quantity));
+        }
+      } else if (packs && perPack) {
+        setUnit('pcs');
+        setIsBundleMode(true);
+        setCartonCount(String(packs));
+        setPiecesPerCarton(String(perPack));
+      } else {
+        if (unitSaid && UNIT_PILLS.includes(unitSaid)) { setUnit(unitSaid); setIsBundleMode(false); }
+        if (first.quantity !== null) setQuantity(String(first.quantity));
+      }
+      if (f.paidWith === 'online' && ownerPaymentOption) setPaidFrom('online');
+      const what = packs && perPack ? `${packs} packs × ${perPack} ${first.name}` : `${first.quantity ?? ''} ${unitSaid ?? ''} ${first.name}`;
+      toast.success(`Filled ${what}${total !== null ? ` · ₹${total.toLocaleString('en-IN')}` : ''} - check, then save`.replace(/\s+/g, ' '));
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not read that');
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) {
-      alert('Enter an amount');
+      toast.error(t('exp.enterAmount'));
       return;
     }
     if (!query.trim()) {
-      alert("Enter what this was for");
+      toast.error(t('exp.enterWhat'));
+      return;
+    }
+    if (paidFrom === 'both' && Math.abs((parseFloat(splitCash) || 0) + (parseFloat(splitOnline) || 0) - amt) > 0.01) {
+      toast.error(t('exp.splitMustMatch', { amount: formatINR(amt) }));
       return;
     }
 
@@ -182,21 +380,48 @@ export function QuickAddExpense({
     const category = currentCategory;
 
     if (!category) {
-      alert('Choose a category');
+      toast.error(t('exp.chooseCategory'));
       return;
     }
     if (isBeverage && beverageTotalPieces <= 0) {
-      alert('Enter how many pieces/cartons were bought');
+      toast.error(t('exp.enterPieces'));
       return;
     }
     if (isBundlePurchase && bundleTotalPieces <= 0) {
-      alert('Enter how many bundles and pieces per bundle were bought');
+      toast.error(t('exp.enterPacks'));
+      return;
+    }
+    if (mealsStopped(category, entryDate)) {
+      toast.error(MEALS_STOPPED_TEXT);
+      return;
+    }
+    if (isBill && !billMonth) {
+      toast.error('Pick the month this bill is for');
+      return;
+    }
+    if (isBill && category === 'electricity' && !(parseFloat(meterUnits) > 0)) {
+      toast.error('Enter the meter units from the bill');
+      return;
+    }
+    const repairGap = serviceKind ? repairMissing(serviceKind, repairInfo) : null;
+    if (repairGap) {
+      toast.error(repairGap);
+      return;
+    }
+    if (billRequired && !billPhoto) {
+      toast.error(`Take a photo of the bill: repairs, labour and equipment above ${formatINR(BILL_PHOTO_ABOVE)} need one`);
       return;
     }
 
     let pendingNotice: string | null = null;
     setIsSubmitting(true);
     try {
+      // The bill photo goes up first; its path is saved with the expense.
+      const billPhotoPath = paperwork && billPhoto ? await uploadBill(billPhoto) : null;
+      const paperworkFields = {
+        ...(billPhotoPath ? { billPhotoPath } : {}),
+        ...(serviceKind ? { repair: { ...repairInfo, machine: repairInfo.machine.trim(), fault: repairInfo.fault.trim() } } : {}),
+      };
       // Remember a brand-new classification so the next person who types this exact
       // name gets it auto-detected instead of having to classify it again. Only the
       // cluster head is allowed to do this (server-enforced too) - for anyone else,
@@ -205,29 +430,27 @@ export function QuickAddExpense({
       // unrecognized on every future attempt with no explanation why.
       if (!resolved) {
         if (canCreateNewItems) {
-          try {
-            await api.addCustomItem(category, query.trim(), entryType, entity);
-          } catch (err) {
+          // Not awaited: on a weak signal it held up saving the expense itself (which can wait on
+          // the phone if need be - this can't, and is only a convenience for next time).
+          api.addCustomItem(category, query.trim(), entryType, entity).catch((err) => {
             console.error('Failed to save custom item classification:', err);
-          }
+          });
         } else {
-          pendingNotice = `"${query.trim()}" isn't in the catalog yet. This purchase will still be saved, but ask your cluster head to add it as a proper item so it's recognized automatically next time.`;
+          pendingNotice = t('exp.notInList', { name: query.trim() });
         }
       }
 
       if (entryType === 'inventory') {
         const qty = isBeverage ? beverageTotalPieces : (isBundlePurchase ? bundleTotalPieces : (parseFloat(quantity) || 1));
         await onSubmitInventory({
-          date: selectedDate,
+          date: entryDate,
           category,
           itemName: query.trim(),
           quantity: qty,
           unit: isBeverage || isBundlePurchase ? 'pcs' : (unit || 'pcs'),
           costPerUnit: Math.round((amt / qty) * 100) / 100,
           totalCost: amt,
-          paymentMethod: 'cash',
-          cashAmount: amt,
-          onlineAmount: 0,
+          ...paymentFieldsFor(amt),
           ...(isBeverage ? {
             packageType,
             ...(packageType === 'carton' ? {
@@ -244,35 +467,36 @@ export function QuickAddExpense({
           ...(!isBeverage && (unit === 'pcs' || unit === 'units') && weightPerUnit
             ? { weightPerUnitGrams: weightUnit === 'kg' ? (parseFloat(weightPerUnit) || 0) * 1000 : (parseFloat(weightPerUnit) || 0) }
             : {}),
+          ...paperworkFields,
           ...entityFieldsFor(entity),
         });
       } else if (entryType === 'overhead') {
         await onSubmitOverhead({
-          date: selectedDate,
+          date: entryDate,
           category,
           description: query.trim(),
           amount: amt,
-          paymentMethod: 'cash',
-          cashAmount: amt,
-          onlineAmount: 0,
+          ...paymentFieldsFor(amt),
+          ...paperworkFields,
           ...entityFieldsFor(entity),
         });
       } else {
         await onSubmitFixedCost({
-          date: selectedDate,
+          date: entryDate,
           category,
           description: query.trim(),
           amount: amt,
-          paymentMethod: 'cash',
-          cashAmount: amt,
-          onlineAmount: 0,
+          ...(isBill ? { forMonth: billMonth } : {}),
+          ...(isBill && category === 'electricity' ? { units: parseFloat(meterUnits), unitPrice: Math.round((amt / parseFloat(meterUnits)) * 100) / 100 } : {}),
+          ...paymentFieldsFor(amt),
           ...entityFieldsFor(entity),
         });
       }
-      if (pendingNotice) alert(pendingNotice);
-      onClose();
+      if (pendingNotice) toast.info(pendingNotice, { duration: 8000 });
+      if (keepOpen) resetForAnother();
+      else onClose();
     } catch (error: any) {
-      alert(error?.message || 'Failed to save expense');
+      toast.error(error?.message || 'Failed to save expense');
     } finally {
       setIsSubmitting(false);
     }
@@ -280,377 +504,278 @@ export function QuickAddExpense({
 
   const resolvedForDisplay = resolved;
 
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
-      <div className="bg-white rounded-t-2xl sm:rounded-2xl max-w-md w-full shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-gray-200 flex-shrink-0">
-          <h2 className="text-base font-bold text-gray-900 tracking-tight">Add expense</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
-            <X className="w-5 h-5 text-gray-500" />
-          </button>
-        </div>
+  // Save + another: a clean form for the next bill (same place, day and way of paying).
+  const resetForAnother = () => {
+    setAmount('');
+    setQuery('');
+    setMatched(null);
+    setQuantity('1');
+    setUnit('pcs');
+    setIsBundleMode(false);
+    setCartonCount('');
+    setPiecesPerCarton('');
+    setPieceCount('');
+    setVolumeMl('');
+    setShowWeightField(false);
+    setWeightPerUnit('');
+    setSplitCash('');
+    setSplitOnline('');
+    setVoiceHeard(null);
+    setRepairInfo(emptyRepair());
+    setBillPhoto(null);
+    setKeepOpen(false);
+    setMeterUnits('');
+  };
 
-        {/* Scrollable body - without this, the growing suggestion list under "What was
-            this for?" pushed the whole modal taller than the visible viewport once the
-            on-screen keyboard opened, scrolling the field you were actively typing into
-            out of view with nothing to bring it back. */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-          <div className="flex bg-gray-100 rounded-xl p-1">
-            {(['store', 'production_house'] as const).map((opt) => (
+  // Unit pills: piece = loose pieces, pack = pieces bought in packs (same saved shape as before).
+  const activePill: UnitPill = unit === 'pcs' ? (isBundleMode ? 'pack' : 'piece') : (unit as UnitPill);
+  const pillOptions: { value: UnitPill; label: string }[] = [
+    { value: 'kg', label: 'kg' },
+    { value: 'g', label: 'g' },
+    { value: 'piece', label: t('unit.piece') },
+    { value: 'pack', label: t('unit.pack') },
+    { value: 'bundle', label: t('unit.bundle') },
+    { value: 'L', label: 'L' },
+    { value: 'mL', label: 'mL' },
+    ...(unit === 'units' ? [{ value: 'units' as const, label: t('unit.units') }] : []),
+  ];
+  const pickPill = (pill: UnitPill) => {
+    if (pill === 'piece') { setUnit('pcs'); setIsBundleMode(false); return; }
+    if (pill === 'pack') { setUnit('pcs'); setIsBundleMode(true); return; }
+    setUnit(pill);
+    if (pill !== 'units') setIsBundleMode(false);
+  };
+  const typeLabel = (type: ExpenseEntryType) => (type === 'inventory' ? t('exp.type.inventory') : type === 'overhead' ? t('exp.type.overhead') : t('exp.type.fixedcost'));
+  const qtyForLine = isBeverage ? beverageTotalPieces : isBundlePurchase ? bundleTotalPieces : (parseFloat(quantity) || 0);
+  const priceLine = currentEntryType === 'inventory' && query.trim() && !priceFlag
+    ? pricePerUnitLine(priceGuide, query, qtyForLine, isBeverage || isBundlePurchase ? 'pcs' : unit, enteredAmount)
+    : null;
+  const usualRef = resolvedForDisplay && currentEntryType === 'inventory' ? pricePerUnitLine(priceGuide, resolvedForDisplay.label, 1, unit, 1) : null;
+  const today = getTodayIST();
+  const dirty = !!(amount || query.trim());
+
+  return (
+    <ResponsiveModal
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title={t('expense.add')}
+      dirty={dirty && !isSubmitting}
+      footer={
+        <>
+          <Button type="submit" form="add-expense-form" variant="secondary" size="lg" disabled={isSubmitting} onClick={() => setKeepOpen(true)}>{t('expense.saveAnother')}</Button>
+          <Button type="submit" form="add-expense-form" size="lg" className="flex-1" loading={isSubmitting} onClick={() => setKeepOpen(false)}>{t('expense.save')}</Button>
+        </>
+      }
+    >
+      <form id="add-expense-form" onSubmit={handleSubmit} className="flex flex-col gap-4" lang={lang}>
+        {/* Expenses for this day saved on the phone without signal - so they aren't entered twice. */}
+        <MoneyWaiting kinds={['inventory', 'overhead', 'fixed-cost']} date={entryDate} />
+        {accessToken && (
+          <VoiceButton variant="row" onText={fillFromVoice} busy={voiceBusy} label={t('voice.sayItInstead')} prompt={t('exp.sayExample')} />
+        )}
+        {voiceHeard && <p className="-mt-2 text-label text-text-2">{t('dc.heard', { text: voiceHeard })}</p>}
+
+        <SegmentedControl
+          aria-label={t('exp.where')}
+          value={entity}
+          onValueChange={setEntity}
+          options={[{ value: 'store', label: t('exp.store') }, { value: 'production_house', label: t('exp.production') }]}
+        />
+
+        {entity === 'store' && storeOptions && storeOptions.length > 1 && (
+          <Field label={t('exp.whichStore')}>
+            <PickerField title={t('exp.whichStore')} items={storeOptions.map((st) => ({ value: st.id, label: st.name }))} value={pickedStoreId} onValueChange={setPickedStoreId} />
+          </Field>
+        )}
+
+        <Field
+          label={t('exp.whatFor')}
+          required
+          helper={resolvedForDisplay
+            ? `${typeLabel(resolvedForDisplay.entryType)} · ${categoryText(resolvedForDisplay.category)}${usualRef?.usualText ? ` · ${t('exp.usually', { price: usualRef.usualText })}` : ''}${resolvedForDisplay.entity !== 'both' ? ` · ${t('exp.usuallyFiled', { place: resolvedForDisplay.entity === 'store' ? t('exp.store') : t('exp.productionHouse') })}` : ''}`
+            : undefined}
+        >
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-text-3" aria-hidden="true" />
+            <Input value={query} onChange={(e) => resetMatchIfTyping(e.target.value)} placeholder={t('exp.whatForPh')} className="pl-10" autoComplete="off" required />
+          </div>
+        </Field>
+        {!matched && query.trim() && suggestions.length > 0 && (
+          <div className="-mt-2 overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border" role="listbox" aria-label={t('exp.whatFor')}>
+            {suggestions.map((s, i) => (
               <button
-                key={opt}
+                key={`${s.entryType}-${s.category}-${s.label}-${i}`}
                 type="button"
-                onClick={() => setEntity(opt)}
-                className={`flex-1 text-xs font-medium py-2 rounded-lg transition-colors ${
-                  entity === opt ? 'bg-orange-600 text-white shadow-sm' : 'text-gray-600'
-                }`}
+                role="option"
+                aria-selected={false}
+                onClick={() => selectSuggestion(s)}
+                className="flex min-h-12 w-full items-center gap-3 px-4 py-2 text-left outline-none hover:bg-surface-2/60 focus-visible:bg-surface-2"
               >
-                {ENTITY_LABEL[opt]}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-body-md font-medium text-text">{s.label}{s.bengali ? <span className="font-normal text-text-3"> · {s.bengali}</span> : null}</span>
+                  <span className="text-label text-text-3">{typeLabel(s.entryType)} · {categoryText(s.category)}</span>
+                </span>
+                {i === 0 && s.score >= 0.85 && <Check className="size-5 text-success" aria-hidden="true" />}
               </button>
             ))}
           </div>
+        )}
+        <AssetHint name={query} category={currentCategory} source={currentEntryType} date={entryDate} />
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">Amount (₹)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-2xl font-semibold text-center focus:ring-2 focus:ring-orange-400 focus:border-transparent"
-              placeholder="0"
-              autoFocus
-              required
+        {isNewItem && (
+          <div className="flex flex-col gap-3 rounded-lg border border-warning-border bg-warning-soft p-3">
+            <p className="text-body-sm font-medium text-text">{t('exp.newItem')}</p>
+            <SegmentedControl
+              aria-label={t('dc.type')}
+              value={manualType}
+              onValueChange={(v) => { setManualType(v); setManualCategory(''); }}
+              options={(['inventory', 'overhead', 'fixedcost'] as const).map((v) => ({ value: v, label: typeLabel(v) }))}
             />
+            <Field label={t('exp.category')}>
+              <PickerField
+                title={t('exp.category')}
+                items={manualCategoryOptions.map(([key, label]) => ({ value: key, label: stripEmoji(label) }))}
+                value={manualCategory}
+                onValueChange={setManualCategory}
+              />
+            </Field>
           </div>
+        )}
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">What was this for?</label>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => resetMatchIfTyping(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-orange-400 focus:border-transparent"
-              placeholder="e.g. Coke, Toto, Chicken"
-              required
-            />
-
-            {!matched && query.trim() && suggestions.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {suggestions.map((s, i) => (
-                  <button
-                    key={`${s.entryType}-${s.category}-${s.label}-${i}`}
-                    type="button"
-                    onClick={() => selectSuggestion(s)}
-                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                      i === 0 && s.score >= 0.85
-                        ? 'bg-green-50 border-green-300 text-green-700 font-medium'
-                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    {s.label}{s.bengali ? ` (${s.bengali})` : ''} · {categoryLabel(s)}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {resolvedForDisplay && (
-              <div className="mt-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-start gap-2">
-                <Check className="w-3.5 h-3.5 text-green-600 mt-0.5 flex-shrink-0" />
-                <p className="text-xs text-green-800">
-                  Matched: <strong>{resolvedForDisplay.label}{resolvedForDisplay.bengali ? ` (${resolvedForDisplay.bengali})` : ''}</strong> → {categoryLabel(resolvedForDisplay)}
-                  {resolvedForDisplay.entity !== 'both' && (
-                    <span className="block text-green-700/80 mt-0.5">
-                      Filed under {ENTITY_LABEL[resolvedForDisplay.entity as 'store' | 'production_house']} - that's where this is usually bought.
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
-
-            {isNewItem && (
-              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2.5">
-                <p className="text-xs text-amber-800 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5" /> New item - classify it once, and it'll be remembered next time.
-                </p>
-                <div className="flex bg-white rounded-lg p-1 border border-amber-200">
-                  {(['inventory', 'overhead', 'fixedcost'] as const).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => { setManualType(t); setManualCategory(''); }}
-                      className={`flex-1 text-[11px] font-medium py-1.5 rounded-md transition-colors ${
-                        manualType === t ? 'bg-amber-500 text-white' : 'text-gray-600'
-                      }`}
-                    >
-                      {t === 'inventory' ? 'Inventory' : t === 'overhead' ? 'Overhead' : 'Fixed cost'}
-                    </button>
-                  ))}
+        {currentEntryType === 'inventory' && (
+          isBeverage ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-2 p-3">
+              <span className="text-body-sm font-medium text-text">{t('exp.packaging')}</span>
+              <SegmentedControl
+                aria-label={t('exp.packaging')}
+                value={packageType}
+                onValueChange={setPackageType}
+                options={[{ value: 'pieces', label: t('exp.pieces') }, { value: 'carton', label: t('exp.carton') }]}
+              />
+              {packageType === 'carton' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={t('exp.cartons')} required>
+                    <Input type="number" inputMode="numeric" step="1" value={cartonCount} onChange={(e) => setCartonCount(e.target.value)} required className="num" />
+                  </Field>
+                  <Field label={t('exp.perCarton')} required>
+                    <Input type="number" inputMode="numeric" step="1" value={piecesPerCarton} onChange={(e) => setPiecesPerCarton(e.target.value)} required className="num" />
+                  </Field>
                 </div>
-                <select
-                  value={manualCategory}
-                  onChange={(e) => setManualCategory(e.target.value)}
-                  className="w-full px-3 py-2 border border-amber-200 bg-white rounded-lg text-xs"
-                >
-                  {manualCategoryOptions.map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-
-          {currentEntryType === 'inventory' && (
-            isBeverage ? (
-              <div className="space-y-3 bg-sky-50 border-2 border-sky-200 rounded-xl p-4">
-                <p className="text-xs font-semibold text-sky-900">Packaging</p>
+              ) : (
+                <Field label={t('exp.pieces')} required>
+                  <Input type="number" inputMode="numeric" step="1" value={pieceCount} onChange={(e) => setPieceCount(e.target.value)} required className="num" />
+                </Field>
+              )}
+              <Field label={t('exp.volume')} optional helper={beverageTotalPieces > 0 ? `${beverageTotalPieces} pcs${volumeMl ? ` × ${volumeMl}${volumeUnit}` : ''}` : undefined}>
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPackageType('pieces')}
-                    className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-colors ${
-                      packageType === 'pieces' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-gray-700 border-gray-300'
-                    }`}
-                  >
-                    Pieces
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPackageType('carton')}
-                    className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-colors ${
-                      packageType === 'carton' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white text-gray-700 border-gray-300'
-                    }`}
-                  >
-                    Carton
-                  </button>
+                  <Input type="number" inputMode="numeric" step="1" value={volumeMl} onChange={(e) => setVolumeMl(e.target.value)} placeholder="e.g. 750" className="num" />
+                  <SegmentedControl aria-label="Volume unit" className="w-32 shrink-0" value={volumeUnit} onValueChange={setVolumeUnit} options={[{ value: 'mL', label: 'mL' }, { value: 'L', label: 'L' }]} />
                 </div>
-
-                {packageType === 'carton' ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-sky-900 mb-1">Number of Cartons</label>
-                      <input
-                        type="number"
-                        step="1"
-                        value={cartonCount}
-                        onChange={(e) => setCartonCount(e.target.value)}
-                        className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-sky-900 mb-1">Pieces per Carton</label>
-                      <input
-                        type="number"
-                        step="1"
-                        value={piecesPerCarton}
-                        onChange={(e) => setPiecesPerCarton(e.target.value)}
-                        className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                        required
-                      />
-                    </div>
-                  </div>
+              </Field>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <span className="text-body-sm font-medium text-text">{t('exp.howMuch')}</span>
+              {isBundlePurchase ? (
+                // e.g. 5 packs of 4 buns, a bag of 20 foil sheets: packs x pieces in each.
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={t('exp.packs')} required>
+                    <Input type="number" inputMode="numeric" step="1" value={cartonCount} onChange={(e) => setCartonCount(e.target.value)} placeholder="e.g. 1" required className="num" />
+                  </Field>
+                  <Field label={t('exp.perPack')} required helper={bundleTotalPieces > 0 ? t('exp.piecesInAll', { n: bundleTotalPieces }) : undefined}>
+                    <Input type="number" inputMode="numeric" step="1" value={piecesPerCarton} onChange={(e) => setPiecesPerCarton(e.target.value)} placeholder="e.g. 50" required className="num" />
+                  </Field>
+                </div>
+              ) : (
+                <Field label={t('exp.quantity')} hideLabel required>
+                  <Input type="number" inputMode="decimal" step="0.01" value={quantity} onChange={(e) => setQuantity(e.target.value)} required className="num" />
+                </Field>
+              )}
+              <ChoiceChips aria-label={t('exp.howMuch')} value={activePill} onValueChange={pickPill} options={pillOptions} />
+              {(unit === 'pcs' || unit === 'units') && !isBundleMode && (
+                !showWeightField ? (
+                  <Button variant="link" size="sm" className="self-start" leadingIcon={<Plus />} onClick={() => setShowWeightField(true)}>{t('exp.addWeight')}</Button>
                 ) : (
-                  <div>
-                    <label className="block text-xs text-sky-900 mb-1">Number of Pieces</label>
-                    <input
-                      type="number"
-                      step="1"
-                      value={pieceCount}
-                      onChange={(e) => setPieceCount(e.target.value)}
-                      className="w-full px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                      required
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-xs text-sky-900 mb-1">Volume per Piece</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      step="1"
-                      value={volumeMl}
-                      onChange={(e) => setVolumeMl(e.target.value)}
-                      placeholder="e.g. 750"
-                      className="flex-1 px-3 py-2 border border-sky-300 rounded-lg text-sm"
-                    />
-                    <select
-                      value={volumeUnit}
-                      onChange={(e) => setVolumeUnit(e.target.value as 'mL' | 'L')}
-                      className="px-3 py-2 border border-sky-300 rounded-lg bg-white text-sm"
-                    >
-                      <option value="mL">mL</option>
-                      <option value="L">L</option>
-                    </select>
-                  </div>
-                </div>
-
-                {beverageTotalPieces > 0 && (
-                  <p className="text-xs text-sky-800 font-medium">
-                    Total: {beverageTotalPieces} pcs{volumeMl ? ` × ${volumeMl}${volumeUnit}` : ''}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-xs font-medium text-gray-600">Quantity</label>
-                    {(unit === 'pcs' || unit === 'units') && (
-                      <button
-                        type="button"
-                        onClick={() => setIsBundleMode(!isBundleMode)}
-                        className="text-xs text-orange-600 hover:text-orange-700 font-medium"
-                      >
-                        {isBundleMode ? 'Enter as loose pieces instead' : 'Bought as a bundle/pack?'}
-                      </button>
-                    )}
-                  </div>
-                  {isBundlePurchase ? (
-                    // e.g. 1 bundle of 50 tissues, a bag of 20 foil sheets - same
-                    // "N containers x M pieces each" idea as the beverage carton UI.
-                    <div className="space-y-1.5">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[11px] text-gray-500 mb-1">Number of bundles</label>
-                          <input
-                            type="number"
-                            step="1"
-                            value={cartonCount}
-                            onChange={(e) => setCartonCount(e.target.value)}
-                            placeholder="e.g. 1"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] text-gray-500 mb-1">Pieces per bundle</label>
-                          <input
-                            type="number"
-                            step="1"
-                            value={piecesPerCarton}
-                            onChange={(e) => setPiecesPerCarton(e.target.value)}
-                            placeholder="e.g. 50"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            required
-                          />
-                        </div>
-                      </div>
-                      {bundleTotalPieces > 0 && (
-                        <p className="text-xs text-gray-500 font-medium">Total: {bundleTotalPieces} pcs</p>
-                      )}
+                  <Field
+                    label={t('exp.weight')}
+                    optional
+                    helper={weightPerUnit && parseFloat(quantity) > 0
+                      ? `${quantity} ${unit} × ${weightPerUnit}${weightUnit} = ${(((parseFloat(weightPerUnit) || 0) * (weightUnit === 'kg' ? 1000 : 1) * (parseFloat(quantity) || 0)) / 1000).toFixed(2)} kg`
+                      : "Skip it when the item has no real weight (tissues, cutlery)."}
+                  >
+                    <div className="flex gap-2">
+                      <Input type="number" inputMode="decimal" step="0.1" value={weightPerUnit} onChange={(e) => setWeightPerUnit(e.target.value)} placeholder="e.g. 200" className="num" />
+                      <SegmentedControl aria-label="Weight unit" className="w-28 shrink-0" value={weightUnit} onValueChange={setWeightUnit} options={[{ value: 'g', label: 'g' }, { value: 'kg', label: 'kg' }]} />
+                      <Button variant="ghost" onClick={() => { setShowWeightField(false); setWeightPerUnit(''); }}>{t('exp.remove')}</Button>
                     </div>
-                  ) : (
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={quantity}
-                      onChange={(e) => setQuantity(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                      required
-                    />
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">Unit</label>
-                  {/* Pill buttons instead of a dropdown - a native <select>'s popup can render
-                      past the bottom of the screen inside the Android WebView. */}
-                  <div className="flex flex-wrap gap-2">
-                    {['kg', 'g', 'L', 'mL', 'pcs', 'units'].map((u) => (
-                      <button
-                        key={u}
-                        type="button"
-                        onClick={() => { setUnit(u); if (u !== 'pcs' && u !== 'units') setIsBundleMode(false); }}
-                        className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-                          unit === u
-                            ? 'bg-orange-600 text-white border-orange-600'
-                            : 'bg-white text-gray-700 border-gray-300 hover:border-orange-400'
-                        }`}
-                      >
-                        {u}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                  </Field>
+                )
+              )}
+            </div>
+          )
+        )}
 
-                {(unit === 'pcs' || unit === 'units') && (
-                  <div>
-                    {!showWeightField ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowWeightField(true)}
-                        className="text-xs text-orange-600 hover:text-orange-700 font-medium"
-                      >
-                        + Add weight per {unit === 'pcs' ? 'piece' : 'unit'} (optional)
-                      </button>
-                    ) : (
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="block text-xs font-medium text-gray-600">
-                            Weight per {unit === 'pcs' ? 'piece' : 'unit'}
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => { setShowWeightField(false); setWeightPerUnit(''); }}
-                            className="text-xs text-gray-400 hover:text-gray-600"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={weightPerUnit}
-                            onChange={(e) => setWeightPerUnit(e.target.value)}
-                            placeholder="e.g. 200"
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                          />
-                          <select
-                            value={weightUnit}
-                            onChange={(e) => setWeightUnit(e.target.value as 'g' | 'kg')}
-                            className="px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm"
-                          >
-                            <option value="g">g</option>
-                            <option value="kg">kg</option>
-                          </select>
-                        </div>
-                        {weightPerUnit && parseFloat(quantity) > 0 && (
-                          <p className="text-xs text-gray-500 mt-1.5">
-                            Total: {quantity} {unit} × {weightPerUnit}{weightUnit} ={' '}
-                            {(((parseFloat(weightPerUnit) || 0) * (weightUnit === 'kg' ? 1000 : 1) * (parseFloat(quantity) || 0)) / 1000).toFixed(2)} kg
-                          </p>
-                        )}
-                        <p className="text-[11px] text-gray-400 mt-1.5">Skip this if the item doesn't really have a meaningful weight (e.g. tissues, cutlery).</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
+        <Field label={t('exp.amountPaid')} required>
+          <MoneyInput value={amount} onValueChange={(_, raw) => setAmount(raw)} required autoFocus={!accessToken} />
+        </Field>
+        {priceLine && (
+          <p className={priceLine.usual ? '-mt-2 flex items-center gap-1.5 text-label text-success' : '-mt-2 text-label text-text-3'}>
+            {priceLine.usual && <Check className="size-4" aria-hidden="true" />}
+            <span className="num">{priceLine.text}</span>
+            {priceLine.usual ? ` · ${t('exp.usualPrice')}` : priceLine.usualText ? ` · ${t('exp.usually', { price: priceLine.usualText })}` : ''}
+          </p>
+        )}
+        {mealsStopped(currentCategory, entryDate) && (
+          <Callout tone="warning" title="Meals aren't expenses any more">{MEALS_STOPPED_TEXT}</Callout>
+        )}
+        {serviceKind && <RepairFields kind={serviceKind} place={repairPlace} value={repairInfo} onChange={setRepairInfo} />}
+        {paperwork && <BillPhotoField value={billPhoto} onChange={setBillPhoto} required={billRequired} />}
+        {needsOwnerOk && (
+          <Callout tone="info" title="The owner will be asked to OK this">{`Repairs, labour and equipment above ${formatINR(APPROVAL_ABOVE)} wait for the owner's OK. It is saved and counted now.`}</Callout>
+        )}
+        {isBill && (
+          <BillFields
+            category={currentCategory}
+            date={entryDate}
+            forMonth={billMonth}
+            onForMonth={setBillMonth}
+            units={meterUnits}
+            onUnits={setMeterUnits}
+            amount={enteredAmount}
+            fixedCosts={fixedCosts}
+          />
+        )}
+        {currentEntryType === 'inventory' && (
+          <PriceWarning flag={priceFlag} onFix={isBeverage ? (packageType === 'carton' ? undefined : applyPriceFix) : (isBundlePurchase ? undefined : applyPriceFix)} />
+        )}
+
+        {/* Quick Add: staff pay cash only; the owner chooses owner / cash / Paytm, as before the
+            redesign (owner, 27 Oct 2026). Split stays in the full expense form. */}
+        <PaidFromField value={paidFrom} onChange={setPaidFrom} showOwner={ownerPaymentOption} allowed={ownerPaymentOption ? ['owner', 'cash', 'online'] : ['cash']} entity={entity === 'store' ? 'store' : 'production'}>
+          {productionCanCover && (
+            <ProductionCashChoice checked={fromProductionCash} onChange={setFromProductionCash} amount={enteredAmount} cover={cashCover} always />
           )}
+          {paidFrom === 'both' && (
+            <SplitAmounts cash={splitCash} online={splitOnline} total={enteredAmount} onChange={(next) => { setSplitCash(next.cash); setSplitOnline(next.online); }} />
+          )}
+        </PaidFromField>
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors disabled:opacity-50 font-medium text-sm flex items-center justify-center gap-2"
-          >
-            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-            Save {amount ? `₹${amount}` : ''} {query.trim() ? `· ${query.trim()}` : ''}
-          </button>
-        </form>
-      </div>
-    </div>
+        {/* The day this is for: the last week inline (no sheet on top of this sheet). */}
+        <Field label={t('exp.date')} helper={entryDate === today ? `${t('date.today')}, ${formatDateIST(entryDate)}` : formatDateIST(entryDate)}>
+          <div className="rounded-md border border-border-strong bg-surface px-1 pb-1">
+            <DateStrip value={entryDate} onChange={setEntryDate} max={today} today={today} hideCalendarButton />
+          </div>
+        </Field>
+      </form>
+    </ResponsiveModal>
   );
 }
 
+// Leafy greens (coriander, pudina, onion leaves) are bought by the bundle, not weighed.
+const UNIT_PILLS = ['kg', 'g', 'L', 'mL', 'pcs', 'units', 'bundle'];
+// What the pills show: 'pack' is pieces bought in packs (N packs x M pieces).
+type UnitPill = 'kg' | 'g' | 'L' | 'mL' | 'piece' | 'pack' | 'bundle' | 'units';
+
 function normalize(s: string) {
   return s.trim().toLowerCase();
-}
-
-function categoryLabel(c: { entryType: ExpenseEntryType; category: string }): string {
-  if (c.entryType === 'fixedcost') return (FIXED_COST_CATEGORIES as Record<string, string>)[c.category] || c.category;
-  if (c.entryType === 'overhead') return (OVERHEAD_CATEGORIES as Record<string, string>)[c.category] || c.category;
-  return (INVENTORY_CATEGORIES as Record<string, string>)[c.category] || c.category;
 }

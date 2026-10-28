@@ -1,7 +1,21 @@
+// Insights > Overview > Performance tracker: which days had expenses, sales, production and stock
+// requests logged, and how late. A period chip, the completion figures, then the days as a list
+// (a day opens a sheet with who logged what, when); the table only from 1024 px.
 import { useState, useEffect, useMemo } from 'react';
-import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle, TrendingUp, TrendingDown, Package, FileText, Bug } from 'lucide-react';
+import { Calendar, CheckCircle, XCircle, Clock, AlertTriangle } from 'lucide-react';
 import { InventoryContextType } from '../App';
-import { DatePicker } from './DatePicker';
+import { toast } from 'sonner@2.0.3';
+import { Card } from './ui/card';
+import { EmptyState } from './ui/empty-state';
+import { Field, controlClasses } from './ui/field';
+import { ListGroup, ListRow } from './ui/list-row';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SkeletonListRows, SkeletonStatTiles } from './ui/skeleton';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { cn } from './ui/utils';
+import { HowItWorks, OptionChip, SectionHeading, TextRow } from './insights/parts/common';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { formatDateTimeIST, formatDateIST } from '../utils/timezone';
 import { getAssignedProductionHouseIds, getAssignedStoreIds } from '../utils/entityAccess';
@@ -51,6 +65,8 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   const [periodStats, setPeriodStats] = useState<PeriodStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [openLogDate, setOpenLogDate] = useState<string | null>(null);
+  const [showAllDays, setShowAllDays] = useState(false);
 
   const selectedConcreteStoreId = selectedStoreId && selectedStoreId !== 'all' ? selectedStoreId : null;
   const isProductionIncharge = context.user?.designation === 'production_incharge';
@@ -524,26 +540,26 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'complete':
-        return 'bg-green-100 text-green-800';
+        return 'bg-success-soft text-success';
       case 'partial':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-warning-soft text-warning';
       case 'missing':
-        return 'bg-red-100 text-red-800';
+        return 'bg-danger-soft text-danger';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-surface-2 text-text';
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'complete':
-        return <CheckCircle className="w-5 h-5 text-green-600" />;
+        return <CheckCircle className="w-5 h-5 text-success" />;
       case 'partial':
-        return <AlertTriangle className="w-5 h-5 text-yellow-600" />;
+        return <AlertTriangle className="w-5 h-5 text-warning" />;
       case 'missing':
-        return <XCircle className="w-5 h-5 text-red-600" />;
+        return <XCircle className="w-5 h-5 text-danger" />;
       default:
-        return <Clock className="w-5 h-5 text-gray-600" />;
+        return <Clock className="w-5 h-5 text-text-2" />;
     }
   };
 
@@ -552,7 +568,7 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       // Get access token from user session
       const accessToken = context.user?.accessToken;
       if (!accessToken) {
-        alert('Not authenticated. Please log in again.');
+        toast.error('Not signed in. Please sign in again.');
         return;
       }
 
@@ -571,400 +587,193 @@ export function DataCapture({ context, selectedStoreId, selectedProductionHouseI
       // Check if response has error
       if (data.error) {
         console.error('🐛 Database Debug Error:', data.error);
-        alert(`Error: ${data.error}`);
+        toast.error(`Error: ${data.error}`);
         return;
       }
       
       // Check if response has expected structure
       if (!data.stockRequests) {
         console.error('🐛 Unexpected response structure:', data);
-        alert('Unexpected response structure. Check console for details.');
+        toast.error('Unexpected answer from the server. See the console for details.');
         return;
       }
       
       setDebugInfo(data);
       console.log('🐛 Database Debug Info:', data);
-      alert(`Stock Requests in Database:\n\nCount: ${data.stockRequests.count}\nIDs: ${data.stockRequests.ids.join(', ') || 'None'}\n\nCheck console for more details.`);
+      toast.info(`Stock requests in the database: ${data.stockRequests.count}`, { description: `IDs: ${data.stockRequests.ids.join(', ') || 'none'}. More in the console.` });
     } catch (error) {
       console.error('Error checking database:', error);
-      alert('Error checking database. See console for details.');
+      toast.error('Could not check the database. See the console for details.');
     }
   };
 
+  const STATUS_CHIP: Record<DailyLog['status'], { tone: 'success' | 'warning' | 'danger'; label: string; icon: typeof CheckCircle }> = {
+    complete: { tone: 'success', label: 'Complete', icon: CheckCircle },
+    partial: { tone: 'warning', label: 'Partial', icon: AlertTriangle },
+    missing: { tone: 'danger', label: 'Missing', icon: XCircle },
+  };
+  const openLog = dailyLogs.find((l) => l.date === openLogDate) || null;
+  const logged = (ok: boolean, at: string | null, by: string, what?: string) =>
+    ok ? [what ?? 'Logged', at ? formatDateTime(at) : '', by ? `by ${by}` : ''].filter(Boolean).join(' · ') : 'Not logged';
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
-        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
-          <FileText className="w-6 h-6 text-white" />
-        </div>
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Data Capture Monitor</h1>
-          <p className="text-sm sm:text-base text-gray-500">Track daily data logging and manager performance</p>
-        </div>
-      </div>
+    <div className="flex flex-col gap-5">
+      <SectionHeading
+        title="Data capture"
+        caption="Daily data logging and on-time entry, day by day"
+      />
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Select Period</h2>
-
-          {/* Date Range Selector */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setDateRange('day')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'day'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              Today
-            </button>
-            <button
-              onClick={() => setDateRange('thisMonth')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'thisMonth'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              This Month
-            </button>
-            <button
-              onClick={() => setDateRange('prevMonth')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'prevMonth'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              Last Month
-            </button>
-            <button
-              onClick={() => setDateRange('thisYear')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'thisYear'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              This Year
-            </button>
-            <button
-              onClick={() => setDateRange('prevYear')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'prevYear'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              Last Year
-            </button>
-            <button
-              onClick={() => setDateRange('custom')}
-              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
-                dateRange === 'custom'
-                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              Custom
-            </button>
-          </div>
-        </div>
-
-        {/* Custom Date Range */}
+      <div className="flex flex-col gap-3">
+        <OptionChip
+          title="Period"
+          value={dateRange}
+          onChange={setDateRange}
+          className="self-start"
+          options={[
+            { value: 'day', label: 'Today' },
+            { value: 'thisMonth', label: 'This month' },
+            { value: 'prevMonth', label: 'Last month' },
+            { value: 'thisYear', label: 'This year' },
+            { value: 'prevYear', label: 'Last year' },
+            { value: 'custom', label: 'Custom dates' },
+          ]}
+        />
         {dateRange === 'custom' && (
-          <div className="mt-4 flex flex-wrap gap-4">
-            <DatePicker
-              label="Start Date"
-              value={customStartDate}
-              onChange={setCustomStartDate}
-            />
-            <DatePicker
-              label="End Date"
-              value={customEndDate}
-              onChange={setCustomEndDate}
-            />
+          <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+            <Field label="Start date">
+              <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className={controlClasses} />
+            </Field>
+            <Field label="End date">
+              <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className={controlClasses} />
+            </Field>
           </div>
         )}
-
-
       </div>
 
-      {/* Period Statistics */}
-      {periodStats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
-            <div className="flex items-center gap-2 mb-1">
-              <Calendar className="w-5 h-5 text-blue-100" />
-              <div className="text-xs uppercase tracking-wide text-blue-100">Total Days</div>
-            </div>
-            <div className="text-2xl font-semibold">{periodStats.totalDays}</div>
-          </div>
+      <HowItWorks title="What the statuses mean" label="What Complete, Partial and Late mean" className="-mt-2">
+        <p><span className="font-medium text-text">Complete</span>: both expenses and sales were logged that day.</p>
+        <p><span className="font-medium text-text">Partial</span>: at least one kind of data was logged.</p>
+        <p><span className="font-medium text-text">Missing</span>: nothing was logged.</p>
+        <p><span className="font-medium text-text">Late</span>: an entry was made after midnight.</p>
+      </HowItWorks>
 
-          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 shadow-lg shadow-emerald-500/20 text-white">
-            <div className="flex items-center gap-2 mb-1">
-              <CheckCircle className="w-5 h-5 text-emerald-100" />
-              <div className="text-xs uppercase tracking-wide text-emerald-100">Completion Rate</div>
-            </div>
-            <div className="text-2xl font-semibold">{periodStats.completionRate.toFixed(1)}%</div>
-          </div>
+      {/* Period figures */}
+      {loading && !periodStats ? (
+        <SkeletonStatTiles count={4} />
+      ) : periodStats ? (
+        <>
+          <StatTile
+            hero
+            label="Completion rate"
+            value={`${periodStats.completionRate.toFixed(1)}%`}
+            caption={`${periodStats.totalDays} days in the period · ${periodStats.onTimeRate.toFixed(1)}% complete and on time`}
+          />
+          <StatGrid columns={3}>
+            <StatTile label="On-time rate" value={`${periodStats.onTimeRate.toFixed(1)}%`} />
+            <StatTile label="Total discrepancy" value={`₹${periodStats.totalDiscrepancy.toFixed(2)}`} />
+            <StatTile className="col-span-2 lg:col-span-1" label="Average discrepancy" value={`₹${periodStats.avgDiscrepancy.toFixed(2)}`} caption="Per day with sales logged" />
+          </StatGrid>
+        </>
+      ) : null}
 
-          <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 shadow-lg shadow-amber-500/20 text-white">
-            <div className="flex items-center gap-2 mb-1">
-              <Clock className="w-5 h-5 text-amber-100" />
-              <div className="text-xs uppercase tracking-wide text-amber-100">On-Time Rate</div>
-            </div>
-            <div className="text-2xl font-semibold">{periodStats.onTimeRate.toFixed(1)}%</div>
+      {/* Day by day: a list on phones (tap a day for who logged what, when), a table from 1024 px */}
+      {loading ? (
+        <SkeletonListRows count={6} />
+      ) : dailyLogs.length === 0 ? (
+        <Card><EmptyState compact icon={Calendar} title="No data for this period" /></Card>
+      ) : (
+        <>
+          <ListGroup title="Day by day" meta={`${dailyLogs.length} days`} className="lg:hidden">
+            {dailyLogs.slice(0, showAllDays ? undefined : 14).map((log) => {
+              const s = STATUS_CHIP[log.status];
+              return (
+                <ListRow
+                  key={log.date}
+                  title={<span className="inline-flex items-center gap-2">{formatDate(log.date)}{log.lateEntry && <StatusChip tone="warning" icon={Clock}>Late</StatusChip>}</span>}
+                  subtitle={[
+                    log.inventoryLogged ? `${log.inventoryCount} expense items` : 'No expenses',
+                    log.salesLogged ? 'sales' : 'no sales',
+                    log.productionLogged ? 'production' : 'no production',
+                    log.stockRequestLogged ? 'stock request' : 'no stock request',
+                  ].join(' · ')}
+                  trailing={
+                    <span className="flex flex-col items-end gap-1">
+                      <StatusChip tone={s.tone} icon={s.icon}>{s.label}</StatusChip>
+                      {log.salesLogged && <span className={cn('num text-label', log.cashDiscrepancy > 500 ? 'font-semibold text-danger' : 'text-text-2')}>₹{log.cashDiscrepancy.toFixed(2)}</span>}
+                    </span>
+                  }
+                  onClick={() => setOpenLogDate(log.date)}
+                />
+              );
+            })}
+            {!showAllDays && dailyLogs.length > 14 && (
+              <ListRow muted density="compact" title={`See all (${dailyLogs.length})`} onClick={() => setShowAllDays(true)} chevron="down" />
+            )}
+          </ListGroup>
+          <div className="hidden lg:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Expense</TableHead>
+                  <TableHead>Sales</TableHead>
+                  <TableHead>Production</TableHead>
+                  <TableHead>Stock requests</TableHead>
+                  <TableHead numeric>Cash discrepancy</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {dailyLogs.map((log) => {
+                  const s = STATUS_CHIP[log.status];
+                  const cell = (ok: boolean, at: string | null, by: string, what?: string) =>
+                    ok ? (
+                      <div className="flex flex-col">
+                        <span className="text-text">{what ?? 'Logged'}</span>
+                        <span className="text-label text-text-3">{formatDateTime(at)}</span>
+                        {by && <span className="text-label text-text-3">By {by}</span>}
+                      </div>
+                    ) : <span className="text-text-3">Not logged</span>;
+                  return (
+                    <TableRow key={log.date} className="align-top">
+                      <TableCell className="whitespace-nowrap">
+                        <span className="inline-flex items-center gap-2">{formatDate(log.date)}{log.lateEntry && <StatusChip tone="warning" icon={Clock}>Late</StatusChip>}</span>
+                      </TableCell>
+                      <TableCell><StatusChip tone={s.tone} icon={s.icon}>{s.label}</StatusChip></TableCell>
+                      <TableCell>{cell(log.inventoryLogged, log.inventoryLoggedAt, log.inventoryLoggedBy, `${log.inventoryCount} items`)}</TableCell>
+                      <TableCell>{cell(log.salesLogged, log.salesLoggedAt, log.salesLoggedBy)}</TableCell>
+                      <TableCell>{cell(log.productionLogged, log.productionLoggedAt, log.productionLoggedBy)}</TableCell>
+                      <TableCell>{cell(log.stockRequestLogged, log.stockRequestLoggedAt, log.stockRequestLoggedBy)}</TableCell>
+                      <TableCell numeric className={log.salesLogged && log.cashDiscrepancy > 500 ? 'font-semibold text-danger' : undefined}>{log.salesLogged ? `₹${log.cashDiscrepancy.toFixed(2)}` : '-'}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
-
-          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingDown className="w-5 h-5 text-red-100" />
-              <div className="text-xs uppercase tracking-wide text-red-100">Total Discrepancy</div>
-            </div>
-            <div className="text-2xl font-semibold">₹{periodStats.totalDiscrepancy.toFixed(2)}</div>
-          </div>
-
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingUp className="w-5 h-5 text-orange-100" />
-              <div className="text-xs uppercase tracking-wide text-orange-100">Avg Discrepancy</div>
-            </div>
-            <div className="text-2xl font-semibold">₹{periodStats.avgDiscrepancy.toFixed(2)}</div>
-          </div>
-        </div>
+        </>
       )}
 
-      {/* Daily Logs - stacked cards on mobile (the 7-column table doesn't fit a phone
-          screen even with horizontal scroll - nothing signals there's more to scroll to,
-          so it just looked cut off), a table on larger screens. */}
-      <div className="sm:hidden space-y-3">
-        {loading ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center text-gray-500">
-            Loading data...
-          </div>
-        ) : dailyLogs.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center text-gray-500">
-            No data for selected period
-          </div>
-        ) : (
-          dailyLogs.map((log) => (
-            <div key={log.date} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  {log.lateEntry && (
-                    <span title="Late Entry">
-                      <AlertTriangle className="w-4 h-4 text-orange-500" />
-                    </span>
-                  )}
-                  <span className="text-sm font-medium text-gray-900">{formatDate(log.date)}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {getStatusIcon(log.status)}
-                  <span className={`px-2 py-0.5 text-xs rounded-full ${getStatusColor(log.status)}`}>
-                    {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Expense</span>
-                  {log.inventoryLogged ? (
-                    <span className="text-gray-900 text-right">{log.inventoryCount} items</span>
-                  ) : (
-                    <span className="text-gray-400">Not logged</span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Sales</span>
-                  <span className={log.salesLogged ? 'text-gray-900' : 'text-gray-400'}>
-                    {log.salesLogged ? '✓ Logged' : 'Not logged'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Production</span>
-                  <span className={log.productionLogged ? 'text-gray-900' : 'text-gray-400'}>
-                    {log.productionLogged ? '✓ Logged' : 'Not logged'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Stock Requests</span>
-                  <span className={log.stockRequestLogged ? 'text-gray-900' : 'text-gray-400'}>
-                    {log.stockRequestLogged ? '✓ Logged' : 'Not logged'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Cash Discrepancy</span>
-                  {log.salesLogged ? (
-                    <span className={log.cashDiscrepancy > 500 ? 'text-red-600' : 'text-gray-900'}>
-                      ₹{log.cashDiscrepancy.toFixed(2)}
-                    </span>
-                  ) : (
-                    <span className="text-gray-400">-</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))
+      <ResponsiveModal
+        open={!!openLog}
+        onOpenChange={(o) => { if (!o) setOpenLogDate(null); }}
+        title={openLog ? formatDate(openLog.date) : ''}
+        description={openLog ? `${STATUS_CHIP[openLog.status].label}${openLog.lateEntry ? ' · late entry' : ''}` : undefined}
+        size="form"
+      >
+        {openLog && (
+          <ListGroup>
+            <TextRow title="Expense" lines={[logged(openLog.inventoryLogged, openLog.inventoryLoggedAt, openLog.inventoryLoggedBy, `${openLog.inventoryCount} items`)]} />
+            <TextRow title="Sales" lines={[logged(openLog.salesLogged, openLog.salesLoggedAt, openLog.salesLoggedBy)]} />
+            <TextRow title="Production" lines={[logged(openLog.productionLogged, openLog.productionLoggedAt, openLog.productionLoggedBy)]} />
+            <TextRow title="Stock requests" lines={[logged(openLog.stockRequestLogged, openLog.stockRequestLoggedAt, openLog.stockRequestLoggedBy)]} />
+            <TextRow
+              title="Cash discrepancy"
+              trailing={<span className={cn('num text-body-md font-semibold', openLog.salesLogged && openLog.cashDiscrepancy > 500 ? 'text-danger' : 'text-text')}>{openLog.salesLogged ? `₹${openLog.cashDiscrepancy.toFixed(2)}` : '-'}</span>}
+            />
+          </ListGroup>
         )}
-      </div>
-
-      <div className="hidden sm:block bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  <span>Expense</span>
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Sales
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Production
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Stock Requests
-                </th>
-                <th className="px-6 py-3 text-left text-xs text-gray-700 uppercase tracking-wider">
-                  Cash Discrepancy
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
-                    Loading data...
-                  </td>
-                </tr>
-              ) : dailyLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
-                    No data for selected period
-                  </td>
-                </tr>
-              ) : (
-                dailyLogs.map((log) => (
-                  <tr key={log.date} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {log.lateEntry && (
-                          <span title="Late Entry">
-                            <AlertTriangle className="w-4 h-4 text-orange-500" />
-                          </span>
-                        )}
-                        <span className="text-sm text-gray-900">{formatDate(log.date)}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(log.status)}
-                        <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(log.status)}`}>
-                          {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.inventoryLogged ? (
-                        <div className="text-sm">
-                          <p className="text-gray-900">{log.inventoryCount} items</p>
-                          <p className="text-gray-500">{formatDateTime(log.inventoryLoggedAt)}</p>
-                          {log.inventoryLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.inventoryLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.salesLogged ? (
-                        <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.salesLoggedAt)}</p>
-                          {log.salesLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.salesLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.productionLogged ? (
-                        <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.productionLoggedAt)}</p>
-                          {log.productionLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.productionLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.stockRequestLogged ? (
-                        <div className="text-sm">
-                          <p className="text-gray-900">✓ Logged</p>
-                          <p className="text-gray-500">{formatDateTime(log.stockRequestLoggedAt)}</p>
-                          {log.stockRequestLoggedBy && (
-                            <p className="text-xs text-gray-400">By: {log.stockRequestLoggedBy}</p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-400">Not logged</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {log.salesLogged ? (
-                        <span className={`text-sm ${log.cashDiscrepancy > 500 ? 'text-red-600' : 'text-gray-900'}`}>
-                          ₹{log.cashDiscrepancy.toFixed(2)}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-gray-400">-</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
-        <p className="text-sm text-gray-700 mb-2">Legend:</p>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-green-600" />
-            <span className="text-gray-600">Complete - Both Inventory AND Sales logged</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-yellow-600" />
-            <span className="text-gray-600">Partial - At least one data type logged</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <XCircle className="w-4 h-4 text-red-600" />
-            <span className="text-gray-600">Missing - No data logged</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-orange-500" />
-            <span className="text-gray-600">Orange icon = Late entry (logged after midnight)</span>
-          </div>
-        </div>
-      </div>
+      </ResponsiveModal>
     </div>
   );
 }

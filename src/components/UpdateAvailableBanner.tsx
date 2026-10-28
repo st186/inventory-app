@@ -1,63 +1,86 @@
-import { useEffect, useState } from 'react';
-import { Sparkles, X } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Download, RefreshCw, X } from 'lucide-react';
 import * as api from '../utils/api';
-import { APP_VERSION } from '../utils/appVersion';
+import { APP_VERSION, isNewerVersion } from '../utils/appVersion';
+import { applyUpdateNow, getLiveUpdateState, liveUpdatesOn, onLiveUpdateState, type LiveUpdateState } from '../utils/liveUpdate';
+import { useT } from '../utils/i18n';
 
 const DISMISS_KEY = 'update-banner-dismissed-version';
 
-// Numeric, segment-by-segment compare ("1.10.0" > "1.9.0") - a plain string compare would
-// get that backwards, and this app's version strings are always simple dot-separated
-// integers (see appVersion.ts), never pre-release suffixes.
-function isNewer(latest: string, current: string): boolean {
-  const a = latest.split('.').map((n) => parseInt(n, 10) || 0);
-  const b = current.split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const diff = (a[i] || 0) - (b[i] || 0);
-    if (diff !== 0) return diff > 0;
-  }
-  return false;
-}
-
-// A soft, dismissible nudge - never blocks using the app. Checked once per app load
-// (not polled) since a version change only ever happens between sessions, not mid-session.
-export function UpdateAvailableBanner() {
-  const [latestVersion, setLatestVersion] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    api.getLatestAppVersion().then((v) => {
-      if (v) setLatestVersion(v);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (latestVersion && localStorage.getItem(DISMISS_KEY) === latestVersion) {
-      setDismissed(true);
-    }
-  }, [latestVersion]);
-
-  if (!latestVersion || !isNewer(latestVersion, APP_VERSION) || dismissed) return null;
-
-  const handleDismiss = () => {
-    // Remembers this specific version was dismissed, not "dismissed forever" - the
-    // banner comes back on its own the next time a newer build actually ships.
-    localStorage.setItem(DISMISS_KEY, latestVersion);
-    setDismissed(true);
-  };
-
+/** The banner itself (info tone, dismissible), with an optional action button. */
+export function UpdateBanner({ version, onDismiss, text, action }: { version: string; onDismiss: () => void; text?: ReactNode; action?: ReactNode }) {
+  const { t } = useT();
   return (
-    <div className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm">
-      <Sparkles className="w-4 h-4 flex-shrink-0" />
-      <span className="flex-1 min-w-0">
-        A new version (v{latestVersion}) is available - ask your admin for the updated app to get the latest fixes.
+    <div className="flex items-center gap-3 border-b border-info-border bg-info-soft py-1 pr-1 pl-4 text-body-sm text-text" role="status">
+      <Download className="size-5 shrink-0 text-info" aria-hidden="true" />
+      <span className="min-w-0 flex-1 py-2">
+        {text ?? `A new version (v${version}) is available - ask your admin for the updated app to get the latest fixes.`}
       </span>
+      {action}
       <button
-        onClick={handleDismiss}
-        className="p-1 rounded-full hover:bg-white/20 transition-colors flex-shrink-0"
-        aria-label="Dismiss"
+        type="button"
+        onClick={onDismiss}
+        className="inline-flex size-11 min-h-11 shrink-0 items-center justify-center rounded-full text-text-2 hover:bg-info-border/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={t('common.close')}
       >
-        <X className="w-4 h-4" />
+        <X className="size-5" aria-hidden="true" />
       </button>
     </div>
   );
+}
+
+const ACTION = 'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-info px-4 text-body-sm font-semibold text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+// A soft, dismissible nudge - never blocks using the app.
+// - Android app: from the live-update manifest (utils/liveUpdate.ts). A newer APK gets a
+//   Download button (the phone's browser downloads it and Android asks to install; a copy from
+//   the Play Store gets an Update button to its Play listing instead); a live
+//   update that has downloaded says it switches in on the next open, with Restart now.
+// - Browser: GET /app-version, checked once per load (a reload already brings the new site).
+export function UpdateAvailableBanner() {
+  const { t } = useT();
+  const native = liveUpdatesOn();
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveUpdateState>(getLiveUpdateState);
+  const [dismissed, setDismissed] = useState<string | null>(() => {
+    try { return localStorage.getItem(DISMISS_KEY); } catch { return null; }
+  });
+
+  useEffect(() => {
+    if (native) return onLiveUpdateState(setLive);
+    api.getLatestAppVersion().then((v) => { if (v) setLatestVersion(v); });
+  }, [native]);
+
+  // Remembers which version was dismissed, not "dismissed forever": the next one shows again.
+  const dismiss = (version: string) => {
+    try { localStorage.setItem(DISMISS_KEY, version); } catch { /* private mode */ }
+    setDismissed(version);
+  };
+
+  if (native) {
+    if (live.apk && dismissed !== live.apk.version) {
+      return (
+        <UpdateBanner
+          version={live.apk.version}
+          onDismiss={() => dismiss(live.apk!.version)}
+          text={t(live.apk.store ? 'update.playReady' : 'update.apkReady', { version: live.apk.version })}
+          action={<a href={live.apk.url} target="_blank" rel="noreferrer" className={ACTION}><Download className="size-4" aria-hidden="true" />{t(live.apk.store ? 'update.openPlay' : 'update.download')}</a>}
+        />
+      );
+    }
+    if (live.readyVersion && dismissed !== live.readyVersion) {
+      return (
+        <UpdateBanner
+          version={live.readyVersion}
+          onDismiss={() => dismiss(live.readyVersion!)}
+          text={t('update.bundleReady', { version: live.readyVersion })}
+          action={<button type="button" onClick={applyUpdateNow} className={ACTION}><RefreshCw className="size-4" aria-hidden="true" />{t('update.restart')}</button>}
+        />
+      );
+    }
+    return null;
+  }
+
+  if (!latestVersion || !isNewerVersion(latestVersion, APP_VERSION) || dismissed === latestVersion) return null;
+  return <UpdateBanner version={latestVersion} onDismiss={() => dismiss(latestVersion)} />;
 }

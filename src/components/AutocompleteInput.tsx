@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { controlClasses, useFieldControlProps } from './ui/field';
 
 type Props = {
   value: string;
@@ -10,10 +11,12 @@ type Props = {
 };
 
 // Native <input list> + <datalist> autocomplete — suggests, never restricts,
-// so free-text entry still works for genuinely new descriptions.
+// so free-text entry still works for genuinely new descriptions. Looks like every other field
+// (48 px, 16 px text); inside a <Field> it picks up the label, help and error wiring.
 export function AutocompleteInput({ value, onChange, suggestions, placeholder, required, className }: Props) {
   const listId = useId();
   const uniqueSuggestions = [...new Set(suggestions.map((s) => s.trim()).filter(Boolean))];
+  const field = useFieldControlProps({ required } as { required?: boolean; id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean; disabled?: boolean });
 
   return (
     <>
@@ -23,8 +26,9 @@ export function AutocompleteInput({ value, onChange, suggestions, placeholder, r
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        required={required}
-        className={className || 'w-full px-3 py-2 border border-gray-300 rounded-lg'}
+        autoComplete="off"
+        {...field}
+        className={className || controlClasses}
       />
       <datalist id={listId}>
         {uniqueSuggestions.map((s) => (

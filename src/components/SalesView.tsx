@@ -1,34 +1,49 @@
+// Day review for everyone but the store incharge (owner, operations, production incharge): the
+// day close read-only, approvals for the cluster head, and the Cash & Paytm pieces (top-ups,
+// Paytm ledger, weekly reconciliation). Payouts and loans open on their own Money tabs.
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { InventoryContextType, SalesData } from '../App';
-import { DateSelector } from './DateSelector';
-import { DatePicker } from './DatePicker';
 import { OnlineSalesTab } from './OnlineSalesTab';
 import { LoanManagementSection } from './LoanManagementSection';
 import { CashTopupHistory } from './CashTopupHistory';
-import { addDays, formatDateIST, formatDateTimeIST, getTodayIST } from '../utils/timezone';
+import { addDays, formatDateIST, getTodayIST } from '../utils/timezone';
 import { getAssignedStoreIds, getDefaultStoreId } from '../utils/entityAccess';
 import { getChannelRevenueFromCategorySales } from '../utils/salesRevenue';
 import { computeExpectedPaytmBalance } from '../utils/paytmBalance';
+import { approvedAfterCount } from '../utils/paytmRules';
+import { paidOutsideStoreTill } from '../utils/cashSource';
 import { PaytmLedger } from './PaytmLedger';
-import { Eye, Lock, Banknote, Smartphone, Wallet, CheckCircle, Clock, PlusCircle, XCircle, IndianRupee, RefreshCw, FileSpreadsheet, HandCoins, AlertTriangle, TrendingUp, Factory } from 'lucide-react';
+import { Check, Clock, Factory, Plus, RefreshCw, Smartphone, Wallet } from 'lucide-react';
 import { PaytmWeeklyReconciliation } from './PaytmWeeklyReconciliation';
 import * as api from '../utils/api';
 import { toast } from 'sonner';
+import { useT } from '../utils/i18n';
+import { confirm, promptText } from './ui/confirm';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { EmptyState } from './ui/empty-state';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { ListGroup, ListRow } from './ui/list-row';
+import { Money, MoneyInput, formatINR } from './ui/money';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { SkeletonListRows } from './ui/skeleton';
+import { StatGrid, StatSplit, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { FigureCard, FigureRow, MoneyPage, Section, StickyFooter } from './money/MoneyLayout';
+import { DayBand, DayStatusBanner, DiffChip, FormulaSheet, TopupRow, TopupSheet, type DayStatus, type FormulaLine } from './money/DayCloseParts';
+import { PRODUCTION_CASH_GO_LIVE_DATE, viewLiveCashReconciliation, viewStoreCashCard } from './money/dayCloseMath';
+import { toastPosSyncError, toastPosSyncResult, useShellHasMoneyTab } from './money/moneyShell';
 
 type Props = {
   context: InventoryContextType;
   selectedStoreId?: string | null;
+  /** The tab to open on (the shell's Money > Payouts / Loans). */
+  initialTab?: 'entry' | 'payout' | 'loans' | 'cash';
 };
 
-const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
-  store_inventory: 'Store Inventory',
-  production_inventory: 'Production House Inventory',
-  other: 'Other',
-};
 
-// Matches the backend's PRODUCTION_CASH_GO_LIVE_DATE (index.ts) and
-// SalesManagement.tsx's own copy of the same constant exactly - see either for why.
-const PRODUCTION_CASH_GO_LIVE_DATE = '2026-08-21';
 
 const getSalesAmountTotal = (sale: SalesData) =>
   (sale.offlineSales || 0) +
@@ -39,7 +54,8 @@ const getSalesAmountTotal = (sale: SalesData) =>
 const getOnlineEntryTotal = (sale: api.OnlineSalesEntry) =>
   (sale.zomatoSales || 0) + (sale.swiggySales || 0);
 
-export function SalesView({ context, selectedStoreId }: Props) {
+export function SalesView({ context, selectedStoreId, initialTab = 'entry' }: Props) {
+  const { t } = useT();
   const [selectedDate, setSelectedDate] = useState<string>(
     getTodayIST()
   );
@@ -53,8 +69,10 @@ export function SalesView({ context, selectedStoreId }: Props) {
   // DateSelector first) used to silently apply to whatever date the page was showing, not
   // the date the requester actually meant.
   const [topupDate, setTopupDate] = useState(selectedDate);
-  const [topupAmount, setTopupAmount] = useState('');
+  const [topupAmount, setTopupAmount] = useState<number | null>(null);
   const [topupTargetStoreId, setTopupTargetStoreId] = useState('');
+  // Cluster head only: where the cash goes - 'store:<id>' or 'ph:<productionHouseId>'.
+  const [topupDestination, setTopupDestination] = useState('');
   const [isSubmittingTopup, setIsSubmittingTopup] = useState(false);
   const [resolvingTopupId, setResolvingTopupId] = useState<string | null>(null);
   const [resolvingDiscrepancyId, setResolvingDiscrepancyId] = useState<string | null>(null);
@@ -66,7 +84,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
   const [bulkSyncProgress, setBulkSyncProgress] = useState<{ done: number; total: number } | null>(null);
   const [onlineLoans, setOnlineLoans] = useState<api.OnlineLoan[]>([]);
   const [isLoadingLoans, setIsLoadingLoans] = useState(false);
-  const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans'>('entry');
+  const [activeTab, setActiveTab] = useState<'entry' | 'payout' | 'loans' | 'cash'>(initialTab);
 
   const isOperationsManager =
     context.user?.role === 'manager' && context.user?.designation !== 'store_incharge' && context.user?.designation !== 'production_incharge';
@@ -195,6 +213,14 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
   const productionCashOpening = productionCashEntry?.openingBalance ?? productionCashLive?.openingBalance ?? 0;
   const productionCashExpenses = productionCashEntry?.productionExpenses ?? productionCashLive?.productionExpenses ?? 0;
+  // The part of those expenses that was store bills paid out of production's cash (the
+  // server already counts them in productionExpenses; this only explains the figure).
+  const productionCashStoreBills = useMemo(() => {
+    if (!productionHouseIdForTotal) return 0;
+    return [...context.inventory, ...context.overheads, ...context.fixedCosts]
+      .filter((item: any) => item.date === selectedDate && item.paidFromProductionHouseId === productionHouseIdForTotal)
+      .reduce((sum: number, item: any) => sum + (item.totalCost ?? item.amount ?? 0), 0);
+  }, [context.inventory, context.overheads, context.fixedCosts, selectedDate, productionHouseIdForTotal]);
   const productionCashTopup = productionCashEntry?.cashTopupCredited ?? productionCashLive?.cashTopupCredited ?? 0;
   const productionCashExpectedClosing = productionCashEntry?.expectedClosingCashInHand ?? productionCashLive?.expectedClosingCashInHand ?? 0;
   const productionCashDiscrepancy = productionCashInput ? (parseFloat(productionCashInput) || 0) - productionCashExpectedClosing : 0;
@@ -231,7 +257,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
   const handleRequestProductionCashApproval = async () => {
     if (!context.user?.accessToken || !productionCashEntry) return;
-    if (!confirm(`Request cluster head approval for a ₹${Math.abs(productionCashDiscrepancy).toFixed(2)} discrepancy?`)) return;
+    if (!(await confirm({ title: 'Ask for approval?', body: `The production cash is off by ${formatINR(Math.abs(productionCashDiscrepancy))}. The cluster head will be asked to approve it.`, confirmLabel: 'Ask for approval' }))) return;
     setProductionCashSubmitting(true);
     try {
       const actualCashInHand = parseFloat(productionCashInput) || 0;
@@ -247,7 +273,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
   const handleApproveProductionCash = async (id: string) => {
     if (!context.user?.accessToken) return;
-    if (!confirm('Approve this production cash discrepancy?')) return;
+    if (!(await confirm({ title: 'Approve this production cash difference?', confirmLabel: 'Approve' }))) return;
     try {
       const entry = await api.approveProductionCashDiscrepancy(context.user.accessToken, id);
       if (productionCashEntry?.id === id) setProductionCashEntry(entry);
@@ -259,7 +285,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
   const handleRejectProductionCash = async (id: string) => {
     if (!context.user?.accessToken) return;
-    const reason = prompt('Reason for rejecting this discrepancy:') || '';
+    const reason = await promptText({ title: 'Reject this production cash difference?', label: 'Reason', confirmLabel: 'Reject', tone: 'danger' });
+    if (reason === null) return;
     try {
       const entry = await api.rejectProductionCashDiscrepancy(context.user.accessToken, id, reason);
       if (productionCashEntry?.id === id) setProductionCashEntry(entry);
@@ -340,16 +367,11 @@ export function SalesView({ context, selectedStoreId }: Props) {
       const result = (isClusterHead && isViewingPastDate)
         ? await api.backfillPosSync(context.user.accessToken, selectedDate)
         : await api.triggerPosSync(context.user.accessToken);
-      if (result?.skipped) {
-        toast(result.message || "Skipped - store hasn't opened yet");
-      } else if (result?.success) {
-        await context.refreshData();
-        toast.success(isViewingPastDate ? `Re-synced ${selectedDate}` : 'POS sync complete');
-      } else {
-        toast.error(result?.error || 'POS sync ran but reported an error - check the results');
-      }
+      if (!result?.skipped && result?.success) await context.refreshData();
+      // Between 11:50 PM and 6:10 AM the server pauses syncs and says so - a calm notice, not an error.
+      toastPosSyncResult(result, isViewingPastDate ? `Re-synced ${selectedDate}` : 'POS sync complete');
     } catch (error: any) {
-      toast.error(error?.message || 'Failed to trigger POS sync');
+      toastPosSyncError(error);
     } finally {
       setIsSyncingPos(false);
     }
@@ -399,7 +421,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
   };
 
   const handleRequestTopup = async () => {
-    const amount = parseFloat(topupAmount);
+    const amount = topupAmount ?? 0;
     if (!amount || amount <= 0) {
       toast.error('Please enter a valid amount');
       return;
@@ -409,9 +431,30 @@ export function SalesView({ context, selectedStoreId }: Props) {
       toast.error('Please select which store to credit');
       return;
     }
+    if (isClusterHead && !topupDestination) {
+      toast.error('Pick where the cash goes');
+      return;
+    }
 
     setIsSubmittingTopup(true);
     try {
+      if (isClusterHead) {
+        // A cluster head's top-up needs no approval - it is credited straight away.
+        const [kind, targetId] = topupDestination.split(':');
+        const toProduction = kind === 'ph';
+        await api.requestCashTopup(
+          context.user.accessToken,
+          topupDate,
+          amount,
+          toProduction ? 'production_inventory' : (topupReason === 'production_inventory' ? 'store_inventory' : topupReason),
+          toProduction ? undefined : targetId,
+          toProduction ? targetId : undefined
+        );
+        const name = toProduction
+          ? (context.productionHouses || []).find((h) => h.id === targetId)?.name || 'production house'
+          : (context.stores || []).find((st) => st.id === targetId)?.name || 'store';
+        toast.success(`₹${amount.toLocaleString('en-IN')} added to ${name} cash`);
+      } else {
       await api.requestCashTopup(
         context.user.accessToken,
         topupDate,
@@ -420,8 +463,9 @@ export function SalesView({ context, selectedStoreId }: Props) {
         isProductionIncharge ? topupTargetStoreId : undefined
       );
       toast.success('Cash top-up request sent to the cluster head');
+      }
       setShowTopupModal(false);
-      setTopupAmount('');
+      setTopupAmount(null);
       setTopupReason(defaultTopupReason);
       setTopupTargetStoreId('');
       loadTopupRequests();
@@ -432,12 +476,19 @@ export function SalesView({ context, selectedStoreId }: Props) {
     }
   };
 
-  const handleApproveTopup = async (id: string) => {
+  // An event stall's request (events.ts) is approved from the store's Paytm or the production
+  // house's cash - the button pressed says which.
+  const handleApproveTopup = async (id: string, fundingSource?: 'store_paytm' | 'production_cash') => {
     if (!context.user?.accessToken) return;
-    if (!confirm('Approve this cash top-up? The amount will move from Online to Offline Cash in Hand.')) return;
+    const question = fundingSource === 'production_cash'
+      ? "Approve this event cash? It comes out of the production house's cash in hand."
+      : fundingSource === 'store_paytm'
+        ? "Approve this event cash? It comes off the store's Paytm balance."
+        : 'Approve this cash top-up? The amount will move from Online to Offline Cash in Hand.';
+    if (!(await confirm({ title: fundingSource ? 'Approve this event cash?' : 'Approve this cash top-up?', body: question.replace(/^Approve this (event cash|cash top-up)\? /, ''), confirmLabel: fundingSource === 'production_cash' ? 'From production cash' : fundingSource === 'store_paytm' ? 'From store Paytm' : 'Approve' }))) return;
     setResolvingTopupId(id);
     try {
-      await api.approveCashTopup(context.user.accessToken, id);
+      await api.approveCashTopup(context.user.accessToken, id, fundingSource);
       toast.success('Cash top-up approved');
       loadTopupRequests();
     } catch (error: any) {
@@ -449,7 +500,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
 
   const handleRejectTopup = async (id: string) => {
     if (!context.user?.accessToken) return;
-    const reason = prompt('Reason for rejecting this cash top-up request:') || '';
+    const reason = await promptText({ title: 'Reject this top-up request?', label: 'Reason', confirmLabel: 'Reject', tone: 'danger' });
+    if (reason === null) return;
     setResolvingTopupId(id);
     try {
       await api.rejectCashTopup(context.user.accessToken, id, reason);
@@ -476,7 +528,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
   }, [context.salesData, matchesStoreScope]);
 
   const handleApproveDiscrepancy = async (id: string) => {
-    if (!confirm('Approve this discrepancy? The reported cash amount will be accepted.')) return;
+    if (!(await confirm({ title: 'Approve this difference?', body: 'The reported cash amount will be accepted.', confirmLabel: 'Approve' }))) return;
     setResolvingDiscrepancyId(id);
     try {
       await context.approveDiscrepancy(id);
@@ -489,7 +541,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
   };
 
   const handleRejectDiscrepancy = async (id: string) => {
-    const reason = prompt('Reason for rejecting this discrepancy:') || '';
+    const reason = await promptText({ title: 'Reject this day close?', label: 'Reason', helper: 'The store incharge sees this and pays the difference.', confirmLabel: 'Reject', tone: 'danger' });
+    if (reason === null) return;
     setResolvingDiscrepancyId(id);
     try {
       await context.rejectDiscrepancy(id, reason);
@@ -693,60 +746,23 @@ export function SalesView({ context, selectedStoreId }: Props) {
   // "expected" figure shown just above it. Recomputing here - the exact same formula the
   // "Actual cash in hand" card below already uses - keeps the two numbers in sync and
   // lets the sign (+over / -short) come through instead of an always-positive magnitude.
-  const liveCashReconciliation = useMemo(() => {
-    // entry.actualCashInHand is never null/undefined here - the aggregate-entry builder
-    // above sums it with `|| 0`, so an all-pos-sync (nothing reconciled yet) day still
-    // comes out as a real 0, not a missing value. createdBy === 'pos-sync' is the actual
-    // "hasn't been counted yet" signal (same check the "Estimated cash in hand" card uses).
-    if (!entry || entry.createdBy === 'pos-sync' || entry.actualCashInHand === undefined || entry.actualCashInHand === null) return null;
-    const isAggregateEntry = entry.storeId === 'all';
-    const previousDateStr = addDays(selectedDate, -1);
-    const previousDayEntry = isAggregateEntry
-      ? null
-      : context.salesData.find((s) => s.date === previousDateStr && (effectiveStoreId ? s.storeId === effectiveStoreId : true));
-    const previousEntry = previousDayEntry?.actualCashInHand !== undefined && previousDayEntry.actualCashInHand !== null
-      ? previousDayEntry
-      : [...context.salesData]
-        .filter((s) => s.date < selectedDate && (effectiveStoreId ? s.storeId === effectiveStoreId : true) && s.actualCashInHand !== undefined && s.actualCashInHand !== null)
-        .sort((a, b) => b.date.localeCompare(a.date))[0];
-    // From PRODUCTION_CASH_GO_LIVE_DATE onward, production has its own cash ledger (see
-    // ProductionManagement.tsx's Cash in Hand tab) - the store's own expected-cash figure
-    // goes back to being strictly the store's own spend, and its carry-forward chain stops
-    // (every day on/after go-live starts fresh at 0, matching SalesManagement.tsx's own
-    // gate on this same date). Dates before go-live keep the old blended behavior as-is.
-    const includeProductionSpend = selectedDate < PRODUCTION_CASH_GO_LIVE_DATE;
-    const prevCash = selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE
-      ? 0
-      : isAggregateEntry
-        ? carriedBalancesForDisplay.cash
-        : previousEntry?.actualCashInHand ?? entry.previousCashInHand ?? 0;
-    const cashTopup = entry.usedOnlineMoney ?? 0;
-    const cashReceived = entry.cashAmount || 0;
-    // THIS STORE's own cash expenses only - see the identical fix and its full comment on
-    // the "Store Cash in Hand" card's own inline todaysExpenses just below. This is a
-    // separate, duplicate copy of that same formula (drives "Cash discrepancy" instead of
-    // the "Actual cash in hand" line directly above it) that was missed when the other one
-    // was fixed - confirmed real bug: it kept including production-house spend (pre-go-live)
-    // and, with no store resolved, every other store's expenses too, so "Cash discrepancy"
-    // silently disagreed with the "expected" figure shown one row above it.
-    const todaysExpenses = [...context.inventory, ...context.overheads, ...context.fixedCosts]
-      .filter((item: any) => {
-        if (item.date !== selectedDate) return false;
-        if (item.entityType === 'production_house') return false;
-        if (isAggregateEntry) return matchesStoreScope(item.storeId);
-        if (!effectiveStoreId) return true;
-        return item.storeId === effectiveStoreId;
-      })
-      .reduce((sum: number, item: any) => {
-        const amount = item.totalCost ?? item.amount ?? 0;
-        if (item.paymentMethod === 'both') return sum + (item.cashAmount || 0);
-        if (item.paymentMethod === 'online') return sum;
-        return sum + amount; // default/'cash'
-      }, 0);
-    const expectedCash = prevCash + cashTopup + cashReceived - todaysExpenses;
-    const actualCashInHand = entry.actualCashInHand ?? 0;
-    return { expectedCash, actualCashInHand, discrepancy: actualCashInHand - expectedCash };
-  }, [entry, selectedDate, effectiveStoreId, context.salesData, context.stores, context.inventory, context.overheads, context.fixedCosts, scopedStoreIdsForDisplay, carriedBalancesForDisplay]);
+  const viewScope = {
+    inventory: context.inventory,
+    overheads: context.overheads,
+    fixedCosts: context.fixedCosts,
+    selectedDate,
+    effectiveStoreId,
+    matchesStoreScope,
+    salesData: context.salesData,
+    carriedCash: carriedBalancesForDisplay.cash,
+  };
+  // Same formula as the "Store Cash in Hand" card (money/dayCloseMath.ts); null until counted.
+  const liveCashReconciliation = useMemo(
+    () => viewLiveCashReconciliation({ ...viewScope, entry }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [entry, selectedDate, effectiveStoreId, context.salesData, context.stores, context.inventory, context.overheads, context.fixedCosts, scopedStoreIdsForDisplay, carriedBalancesForDisplay]
+  );
+  const storeCashCard = entry ? viewStoreCashCard({ ...viewScope, entry }) : null;
 
   // Store half of the composite "Total Cash in Hand" card (Phase 3, below) - same formula
   // liveCashReconciliation uses, but returns an estimate instead of null on a day nobody's
@@ -765,6 +781,7 @@ export function SalesView({ context, selectedStoreId }: Props) {
       .filter((item: any) => item.date === selectedDate && item.entityType !== 'production_house' && (isAggregateEntry ? matchesStoreScope(item.storeId) : item.storeId === effectiveStoreId))
       .reduce((sum: number, item: any) => {
         const amount = item.totalCost ?? item.amount ?? 0;
+        if (paidOutsideStoreTill(item)) return sum; // own money, or paid from production's cash
         if (item.paymentMethod === 'both') return sum + (item.cashAmount || 0);
         if (item.paymentMethod === 'online') return sum;
         return sum + amount;
@@ -817,8 +834,8 @@ export function SalesView({ context, selectedStoreId }: Props) {
     const carriedCash = includeCarriedCash
       ? carriedBalances.reduce((sum, item) => sum + (item.cash?.actualCashInHand ?? 0), 0)
       : 0;
-    const carriedPaytm = carriedBalances.reduce((sum, item) => sum + (item.paytm?.actualPaytmBalance ?? 0), 0);
-    const hasCarriedData = carriedBalances.some((item) => item.cash || item.paytm);
+    const recalibratedToday = (context.onlineCashRecalibrations || []).some((r) => scopeStoreIds.includes(r.storeId) && r.date === selectedDate);
+    const hasCarriedData = carriedBalances.some((item) => item.cash || item.paytm) || recalibratedToday;
 
     // Excludes production_inventory top-ups - those fund the production house's own till,
     // not the store's, and already count toward productionAmount below via the production
@@ -853,8 +870,13 @@ export function SalesView({ context, selectedStoreId }: Props) {
     let cashExpenses = 0;
     let onlineExpenses = 0;
     for (const item of todaysStoreExpenses as any[]) {
+      // Aggregator commission entries are already taken off inside the Paytm formula below.
+      if ((item.category === 'service_charge' && item.description?.includes('Aggregator Commission')) || item.category === 'commission') continue;
       const amount = item.totalCost ?? item.amount ?? 0;
-      if (item.paymentMethod === 'both') {
+      if (paidOutsideStoreTill(item)) {
+        // Cluster head's own money (neither the store's cash nor Paytm), or a store bill paid
+        // from production's cash (already inside productionAmount below).
+      } else if (item.paymentMethod === 'both') {
         cashExpenses += item.cashAmount || 0;
         onlineExpenses += item.onlineAmount || 0;
       } else if (item.paymentMethod === 'online') {
@@ -872,1182 +894,566 @@ export function SalesView({ context, selectedStoreId }: Props) {
       : (productionCashEntry?.actualCashInHand ?? productionCashEntry?.expectedClosingCashInHand ?? productionCashLive?.expectedClosingCashInHand ?? 0);
     const storeCash = carriedCash + approvedTopupsToday - cashExpenses;
 
+    // Paytm uses the same formula as the main Paytm card and the entry form
+    // (utils/paytmBalance.ts), so a recalibration, settlements, payouts and loans since the
+    // last saved day all count. Carrying forward only the last sales record's balance used
+    // to ignore a recalibration logged after it (24 Oct: showed ₹24,456 against a ₹56,658
+    // recalibration). Today's sales aren't in yet, so todaysPaytmReceived is 0. Today's
+    // store-reason top-ups go in as used online money: the formula takes them off, and both
+    // top-up reasons on a recalibration day only when approved after the count.
+    const paytmOpening = scopeStoreIds.reduce((sum, storeId, i) => {
+      // A store with no Paytm history at all (no saved balance, no recalibration) counts as
+      // ₹0, as before: the formula's from-scratch branch would sum every untagged payout ever.
+      if (!carriedBalances[i].paytm && !(context.onlineCashRecalibrations || []).some((r) => r.storeId === storeId)) return sum;
+      const storeTopupsToday = topupRequests
+        .filter((r) => r.storeId === storeId && r.date === selectedDate && r.status === 'approved' && r.reason !== 'production_inventory')
+        .reduce((s, r) => s + r.requestedAmount, 0);
+      return sum + computeExpectedPaytmBalance({
+        salesData: context.salesData,
+        overheads: context.overheads,
+        aggregatorSettlements: context.aggregatorSettlements || [],
+        onlinePayoutData: [], // legacy manual payout table not loaded here; effectively dead
+        onlineLoans,
+        employeePayouts,
+        topupRequests,
+        onlineCashRecalibrations: context.onlineCashRecalibrations || [],
+        selectedDate,
+        effectiveStoreId: storeId,
+        todaysPaytmReceived: 0,
+        todaysUsedOnlineMoney: storeTopupsToday,
+      }).balance;
+    }, 0);
+
     return {
-      carriedCash, carriedPaytm, hasCarriedData, approvedTopupsToday, productionTopupsToday, cashExpenses, onlineExpenses, prevDateStr,
+      carriedCash, paytmOpening, recalibratedToday, hasCarriedData, approvedTopupsToday, productionTopupsToday, cashExpenses, onlineExpenses, prevDateStr,
       storeCount: scopeStoreIds.length,
       storeCash, productionAmount, isPostGoLive: !includeCarriedCash,
       liveCash: storeCash + productionAmount,
-      // Both top-up reasons drain Paytm the moment they're approved (see
-      // productionTopupsToday above) - a bug fix, not new behavior: this line previously
-      // subtracted neither, overstating this estimate by the full top-up amount on any day
-      // with an approved top-up but no sales entry saved yet.
-      livePaytm: carriedPaytm - onlineExpenses - approvedTopupsToday - productionTopupsToday,
+      livePaytm: paytmOpening - onlineExpenses,
     };
-  }, [hasSalesEntries, scopedStoreIds, selectedDate, context.stores, context.salesData, context.inventory, context.overheads, context.fixedCosts, topupRequests, productionCashEntry, productionCashLive]);
+  }, [hasSalesEntries, scopedStoreIds, selectedDate, context.stores, context.salesData, context.inventory, context.overheads, context.fixedCosts, context.aggregatorSettlements, context.onlineCashRecalibrations, onlineLoans, employeePayouts, topupRequests, productionCashEntry, productionCashLive]);
+
+  // ---- Day review (owner / operations / production incharge), wireframe DayClose read-only ----
+  const shellHasTab = {
+    entry: useShellHasMoneyTab('SalesView', 'entry'),
+    payout: useShellHasMoneyTab('SalesView', 'payout'),
+    loans: useShellHasMoneyTab('SalesView', 'loans'),
+    cash: useShellHasMoneyTab('SalesView', 'cash'),
+  };
+  const [formulaOpen, setFormulaOpen] = useState(false);
+  // The Money tab's own sub-tabs replace this screen's tab row when the shell has them.
+  const tabOptions = [
+    { value: 'entry' as const, label: 'Sales' },
+    ...(canManagePayouts ? [{ value: 'payout' as const, label: 'Payouts' }] : []),
+    ...((isOperationsManager || isClusterHead) ? [{ value: 'loans' as const, label: 'Loans' }] : []),
+  ];
+  const showInnerTabs = tabOptions.length > 1 && !shellHasTab[activeTab === 'cash' ? 'cash' : activeTab];
+  // Paytm ledger, weekly reconciliation and top-ups: their own tab once the shell routes
+  // Money > Cash & Paytm here; until then they follow the day review, as before.
+  const cashOnOwnTab = shellHasTab.cash;
+  const showCashContent = activeTab === 'cash' || (activeTab === 'entry' && !cashOnOwnTab);
+  const canSync = isOperationsManager || isClusterHead || isStoreIncharge || isProductionIncharge;
+  const syncButton = canSync ? (
+    <Button variant="secondary" size="sm" leadingIcon={<RefreshCw className={isSyncingPos ? 'animate-spin' : undefined} />} onClick={handleSyncPosNow} disabled={isSyncingPos || syncDisabledForTiming}>
+      {isSyncingPos ? t('dc.syncing') : isClusterHead && isViewingPastDate ? 'Re-sync' : t('dc.syncNow')}
+    </Button>
+  ) : null;
+
+  const reviewStatus: DayStatus | null = !entry ? null
+    : entry.createdBy === 'pos-sync' ? { kind: 'notStarted' }
+    : entry.rejectedBy ? { kind: 'rejected', by: entry.rejectedBy, at: entry.rejectedAt, reason: entry.rejectionReason }
+    : entry.approvalStatus === 'approved' ? { kind: 'approved', by: entry.approvedBy || entry.createdByName || entry.createdBy, at: entry.approvedAt }
+    : { kind: 'submitted', asked: !!entry.approvalRequested, needsApproval: true };
+  // The viewed day's own discrepancy request: the cluster head decides it from the sticky bar.
+  const pendingThisDay = isClusterHead && singleStoreEntry && singleStoreEntry.approvalRequested && !singleStoreEntry.approvedBy && !singleStoreEntry.rejectedBy ? singleStoreEntry : null;
+
+  // The day's Paytm figure (same formula as the store incharge's form, utils/paytmBalance.ts).
+  const paytmCard = (() => {
+    if (!entry) return null;
+    const isAggregateEntry = entry.storeId === 'all';
+    const expectedResult = computeExpectedPaytmBalance({
+      salesData: context.salesData,
+      overheads: context.overheads,
+      aggregatorSettlements: context.aggregatorSettlements || [],
+      onlinePayoutData: [], // legacy manual payout table not loaded here; effectively dead
+      onlineLoans,
+      employeePayouts,
+      topupRequests,
+      onlineCashRecalibrations: context.onlineCashRecalibrations || [],
+      selectedDate,
+      effectiveStoreId: effectiveStoreId ?? null,
+      todaysPaytmReceived: entry.paytmAmount || 0,
+      todaysUsedOnlineMoney: entry.usedOnlineMoney ?? 0,
+    });
+    const expectedPaytm = expectedResult.balance;
+    const previousPaytm = expectedResult.startingBalance;
+    const todaysPaytm = entry.paytmAmount || 0;
+    const hasActualPaytm = entry.actualPaytmBalance !== undefined && entry.actualPaytmBalance !== null && entry.createdBy !== 'pos-sync';
+    const contractPayouts = employeePayouts
+      .filter((p) => p.date === selectedDate && (p.paidFrom == null || p.paidFrom === 'paytm') && (isAggregateEntry || !effectiveStoreId ? true : (!p.storeId || p.storeId === effectiveStoreId)))
+      .reduce((sum, p) => sum + (p.amount || 0), 0);
+    const aggregatorPayout = (context.aggregatorSettlements || [])
+      .filter((s) => s.settlementDate === selectedDate && (isAggregateEntry || !effectiveStoreId ? true : s.storeId === effectiveStoreId))
+      .reduce((sum, s) => sum + (s.netPayout || 0), 0);
+    // A same-day Paytm reconciliation is ground truth; a top-up approved after its count is the
+    // one thing it couldn't have accounted for (both top-up reasons drain the same Paytm).
+    const todaysRecalibration = !isAggregateEntry && effectiveStoreId
+      ? (context.onlineCashRecalibrations || []).find((r) => r.storeId === effectiveStoreId && r.date === selectedDate)
+      : null;
+    if (todaysRecalibration) {
+      const recalTs = todaysRecalibration.createdAt;
+      const lateTopups = topupRequests
+        .filter((t) => t.storeId === effectiveStoreId && t.status === 'approved' && t.date === selectedDate && approvedAfterCount(t, todaysRecalibration))
+        .reduce((sum, t) => sum + (t.requestedAmount || 0), 0);
+      const reconciledPaytm = todaysRecalibration.actualBalance + todaysPaytm + aggregatorPayout - contractPayouts - lateTopups;
+      return {
+        label: 'Reconciled Paytm',
+        value: reconciledPaytm,
+        chip: <StatusChip tone="success" icon={Check}>Counted</StatusChip>,
+        caption: `Counted ${formatINR(todaysRecalibration.actualBalance)} + Paytm received ${formatINR(todaysPaytm)}${aggregatorPayout > 0 ? ` + aggregator payout ${formatINR(aggregatorPayout)}` : ''}${contractPayouts > 0 ? ` − salary paid ${formatINR(contractPayouts)}` : ''}${lateTopups > 0 ? ` − ${formatINR(lateTopups)} top-up approved after the count` : ''} = ${formatINR(reconciledPaytm)}${recalTs ? ` · counted ${new Date(recalTs).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}` : ''}`,
+        drift: null as string | null,
+      };
+    }
+    if (!hasActualPaytm) {
+      return {
+        label: 'Estimated Paytm',
+        value: expectedPaytm,
+        chip: <StatusChip tone="neutral">Not counted yet</StatusChip>,
+        caption: expectedResult.source === 'recalibration' && expectedResult.startDate === selectedDate
+          ? `Physically counted at ${formatINR(previousPaytm)} today, then today's later Paytm receipts, aggregator payouts and Paytm-paid salary applied on top.`
+          : `Anchored to ${expectedResult.startDate ?? 'a clean start'} (${formatINR(previousPaytm)}), then Paytm receipts, aggregator payouts, cash top-ups, commission, loans and Paytm-paid salary since - same formula as the store incharge's form.`,
+        drift: null,
+      };
+    }
+    const savedPaytm = entry.actualPaytmBalance as number;
+    const drift = savedPaytm - expectedPaytm;
+    return {
+      label: 'Paytm in hand',
+      value: savedPaytm,
+      chip: <StatusChip tone="success" icon={Check}>Saved with the day close</StatusChip>,
+      caption: 'Saved by the store incharge - kept in step with the same formula the day close uses.',
+      drift: Math.abs(drift) > 1 ? `The live figure is now ${formatINR(expectedPaytm)} (${formatINR(drift, { sign: true })} against the saved one) - something changed after it was saved, e.g. a later settlement upload. Re-saving the day close brings it back in step.` : null,
+    };
+  })();
+
+  const formulaLines: FormulaLine[] = storeCashCard ? [
+    { label: t('dc.f.prev'), amount: storeCashCard.prevCash, sign: '' as const },
+    { label: t('dc.f.topup'), amount: storeCashCard.cashTopup, sign: '+' as const },
+    { label: t('dc.f.collected'), amount: storeCashCard.cashReceived, sign: '+' as const },
+    { label: t('dc.f.spent'), amount: storeCashCard.todaysExpenses, sign: '−' as const },
+  ] : [];
+
+  const productionAmountForTotal = productionCashEntry?.actualCashInHand ?? productionCashEntry?.expectedClosingCashInHand ?? productionCashLive?.expectedClosingCashInHand;
+  const productionIsActual = productionCashEntry?.actualCashInHand !== undefined && productionCashEntry?.actualCashInHand !== null;
+  const ownerDestinations = [
+    ...(context.stores || []).map((st) => ({ value: `store:${st.id}`, label: st.name, description: 'Store cash' })),
+    ...(context.productionHouses || []).map((h) => ({ value: `ph:${h.id}`, label: h.name, description: 'Production cash' })),
+  ];
+  const openTopup = () => {
+    // No real choice to make when a production incharge only supplies one store.
+    if (isProductionIncharge && suppliedStores.length === 1) setTopupTargetStoreId(suppliedStores[0].id);
+    if (isClusterHead && !topupDestination) {
+      const firstStore = effectiveStoreId && effectiveStoreId !== 'all' ? effectiveStoreId : context.stores?.[0]?.id;
+      if (firstStore) setTopupDestination(`store:${firstStore}`);
+    }
+    setTopupDate(selectedDate);
+    setShowTopupModal(true);
+  };
+
+  const offlineGap = entry ? (entry.offlineSales || 0) - ((entry.cashAmount || 0) + (entry.paytmAmount || 0)) : 0;
+  const reasonLabel: Record<string, string> = { missed_kot: 'Missed KOT', wrong_change: 'Wrong change', tip: 'Tip', counting_mistake: 'Counting mistake', other: 'Other' };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header with Read-Only Badge */}
-      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30 flex-shrink-0">
-            <Eye className="w-5 h-5 text-white" />
-          </div>
-          <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight">Sales overview</h1>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {(isOperationsManager || isClusterHead || isStoreIncharge || isProductionIncharge) && (
-            <button
-              onClick={handleSyncPosNow}
-              disabled={isSyncingPos || syncDisabledForTiming}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-full text-xs font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title={
-                syncDisabledForTiming
-                  ? "Stores open at 3 PM IST - sync isn't available before then"
-                  : isClusterHead && isViewingPastDate
-                  ? `Re-pull ${selectedDate}'s real totals from Ciferon and overwrite this record`
-                  : "Fetch today's sales from Ciferon POS right now, instead of waiting for the 10:30 PM automatic sync"
-              }
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPos ? 'animate-spin' : ''}`} />
-              {isSyncingPos ? 'Syncing...' : syncDisabledForTiming ? 'Opens at 3 PM' : (isClusterHead && isViewingPastDate ? `Re-sync ${selectedDate}` : 'Sync POS Now')}
-            </button>
-          )}
-          {isClusterHead && (
-            <button
-              onClick={() => setShowBulkSync(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-800 rounded-full text-xs font-medium hover:bg-purple-200 transition-colors"
-              title="Re-sync a whole range of past days from Ciferon at once, instead of one at a time"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Bulk Sync
-            </button>
-          )}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200/70 rounded-full">
-            <Lock className="w-3.5 h-3.5 text-amber-700" />
-            <span className="text-xs text-amber-800 font-medium">View only</span>
-          </div>
-        </div>
-      </div>
-
-      {showBulkSync && (
-        <div className="mb-6 p-4 rounded-xl border-2 border-purple-200 bg-purple-50">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm text-purple-900">Bulk Re-sync from POS</h3>
-            <button
-              onClick={() => setShowBulkSync(false)}
-              disabled={isBulkSyncing}
-              className="text-purple-700 hover:text-purple-900 text-xs disabled:opacity-50"
-            >
-              Close
-            </button>
-          </div>
-          <p className="text-xs text-purple-700 mb-3">
-            Re-pulls each day's real totals from Ciferon and overwrites those records - use this to fix a stretch of days at once instead of re-syncing day by day.
-          </p>
-          <div className="flex items-end gap-3 flex-wrap">
-            <div>
-              <label className="block text-xs text-purple-800 mb-1">From</label>
-              <input
-                type="date"
-                value={bulkSyncStart}
-                max={getTodayIST()}
-                onChange={(e) => setBulkSyncStart(e.target.value)}
-                disabled={isBulkSyncing}
-                className="px-3 py-1.5 border border-purple-300 rounded-lg bg-white text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-purple-800 mb-1">To</label>
-              <input
-                type="date"
-                value={bulkSyncEnd}
-                max={getTodayIST()}
-                onChange={(e) => setBulkSyncEnd(e.target.value)}
-                disabled={isBulkSyncing}
-                className="px-3 py-1.5 border border-purple-300 rounded-lg bg-white text-sm"
-              />
-            </div>
-            <button
-              onClick={handleBulkSync}
-              disabled={isBulkSyncing}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isBulkSyncing ? 'animate-spin' : ''}`} />
-              {isBulkSyncing
-                ? bulkSyncProgress
-                  ? `Syncing ${bulkSyncProgress.done}/${bulkSyncProgress.total}...`
-                  : 'Syncing...'
-                : 'Run Bulk Sync'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {canManagePayouts && (
-        <div className="flex items-center gap-1.5 mb-6 bg-secondary/60 p-1 rounded-full w-fit">
-          <button
-            onClick={() => setActiveTab('entry')}
-            className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'entry' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-          >
-            <Wallet className="w-3.5 h-3.5" /> Sales Entry
-          </button>
-          {canManagePayouts && (
-            <button
-              onClick={() => setActiveTab('payout')}
-              className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'payout' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" /> Aggregator Payout
-            </button>
-          )}
-          {(isOperationsManager || isClusterHead) && (
-            <button
-              onClick={() => setActiveTab('loans')}
-              className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${activeTab === 'loans' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              <HandCoins className="w-3.5 h-3.5" /> Loans
-            </button>
-          )}
-        </div>
+    <MoneyPage>
+      {showInnerTabs && (
+        <SegmentedControl aria-label="Sales sections" value={activeTab === 'cash' ? 'entry' : activeTab} onValueChange={(v) => setActiveTab(v)} options={tabOptions} />
       )}
 
       {activeTab === 'entry' && (
-      <>
-      <DateSelector
-        selectedDate={selectedDate}
-        onDateChange={setSelectedDate}
-      />
-
-      {!hasSalesEntries && liveCashPosition && (
-          <div className="bg-gradient-to-br from-orange-50/80 to-orange-100/50 rounded-2xl p-5 border border-orange-200/50 mt-6">
-            <div className="flex items-center gap-2 mb-1">
-              <Wallet className="w-4 h-4 text-orange-600" />
-              <h3 className="text-sm font-semibold text-orange-800">Live Cash Position</h3>
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              No sales entry logged for {selectedDate} yet - here's where things stand right now
-              {liveCashPosition.storeCount > 1 ? ` across ${liveCashPosition.storeCount} stores` : ''}.
-            </p>
-            {!liveCashPosition.hasCarriedData && (
-              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
-                No actual cash/Paytm balance recorded for {liveCashPosition.prevDateStr} - carried-forward figures below start at ₹0.
-              </p>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-3 shadow-lg shadow-emerald-500/20 text-white">
-                <p className="text-xs text-emerald-100">Estimated Cash in Hand</p>
-                <p className="text-xl font-semibold">₹{liveCashPosition.liveCash.toLocaleString()}</p>
-                <p className="text-[11px] text-emerald-100/90 mt-1">
-                  {liveCashPosition.isPostGoLive ? (
-                    // Store cash fully consolidates into production overnight (confirmed) -
-                    // "₹0 store + ₹X production" every single morning is just noise, not
-                    // information. Only surface the split once the store side actually has
-                    // something in it today (a same-day top-up or expense moved it off zero).
-                    liveCashPosition.storeCash !== 0 ? (
-                      <>₹{liveCashPosition.storeCash.toLocaleString()} store + ₹{liveCashPosition.productionAmount.toLocaleString()} production</>
-                    ) : (
-                      <>all in production cash - store hands off nightly</>
-                    )
-                  ) : (
-                    <>₹{liveCashPosition.carriedCash.toLocaleString()} carried + ₹{liveCashPosition.approvedTopupsToday.toLocaleString()} top-ups − ₹{liveCashPosition.cashExpenses.toLocaleString()} expenses</>
-                  )}
-                </p>
-              </div>
-              <div className="bg-gradient-to-br from-sky-500 to-sky-600 rounded-xl p-3 shadow-lg shadow-sky-500/20 text-white">
-                <p className="text-xs text-sky-100">Estimated Paytm Balance</p>
-                <p className="text-xl font-semibold">₹{liveCashPosition.livePaytm.toLocaleString()}</p>
-                <p className="text-[11px] text-sky-100/90 mt-1">
-                  ₹{liveCashPosition.carriedPaytm.toLocaleString()} carried − ₹{liveCashPosition.onlineExpenses.toLocaleString()} expenses
-                  {(liveCashPosition.approvedTopupsToday > 0 || liveCashPosition.productionTopupsToday > 0)
-                    ? ` − ₹${(liveCashPosition.approvedTopupsToday + liveCashPosition.productionTopupsToday).toLocaleString()} top-ups`
-                    : ''}
-                </p>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 mt-3">
-              Updates live as expenses are logged and top-ups are approved. Doesn't include today's sales yet - those land once the store incharge submits the day's entry.
-            </p>
-          </div>
-      )}
-
-      {!hasSalesEntries && !liveCashPosition && !onlineSalesTotal && (
-          <div className="bg-card rounded-2xl border border-border p-10 mt-6 text-center">
-            <Wallet className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-50" />
-            <p className="text-sm text-muted-foreground">No sales entry logged for this date</p>
-          </div>
-      )}
-
-      {(hasSalesEntries || onlineSalesTotal) && (
         <>
-          {/* Total Sales - shown first */}
-          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl p-5 mt-6 mb-4 shadow-lg shadow-emerald-500/20 text-white">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs text-emerald-100 uppercase tracking-wide font-medium">Total Sales</p>
-                <p className="text-3xl font-semibold mt-1 tabular-nums">₹{totalRevenue.toLocaleString()}</p>
-                {entry?.syncedAt && (
-                  <p className="text-[11px] text-emerald-100/80 mt-1">
-                    {/* syncedAt is written server-side via getNowIST(), which shifts the
-                        real UTC instant forward by +5:30 and THEN calls toISOString() -
-                        so its digits already ARE the IST wall-clock time, just mislabeled
-                        with a "Z" (UTC) suffix. Formatting with the viewer's local/en-IN
-                        timezone re-adds +5:30 on top of that, double-shifting the display
-                        forward by 5.5 hours (confirmed bug, found 2026-08-31: "22:37"
-                        showed as "1 Sept, 4:00 am"). timeZone: 'UTC' reads the string's
-                        digits as-is instead of converting them again. */}
-                    Last synced {new Date(entry.syncedAt).toLocaleString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
-                  </p>
-                )}
-              </div>
-              <div className="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
-                <TrendingUp className="w-5 h-5" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-white/20">
-              <div>
-                <p className="text-xs text-emerald-100">Offline Sales</p>
-                <p className="text-sm font-medium mt-0.5 tabular-nums">₹{offlineSalesTotal.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-xs text-emerald-100">Online Sales</p>
-                <p className="text-sm font-medium mt-0.5 tabular-nums">₹{onlineSalesTotal.toLocaleString()}</p>
-              </div>
-            </div>
-          </div>
+          <DayBand value={selectedDate} onChange={setSelectedDate} />
+
+          {/* Day closes waiting for the cluster head (all dates); tapping one opens that day. */}
+          {isClusterHead && pendingDiscrepancyApprovals.length > 0 && (
+            <ListGroup title="Waiting for your approval" meta={`${pendingDiscrepancyApprovals.length}`}>
+              {pendingDiscrepancyApprovals.map((sale) => {
+                const expectedCash = (sale.actualCashInHand || 0) - (sale.cashOffset || 0);
+                const requestedDiscrepancy = (sale.requestedCashInHand || 0) - expectedCash;
+                const store = (context.stores || []).find((s) => s.id === sale.storeId)?.name;
+                return (
+                  <div key={sale.id} className="flex flex-col">
+                    <ListRow
+                      title={`${formatDateIST(sale.date)}${store ? ` · ${store}` : ''}`}
+                      subtitle={`Expected ${formatINR(expectedCash)} · counted ${formatINR(sale.requestedCashInHand || 0)}`}
+                      trailing={<DiffChip diff={requestedDiscrepancy} />}
+                      onClick={() => setSelectedDate(sale.date)}
+                    />
+                    <div className="flex gap-2 px-4 pb-3">
+                      <Button variant="danger-ghost" size="sm" disabled={resolvingDiscrepancyId === sale.id} onClick={() => handleRejectDiscrepancy(sale.id)}>Reject</Button>
+                      <Button variant="secondary" size="sm" leadingIcon={<Check />} loading={resolvingDiscrepancyId === sale.id} onClick={() => handleApproveDiscrepancy(sale.id)}>Approve</Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </ListGroup>
+          )}
+
+          {reviewStatus && <DayStatusBanner status={reviewStatus} readOnly />}
+
+          {!hasSalesEntries && liveCashPosition && (
+            <Section title="Right now" action={syncButton ?? undefined}>
+              <p className="-mt-1 text-body-sm text-text-2">
+                No day close for {formatDateIST(selectedDate)} yet - where things stand now{liveCashPosition.storeCount > 1 ? ` across ${liveCashPosition.storeCount} stores` : ''}. {canSync ? 'Tap Sync now to bring in the sales so far from the POS.' : "Today's sales come in with the day close."}
+              </p>
+              {canSync && syncDisabledForTiming && <p className="-mt-1 text-label text-text-3">{t('dc.syncOpensAt3')}</p>}
+              {!liveCashPosition.hasCarriedData && (
+                <Callout tone="warning" title={`No cash or Paytm balance saved for ${formatDateIST(liveCashPosition.prevDateStr)}`}>The carried-forward figures start at ₹0.</Callout>
+              )}
+              <StatGrid>
+                <StatTile
+                  label="Cash in hand (estimate)"
+                  value={<Money value={liveCashPosition.liveCash} />}
+                  caption={liveCashPosition.isPostGoLive
+                    ? (liveCashPosition.storeCash !== 0 ? `${formatINR(liveCashPosition.storeCash)} store + ${formatINR(liveCashPosition.productionAmount)} production` : 'All in production cash - the store hands over nightly')
+                    : `${formatINR(liveCashPosition.carriedCash)} carried + ${formatINR(liveCashPosition.approvedTopupsToday)} top-ups − ${formatINR(liveCashPosition.cashExpenses)} spent`}
+                />
+                <StatTile
+                  label="Paytm (estimate)"
+                  value={<Money value={liveCashPosition.livePaytm} />}
+                  caption={`${formatINR(Math.round(liveCashPosition.paytmOpening))} ${liveCashPosition.recalibratedToday ? "from today's count" : 'carried'} − ${formatINR(liveCashPosition.onlineExpenses)} spent${(liveCashPosition.approvedTopupsToday > 0 || liveCashPosition.productionTopupsToday > 0) ? ` · ${formatINR(liveCashPosition.approvedTopupsToday + liveCashPosition.productionTopupsToday)} top-ups already taken off` : ''}`}
+                />
+              </StatGrid>
+            </Section>
+          )}
+
+          {!hasSalesEntries && !liveCashPosition && !onlineSalesTotal && (
+            <EmptyState icon={Wallet} title={`No sales for ${formatDateIST(selectedDate)}`} body="The day close shows here once the store sends it." action={syncButton ?? undefined} />
+          )}
+
+          {(hasSalesEntries || onlineSalesTotal > 0) && (
+            <Section
+              title={t('dc.posTitle')}
+              action={(canSync || isClusterHead) ? (
+                <div className="flex items-center gap-2">
+                  {isClusterHead && <Button variant="ghost" size="sm" onClick={() => setShowBulkSync(true)}>Re-sync days</Button>}
+                  {syncButton}
+                </div>
+              ) : undefined}
+            >
+              {canSync && syncDisabledForTiming && <p className="-mt-1 text-label text-text-3">{t('dc.syncOpensAt3')}</p>}
+              <StatTile
+                hero
+                label="Total sales"
+                value={<Money value={totalRevenue} />}
+                caption={entry?.syncedAt
+                  // syncedAt digits are already IST (written with a "Z"), so read them as UTC.
+                  ? t('dc.syncedAt', { time: new Date(entry.syncedAt).toLocaleString('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }) })
+                  : undefined}
+              >
+                <StatSplit items={[
+                  { label: t('dc.counter'), value: formatINR(offlineSalesTotal) },
+                  { label: 'Zomato', value: formatINR(displayedOnlineSplit.zomato) },
+                  { label: 'Swiggy', value: formatINR(displayedOnlineSplit.swiggy) },
+                ]} />
+              </StatTile>
+            </Section>
+          )}
 
           {entry && (
             <>
-              {/* Offline Sales: gross → discount/cancellations → net, then Cash/Paytm split */}
-              <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                      <Wallet className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h2 className="text-foreground font-bold">Offline Sales</h2>
-                      <p className="text-xs text-muted-foreground">Counter orders - Cash & Paytm</p>
-                    </div>
+              <Section title="Counter (cash and Paytm)">
+                <FigureCard>
+                  {(entry.offlineDiscount !== undefined || entry.offlineCancelledAmount !== undefined) && (
+                    <FigureRow label="Gross sales" value={formatINR((entry.offlineSales || 0) + (entry.offlineDiscount || 0) + (entry.complimentaryAmount || 0))} />
+                  )}
+                  {(entry.offlineDiscount ?? 0) > 0 && <FigureRow label="Discounts" value={`− ${formatINR(entry.offlineDiscount)}`} />}
+                  {(entry.offlineCancelledCount ?? 0) > 0 && <FigureRow label={`Cancelled orders (${entry.offlineCancelledCount})`} caption="Not counted" value={formatINR(entry.offlineCancelledAmount || 0)} />}
+                  {(entry.complimentaryCount ?? 0) > 0 && <FigureRow label={`Complimentary (${entry.complimentaryCount})`} caption="Not counted" value={formatINR(entry.complimentaryAmount || 0)} />}
+                  <FigureRow label="Counter sales" caption="Net, from the POS" value={formatINR(entry?.offlineSales || 0)} emphasis />
+                  <FigureRow label={t('money.cash')} value={formatINR(entry.cashAmount || 0)} />
+                  <FigureRow label={t('money.paytm')} value={formatINR(entry.paytmAmount || 0)} />
+                  <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+                    <span className="flex-1 text-body-md font-medium text-text">Cash + Paytm against counter sales</span>
+                    <DiffChip diff={-offlineGap} tolerance={0.99} />
                   </div>
-                  <span className="text-lg font-semibold text-primary tabular-nums">₹{(entry?.offlineSales || 0).toLocaleString()}</span>
-                </div>
-
-                {(entry.offlineDiscount !== undefined || entry.offlineCancelledAmount !== undefined) && (
-                  <div className="rounded-xl border border-border overflow-hidden mb-3">
-                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-background">
-                      <span className="text-muted-foreground">Gross sales</span>
-                      <span className="text-foreground">₹{((entry.offlineSales || 0) + (entry.offlineDiscount || 0) + (entry.complimentaryAmount || 0)).toLocaleString()}</span>
-                    </div>
-                    {(entry.offlineDiscount ?? 0) > 0 && (
-                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
-                        <span className="text-muted-foreground">Discounts</span>
-                        <span className="text-red-600">− ₹{entry.offlineDiscount!.toLocaleString()}</span>
-                      </div>
-                    )}
-                    {(entry.offlineCancelledCount ?? 0) > 0 && (
-                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
-                        <span className="text-muted-foreground">Cancelled orders ({entry.offlineCancelledCount})</span>
-                        <span className="text-red-600">₹{(entry.offlineCancelledAmount || 0).toLocaleString()} excluded</span>
-                      </div>
-                    )}
-                    {(entry.complimentaryCount ?? 0) > 0 && (
-                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
-                        <span className="text-muted-foreground">Complimentary / free ({entry.complimentaryCount})</span>
-                        <span className="text-red-600">₹{(entry.complimentaryAmount || 0).toLocaleString()} excluded</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-secondary/40 border-t border-border/60 font-medium">
-                      <span className="text-foreground">Net offline sales</span>
-                      <span className="text-primary">₹{(entry?.offlineSales || 0).toLocaleString()}</span>
-                    </div>
-                  </div>
+                </FigureCard>
+                {/* Cash + Paytm can drift from the POS figure: a duplicate KOT, cash lost at the
+                    counter, an order that walked out unpaid. Shown with the incharge's reason. */}
+                {Math.abs(offlineGap) >= 1 && (
+                  <Callout
+                    tone="warning"
+                    title={`${formatINR((entry.cashAmount || 0) + (entry.paytmAmount || 0))} counted is ${offlineGap > 0 ? 'short of' : 'over'} ${formatINR(entry.offlineSales || 0)} by ${formatINR(Math.abs(offlineGap))}`}
+                  >
+                    {entry.cashOverShortReason
+                      ? <>Reason from the store incharge: {reasonLabel[entry.cashOverShortReason]}{entry.cashOverShortNote ? ` - "${entry.cashOverShortNote}"` : ''}</>
+                      : <>{offlineGap > 0 ? 'Possibly a duplicate KOT, cash lost at the counter, or an order that went unpaid during rush hour.' : 'Possibly an extra or duplicate payment, or a KOT cancelled after payment.'} No reason recorded yet - booked as Cash Over/Short until explained.</>}
+                  </Callout>
                 )}
+              </Section>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-border bg-background p-3">
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Banknote className="w-3.5 h-3.5 text-green-600" /> Cash
-                    </span>
-                    <p className="text-sm font-medium text-foreground mt-1 tabular-nums">₹{(entry.cashAmount || 0).toLocaleString()}</p>
-                  </div>
-                  <div className="rounded-xl border border-border bg-background p-3">
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Smartphone className="w-3.5 h-3.5 text-primary" /> Paytm
-                    </span>
-                    <p className="text-sm font-medium text-foreground mt-1 tabular-nums">₹{(entry.paytmAmount || 0).toLocaleString()}</p>
-                  </div>
-                </div>
+              <Section title="Zomato and Swiggy">
+                <FigureCard>
+                  {(entry.onlineDiscount !== undefined || entry.onlineCancelledAmount !== undefined) && (
+                    <FigureRow label="Gross sales" value={formatINR(onlineSalesTotal + (entry.onlineDiscount || 0))} />
+                  )}
+                  {(entry.onlineDiscount ?? 0) > 0 && <FigureRow label="Discounts" value={`− ${formatINR(entry.onlineDiscount)}`} />}
+                  {(entry.onlineCancelledCount ?? 0) > 0 && <FigureRow label={`Cancelled orders (${entry.onlineCancelledCount})`} caption="Not counted" value={formatINR(entry.onlineCancelledAmount || 0)} />}
+                  <FigureRow label="Online sales" caption="Net" value={formatINR(onlineSalesTotal)} emphasis />
+                  <FigureRow label="Zomato" value={formatINR(displayedOnlineSplit.zomato)} />
+                  <FigureRow label="Swiggy" value={formatINR(displayedOnlineSplit.swiggy)} />
+                </FigureCard>
+              </Section>
 
-                {/* Cash + Paytm is entered separately from the POS-reported net offline
-                    sales figure above, so they can drift apart - duplicate KOTs, cash lost
-                    at the counter, or an order that walked out unpaid during rush hour.
-                    Surface that gap instead of leaving it for someone to notice by hand. */}
-                {(() => {
-                  const cashPaytmSum = (entry.cashAmount || 0) + (entry.paytmAmount || 0);
-                  const netOffline = entry.offlineSales || 0;
-                  const gap = netOffline - cashPaytmSum;
-                  if (Math.abs(gap) < 1) return null;
-                  const reasonLabel: Record<string, string> = {
-                    missed_kot: 'Missed KOT',
-                    wrong_change: 'Wrong change',
-                    tip: 'Tip',
-                    counting_mistake: 'Counting mistake',
-                    other: 'Other',
-                  };
-                  const recordedReason = entry.cashOverShortReason ? reasonLabel[entry.cashOverShortReason] : null;
-                  return (
-                    <div className="mt-2 rounded-xl border border-amber-300/60 bg-amber-50 p-3 flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div className="text-xs text-amber-800">
-                        <p>
-                          Cash + Paytm (₹{cashPaytmSum.toLocaleString()}) is {gap > 0 ? 'short of' : 'over'} Net offline sales (₹{netOffline.toLocaleString()}) by ₹{Math.abs(gap).toLocaleString()}.
-                          {!recordedReason && (gap > 0 ? ' Possibly a duplicate KOT, cash lost at the counter, or an order that went unpaid during rush hour.' : ' Possibly an extra/duplicate payment or a KOT that was cancelled after payment.')}
-                        </p>
-                        {recordedReason ? (
-                          <p className="mt-1.5 pt-1.5 border-t border-amber-300/50">
-                            <span className="font-semibold">Reason (from store incharge):</span> {recordedReason}
-                            {entry.cashOverShortNote ? <span className="italic"> — "{entry.cashOverShortNote}"</span> : null}
-                          </p>
-                        ) : (
-                          <p className="mt-1.5 pt-1.5 border-t border-amber-300/50 text-amber-700/80 italic">No reason recorded yet - booked as Cash Over/Short until explained.</p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Online Sales: gross → discount/cancellations → net, then Zomato/Swiggy split */}
-              <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                      <Smartphone className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h2 className="text-foreground font-bold">Online Sales</h2>
-                      <p className="text-xs text-muted-foreground">Zomato & Swiggy</p>
-                    </div>
-                  </div>
-                  <span className="text-lg font-semibold text-primary tabular-nums">₹{onlineSalesTotal.toLocaleString()}</span>
-                </div>
-
-                {(entry.onlineDiscount !== undefined || entry.onlineCancelledAmount !== undefined) && (
-                  <div className="rounded-xl border border-border overflow-hidden mb-3">
-                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-background">
-                      <span className="text-muted-foreground">Gross sales</span>
-                      <span className="text-foreground">₹{(onlineSalesTotal + (entry.onlineDiscount || 0)).toLocaleString()}</span>
-                    </div>
-                    {(entry.onlineDiscount ?? 0) > 0 && (
-                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
-                        <span className="text-muted-foreground">Discounts</span>
-                        <span className="text-red-600">− ₹{entry.onlineDiscount!.toLocaleString()}</span>
-                      </div>
-                    )}
-                    {(entry.onlineCancelledCount ?? 0) > 0 && (
-                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-background border-t border-border/60">
-                        <span className="text-muted-foreground">Cancelled orders ({entry.onlineCancelledCount})</span>
-                        <span className="text-red-600">₹{(entry.onlineCancelledAmount || 0).toLocaleString()} excluded</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between px-3 py-2 text-sm bg-secondary/40 border-t border-border/60 font-medium">
-                      <span className="text-foreground">Net online sales</span>
-                      <span className="text-primary">₹{onlineSalesTotal.toLocaleString()}</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-border bg-background p-3">
-                    <span className="text-xs text-muted-foreground">Zomato</span>
-                    <p className="text-sm font-medium text-foreground mt-1 tabular-nums">₹{displayedOnlineSplit.zomato.toLocaleString()}</p>
-                  </div>
-                  <div className="rounded-xl border border-border bg-background p-3">
-                    <span className="text-xs text-muted-foreground">Swiggy</span>
-                    <p className="text-sm font-medium text-foreground mt-1 tabular-nums">₹{displayedOnlineSplit.swiggy.toLocaleString()}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Cash Reconciliation: expected-vs-actual formula breakdown, kept separate from
-                  the raw sales figures above so each card stays focused on one concern. */}
-              <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
-                <div className="flex items-center gap-2.5 mb-4">
-                  <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                    <IndianRupee className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-foreground font-bold">Store Cash in Hand</h2>
-                    <p className="text-xs text-muted-foreground">Expected vs. actual physical cash for this store</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-border bg-background p-3">
-                    {(() => {
-                      // Carried forward dynamically from yesterday's actual, same as the
-                      // Paytm section below - entry.previousCashInHand is a stored field
-                      // that the POS auto-sync hardcodes to 0 when it creates today's
-                      // placeholder record (before the store incharge has reconciled),
-                      // so it stays stale until they manually open and save the form.
-                      const isAggregateEntry = entry.storeId === 'all';
-                      const previousDateStr = addDays(selectedDate, -1);
-                      const previousDayEntry = isAggregateEntry
-                        ? null
-                        : context.salesData.find((s) => s.date === previousDateStr && (effectiveStoreId ? s.storeId === effectiveStoreId : true));
-                      const previousEntry = previousDayEntry?.actualCashInHand !== undefined && previousDayEntry.actualCashInHand !== null
-                        ? previousDayEntry
-                        : [...context.salesData]
-                          .filter((s) => s.date < selectedDate && (effectiveStoreId ? s.storeId === effectiveStoreId : true) && s.actualCashInHand !== undefined && s.actualCashInHand !== null)
-                          .sort((a, b) => b.date.localeCompare(a.date))[0];
-                      // From PRODUCTION_CASH_GO_LIVE_DATE onward the store's own cash no longer
-                      // carries forward (see liveCashReconciliation above, same gate) - confirmed
-                      // bug: this specific inline copy was missed when that gate was added
-                      // elsewhere, so this card kept showing "Previous day's cash ₹X" and a
-                      // caption total that silently disagreed with the Cash discrepancy row
-                      // right below it (which does use the correctly-gated liveCashReconciliation).
-                      const prevCash = selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE
-                        ? 0
-                        : isAggregateEntry
-                          ? carriedBalancesForDisplay.cash
-                          : previousEntry?.actualCashInHand ?? entry.previousCashInHand ?? 0;
-                      // A cash topup is money moved OUT of the Paytm/online balance and handed
-                      // to the store as physical cash - it increases cash on hand (here) and is
-                      // deducted from the Paytm side below, not from cash.
-                      const cashTopup = entry.usedOnlineMoney ?? 0;
-                      const cashReceived = entry.cashAmount || 0;
-                      const notYetReconciled = entry.createdBy === 'pos-sync';
-
-                      // Cash-portion (not online) of today's logged inventory/overhead/fixed-cost
-                      // expenses for THIS STORE ONLY - computed the same way regardless of
-                      // whether the store incharge has reconciled yet, so this breakdown always
-                      // shows the real expense figure rather than a number backed out
-                      // algebraically from whatever was last saved. Confirmed real bug: this used
-                      // to also fold in production-house spend linked to the store (paid from the
-                      // production house's own till, not this store's) - a card explicitly titled
-                      // "Store Cash in Hand" showing a number inflated by a different till's
-                      // expenses was never right, going forward or (once
-                      // PRODUCTION_CASH_GO_LIVE_DATE's own split existed) even historically.
-                      // Production spend has its own dedicated cash-in-hand card elsewhere on
-                      // this page - it never belongs in this one.
-                      const todaysExpenses = [...context.inventory, ...context.overheads, ...context.fixedCosts]
-                        .filter((item: any) => {
-                          if (item.date !== selectedDate) return false;
-                          if (item.entityType === 'production_house') return false;
-                          if (isAggregateEntry) return matchesStoreScope(item.storeId);
-                          if (!effectiveStoreId) return true;
-                          return item.storeId === effectiveStoreId;
-                        })
-                        .reduce((sum: number, item: any) => {
-                          const amount = item.totalCost ?? item.amount ?? 0;
-                          if (item.paymentMethod === 'both') return sum + (item.cashAmount || 0);
-                          if (item.paymentMethod === 'online') return sum;
-                          return sum + amount; // default/'cash'
-                        }, 0);
-                      // Contract/salary payouts are paid out of the Paytm/online balance, not
-                      // physical cash - they don't belong in this formula at all (see the Paytm
-                      // card below, where they're deducted instead).
-                      const expectedCash = prevCash + cashTopup + cashReceived - todaysExpenses;
-
-                      if (notYetReconciled) {
-                        return (
-                          <>
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-foreground">Estimated cash in hand</span>
-                              <span className="text-sm font-medium text-primary">₹{expectedCash.toLocaleString()}</span>
-                            </div>
-                            <p className="text-xs text-amber-700 mt-2 pt-2 border-t border-border/70">
-                              Previous day's cash ₹{prevCash.toLocaleString()} + Cash Topup (Online) ₹{cashTopup.toLocaleString()} + Today's cash collection ₹{cashReceived.toLocaleString()} − Today's cash expenses ₹{todaysExpenses.toLocaleString()} = estimated ₹{expectedCash.toLocaleString()}. Not yet reconciled by the store incharge - this is an estimate, not the actual counted cash.
-                            </p>
-                          </>
-                        );
-                      }
-
-                      const actualCashInHand = entry.actualCashInHand ?? 0;
-                      return (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-foreground">Actual cash in hand</span>
-                            <span className="text-sm font-medium text-primary">₹{actualCashInHand.toLocaleString()}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-border/70">
-                            Previous day's cash ₹{prevCash.toLocaleString()} + Cash Topup (Online) ₹{cashTopup.toLocaleString()} + Today's cash collection ₹{cashReceived.toLocaleString()} − Today's cash expenses ₹{todaysExpenses.toLocaleString()} = expected ₹{expectedCash.toLocaleString()}
-                          </p>
-                        </>
-                      );
-                    })()}
-                  </div>
-                  <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                    <span className="text-sm text-foreground">Cash discrepancy</span>
-                    {liveCashReconciliation ? (
-                      // Reconciled - liveCashReconciliation is only non-null once a real
-                      // physical count has been saved (see its own gate above), so ₹0 here
-                      // means "counted and it matched exactly," not "nothing counted yet."
-                      // Called out explicitly so it can never be misread as the latter.
-                      <span className={`text-sm font-medium ${discrepancy === 0 ? 'text-emerald-600' : discrepancy > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {discrepancy === 0 ? '✓ Matched (₹0)' : `${discrepancy > 0 ? '+' : '−'}₹${Math.abs(discrepancy).toLocaleString()}`}
+              {storeCashCard && (
+                <Section title={t('dc.matchTitle')}>
+                  <FigureCard>
+                    <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="text-body-md font-medium text-text">{t('dc.expectedDrawer')}</span>
+                        <Button variant="link" size="sm" className="self-start text-label" onClick={() => setFormulaOpen(true)}>{t('dc.howWorkedOut')}</Button>
                       </span>
-                    ) : (
-                      // Nothing's been counted and reconciled yet - "estimated vs actual" cash
-                      // above already says as much, so a number here would just read as a real
-                      // discrepancy and confuse the store incharge before they've even counted.
-                      <span className="text-sm font-medium text-muted-foreground">Not yet reconciled</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Online Cash (Paytm): split out into its own card, separate from Store Cash
-                  in Hand above - two different tills (physical cash vs. the Paytm/UPI
-                  balance), each worth reading on its own rather than buried as a third row
-                  inside a card about the other one. */}
-              <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
-                <div className="flex items-center gap-2.5 mb-4">
-                  <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                    <IndianRupee className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-foreground font-bold">Online Cash (Paytm)</h2>
-                    <p className="text-xs text-muted-foreground">Expected vs. actual Paytm/UPI balance</p>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-border bg-background p-3">
-                      {(() => {
-                        const isAggregateEntry = entry.storeId === 'all';
-
-                        // Single source of truth - the exact formula the store-incharge entry form
-                        // uses (src/utils/paytmBalance.ts). This card and that form can no longer
-                        // disagree the way they did (they were 27,000 apart on 31 Aug).
-                        const expectedResult = computeExpectedPaytmBalance({
-                          salesData: context.salesData,
-                          overheads: context.overheads,
-                          aggregatorSettlements: context.aggregatorSettlements || [],
-                          onlinePayoutData: [], // legacy manual payout table not loaded here; effectively dead
-                          onlineLoans,
-                          employeePayouts,
-                          topupRequests,
-                          onlineCashRecalibrations: context.onlineCashRecalibrations || [],
-                          selectedDate,
-                          effectiveStoreId: effectiveStoreId ?? null,
-                          todaysPaytmReceived: entry.paytmAmount || 0,
-                          todaysUsedOnlineMoney: entry.usedOnlineMoney ?? 0,
-                        });
-                        const expectedPaytm = expectedResult.balance;
-
-                        // For the explanatory text only - the figure above is authoritative.
-                        const previousPaytm = expectedResult.startingBalance;
-                        const todaysPaytm = entry.paytmAmount || 0;
-                        const hasActualPaytm = entry.actualPaytmBalance !== undefined && entry.actualPaytmBalance !== null && entry.createdBy !== 'pos-sync';
-                        const contractPayouts = employeePayouts
-                          .filter((p) => p.date === selectedDate && (p.paidFrom == null || p.paidFrom === 'paytm') && (isAggregateEntry || !effectiveStoreId ? true : (!p.storeId || p.storeId === effectiveStoreId)))
-                          .reduce((sum, p) => sum + (p.amount || 0), 0);
-                        const aggregatorPayout = (context.aggregatorSettlements || [])
-                          .filter((s) => s.settlementDate === selectedDate && (isAggregateEntry || !effectiveStoreId ? true : s.storeId === effectiveStoreId))
-                          .reduce((sum, s) => sum + (s.netPayout || 0), 0);
-
-                        // A same-day Paytm reconciliation is ground truth and takes priority
-                        // over the formula below entirely - the formula has no way to know
-                        // about it (it only ever looks at the PRIOR day's balance), so without
-                        // this check, reconciling today never actually changes what this card
-                        // shows: it just keeps re-deriving its own guess and re-subtracting
-                        // today's cash top-up on top of an anchor that predates the
-                        // reconciliation, silently ignoring the physically-verified figure the
-                        // incharge just entered. A top-up approved AFTER the reconciliation's
-                        // own timestamp (same day) is the one thing that reconciliation
-                        // couldn't have already accounted for, so it's still subtracted here.
-                        const todaysRecalibration = !isAggregateEntry && effectiveStoreId
-                          ? (context.onlineCashRecalibrations || []).find((r) => r.storeId === effectiveStoreId && r.date === selectedDate)
-                          : null;
-                        if (todaysRecalibration) {
-                          const recalTs = todaysRecalibration.createdAt;
-                          // Both reasons drain the same Paytm balance (see productionTopup
-                          // above), so a late-approved top-up of either reason must still be
-                          // subtracted from the physically-verified snapshot - not just a
-                          // store-reason one.
-                          const lateTopups = recalTs
-                            ? topupRequests
-                                .filter((t) => t.storeId === effectiveStoreId && t.status === 'approved' && t.date === selectedDate && t.approvedAt && t.approvedAt > recalTs)
-                                .reduce((sum, t) => sum + (t.requestedAmount || 0), 0)
-                            : 0;
-                          // Confirmed with the business owner: a recalibration is a
-                          // point-in-time count, not automatically "today's final answer" -
-                          // a count taken early (e.g. 4 AM, before today's own Paytm
-                          // receipts land) is really an OPENING-balance-style anchor, and
-                          // today's own paytmAmount/aggregator payout/contract payouts still
-                          // need layering on top of it, same as any other day - only cash
-                          // top-ups get the individual before/after-the-count treatment
-                          // (via lateTopups above), since they're the one thing with a real
-                          // timestamp to compare against the recalibration's own.
-                          const reconciledPaytm = todaysRecalibration.actualBalance + todaysPaytm + aggregatorPayout - contractPayouts - lateTopups;
-                          return (
-                            <>
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm text-foreground">Reconciled online cash (Paytm)</span>
-                                <span className="text-sm font-medium text-emerald-600">₹{reconciledPaytm.toLocaleString()}</span>
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-border/70">
-                                Physically verified balance ₹{todaysRecalibration.actualBalance.toLocaleString()} + Today's Paytm received ₹{todaysPaytm.toLocaleString()}{aggregatorPayout > 0 ? ` + Aggregator payout ₹${aggregatorPayout.toLocaleString()}` : ''}{contractPayouts > 0 ? ` − Contract/Salary Payout ₹${contractPayouts.toLocaleString()}` : ''}
-                                {lateTopups > 0 ? ` − ₹${lateTopups.toLocaleString()} cash top-up approved after the reconciliation` : ''} = ₹{reconciledPaytm.toLocaleString()}
-                                {recalTs && (
-                                  <span className="block mt-1">
-                                    Counted {new Date(recalTs).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
-                                  </span>
-                                )}
-                              </p>
-                            </>
-                          );
-                        }
-
-                        if (!hasActualPaytm) {
-                          return (
-                            <>
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm text-foreground">Estimated online cash (Paytm)</span>
-                                <span className="text-sm font-medium text-primary">₹{expectedPaytm.toLocaleString()}</span>
-                              </div>
-                              <p className="text-xs text-amber-700 mt-2 pt-2 border-t border-border/70">
-                                {expectedResult.source === 'recalibration' && expectedResult.startDate === selectedDate
-                                  ? <>Physically counted at ₹{previousPaytm.toLocaleString()} today, then today's later Paytm receipts, aggregator payouts and Paytm-paid salary applied on top.</>
-                                  : <>Anchored to {expectedResult.startDate ?? 'a clean start'} (₹{previousPaytm.toLocaleString()}), then Paytm receipts, aggregator payouts, cash top-ups, commission, loans and Paytm-paid salary since applied — same formula as the store incharge's form.</>}
-                                {' '}Not yet reconciled by the store incharge.
-                              </p>
-                            </>
-                          );
-                        }
-
-                        // Reconciled: show the store incharge's saved balance, not a re-derived guess.
-                        // Flag only when the live formula has since drifted from it (e.g. a settlement
-                        // uploaded after the entry was saved).
-                        const savedPaytm = entry.actualPaytmBalance as number;
-                        const drift = savedPaytm - expectedPaytm;
-                        return (
-                          <>
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-foreground">Online cash in hand (Paytm)</span>
-                              <span className="text-sm font-medium text-primary">₹{savedPaytm.toLocaleString()}</span>
-                            </div>
-                            <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-border/70">
-                              Reconciled by the store incharge — auto-synced from the same formula the entry form uses.
-                              {Math.abs(drift) > 1 && (
-                                <span className="block mt-1 text-amber-700">
-                                  Live figure is now ₹{expectedPaytm.toLocaleString()} ({drift > 0 ? '+' : '−'}₹{Math.abs(drift).toLocaleString()} vs saved) — data changed since it was saved (e.g. a later settlement upload). Re-open and re-save the sales entry to re-sync.
-                                </span>
-                              )}
-                            </p>
-                          </>
-                        );
-                      })()}
-                  </div>
-                  <PaytmLedger input={{
-                    salesData: context.salesData,
-                    overheads: context.overheads,
-                    aggregatorSettlements: context.aggregatorSettlements || [],
-                    onlinePayoutData: [],
-                    onlineLoans,
-                    employeePayouts,
-                    topupRequests,
-                    onlineCashRecalibrations: context.onlineCashRecalibrations || [],
-                    effectiveStoreId: effectiveStoreId ?? null,
-                  }} />
-                </div>
-              </div>
-
-              {/* Production Cash in Hand - relocated from ProductionManagement.tsx's old
-                  "Cash in Hand" tab. Editable by production incharge/operations manager,
-                  approve/reject by cluster head; read-only for anyone else who can see
-                  this page. Same backend routes as before this moved, untouched. */}
-              {productionHouseIdForTotal && selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE && (
-                <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
-                  <div className="flex items-center gap-2.5 mb-4">
-                    <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                      <Factory className="w-4 h-4" />
+                      <span className="num text-body-md font-semibold text-text">{formatINR(storeCashCard.expectedCash)}</span>
                     </div>
-                    <div>
-                      <h2 className="text-foreground font-bold">Production Cash in Hand</h2>
-                      <p className="text-xs text-muted-foreground">Reconciled separately from the store's own cash above</p>
+                    <FigureRow
+                      label={storeCashCard.notYetReconciled ? 'Cash in hand (estimate)' : 'Counted in the drawer'}
+                      caption={storeCashCard.notYetReconciled ? 'Not counted by the store incharge yet' : undefined}
+                      value={storeCashCard.notYetReconciled ? '–' : formatINR(storeCashCard.actualCashInHand)}
+                    />
+                    <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+                      <span className="flex-1 text-body-md font-medium text-text">{t('dc.difference')}</span>
+                      {/* Only once a real count is saved: ₹0 then means "counted and it matched". */}
+                      <DiffChip diff={discrepancy} notCounted={!liveCashReconciliation} />
                     </div>
-                  </div>
-
-                  {productionCashLoading ? (
-                    <div className="text-sm text-muted-foreground text-center py-4">Loading…</div>
-                  ) : (
-                    <>
-                      <div className="rounded-xl border border-border bg-background p-3 space-y-2 mb-3">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Opening balance</span>
-                          <span className="text-foreground font-medium">₹{productionCashOpening.toLocaleString('en-IN')}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Today's cash top-up</span>
-                          <span className="text-foreground font-medium">₹{productionCashTopup.toLocaleString('en-IN')}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Today's production expenses</span>
-                          <span className="text-foreground font-medium">₹{productionCashExpenses.toLocaleString('en-IN')}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm pt-2 border-t border-border/70">
-                          <span className="text-foreground font-semibold">Expected closing</span>
-                          <span className="text-primary font-bold">₹{productionCashExpectedClosing.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
-
-                      {canReconcileProductionCash ? (
-                        <div className="rounded-xl border border-border bg-background p-3">
-                          <label className="block text-xs font-medium text-muted-foreground mb-2">Actual Cash Counted (₹)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={productionCashInput}
-                            onChange={(e) => setProductionCashInput(e.target.value)}
-                            disabled={!!productionCashEntry?.approvedBy}
-                            placeholder="Count and enter the physical cash"
-                            className="w-full px-4 py-3 border border-border rounded-xl text-base font-semibold bg-card focus:ring-2 focus:ring-primary/40 focus:border-transparent transition-all disabled:opacity-60"
-                          />
-                          {productionCashInput && (
-                            <p className={`text-sm mt-2 font-medium ${productionCashDiscrepancy === 0 ? 'text-emerald-600' : productionCashDiscrepancy > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {productionCashDiscrepancy === 0 ? 'Matches exactly' : `${productionCashDiscrepancy > 0 ? 'Excess' : 'Short'} of ₹${Math.abs(productionCashDiscrepancy).toFixed(2)}`}
-                            </p>
-                          )}
-                          {productionCashNeedsApproval && (
-                            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-3">
-                              ⚠️ High discrepancy - you can save, but cluster head approval will be required.
-                            </p>
-                          )}
-
-                          {!productionCashEntry?.approvedBy && (
-                            <button
-                              onClick={handleSaveProductionCash}
-                              disabled={productionCashSubmitting || !productionCashInput}
-                              className="w-full mt-4 px-6 py-3 bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all shadow-md disabled:opacity-50 font-semibold text-sm"
-                            >
-                              {productionCashSubmitting ? 'Saving…' : productionCashEntry ? 'Update Production Cash' : 'Save Production Cash'}
-                            </button>
-                          )}
-
-                          {productionCashEntry && productionCashNeedsApproval &&
-                            !productionCashEntry.approvedBy && !productionCashEntry.approvalRequested && (
-                            <button
-                              onClick={handleRequestProductionCashApproval}
-                              disabled={productionCashSubmitting}
-                              className="w-full mt-2 px-6 py-3 bg-amber-500 text-white rounded-xl hover:bg-amber-600 transition-all shadow-md disabled:opacity-50 font-semibold text-sm"
-                            >
-                              Request Approval from Cluster Head
-                            </button>
-                          )}
-
-                          {productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
-                            <div className="w-full mt-3 px-4 py-3 bg-amber-100 border border-amber-300 text-amber-800 rounded-xl text-center text-sm font-medium">
-                              ⏳ Approval request sent - waiting for cluster head
-                            </div>
-                          )}
-                          {productionCashEntry?.approvedBy && (
-                            <div className="w-full mt-3 px-4 py-3 bg-green-50 border border-green-300 text-green-700 rounded-xl text-sm">
-                              ✅ Approved by {productionCashEntry.approvedBy}
-                            </div>
-                          )}
-                          {productionCashEntry?.rejectedBy && (
-                            <div className="w-full mt-3 px-4 py-3 bg-red-50 border border-red-300 text-red-700 rounded-xl text-sm">
-                              ❌ Rejected by {productionCashEntry.rejectedBy}{productionCashEntry.rejectionReason ? ` - ${productionCashEntry.rejectionReason}` : ''}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                          <span className="text-sm text-foreground">Actual cash in hand</span>
-                          <span className="text-sm font-medium text-primary">
-                            {productionCashEntry?.actualCashInHand != null ? `₹${productionCashEntry.actualCashInHand.toLocaleString('en-IN')}` : 'Not yet reconciled'}
-                          </span>
-                        </div>
-                      )}
-
-                      <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between mt-3">
-                        <span className="text-sm text-foreground">Cash discrepancy</span>
-                        {productionCashSavedDiscrepancy !== null ? (
-                          <span className={`text-sm font-medium ${productionCashSavedDiscrepancy === 0 ? 'text-emerald-600' : productionCashSavedDiscrepancy > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {productionCashSavedDiscrepancy === 0 ? '✓ Matched (₹0)' : `${productionCashSavedDiscrepancy > 0 ? '+' : '−'}₹${Math.abs(productionCashSavedDiscrepancy).toLocaleString('en-IN')}`}
-                          </span>
-                        ) : (
-                          <span className="text-sm font-medium text-muted-foreground">Not yet reconciled</span>
-                        )}
-                      </div>
-
-                      {/* Cluster-head approve/reject, shown regardless of the
-                          canReconcileProductionCash branch above - confirmed bug: this used
-                          to be nested inside that branch, which is never true for a cluster
-                          head (neither production incharge nor operations manager), so a
-                          cluster head could never actually see or act on a pending
-                          discrepancy request here at all. */}
-                      {isClusterHead && productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
-                        <div className="rounded-xl border border-border bg-background p-3 flex gap-2">
-                          <button
-                            onClick={() => handleApproveProductionCash(productionCashEntry.id)}
-                            className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl font-semibold text-sm transition-colors"
-                          >
-                            ✓ Approve
-                          </button>
-                          <button
-                            onClick={() => handleRejectProductionCash(productionCashEntry.id)}
-                            className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-semibold text-sm transition-colors"
-                          >
-                            ✗ Reject
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
+                  </FigureCard>
+                </Section>
               )}
 
-              {/* Total Cash in Hand (Store + Production House): informational composite,
-                  not itself reconciled by anyone - see the Store/Production Cash-in-Hand
-                  split plan. Only shown for a single linked store from go-live onward;
-                  silently omitted otherwise (no production house, aggregate view, or a
-                  historical date that predates the split). */}
+              {paytmCard && (
+                <Section title={t('dc.paytmTitle')}>
+                  <StatTile label={paytmCard.label} value={<Money value={paytmCard.value} />} chip={paytmCard.chip} caption={paytmCard.caption} />
+                  {paytmCard.drift && <Callout tone="warning" title="Paytm has moved since it was saved">{paytmCard.drift}</Callout>}
+                </Section>
+              )}
+
+              {/* Store + production, for visibility only (nobody reconciles this total). */}
               {productionHouseIdForTotal && selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE && storeCashForTotal && (
-                <div className="bg-card rounded-2xl border border-border p-5 mb-4 shadow-sm">
-                  <div className="flex items-center gap-2.5 mb-4">
-                    <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                      <Wallet className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h2 className="text-foreground font-bold">Total Cash in Hand</h2>
-                      <p className="text-xs text-muted-foreground">Store + production house, combined for visibility only</p>
-                    </div>
-                  </div>
-                  {(() => {
-                    const productionAmount = productionCashEntry?.actualCashInHand ?? productionCashEntry?.expectedClosingCashInHand ?? productionCashLive?.expectedClosingCashInHand;
-                    const productionIsActual = productionCashEntry?.actualCashInHand !== undefined && productionCashEntry?.actualCashInHand !== null;
-                    if (productionAmount === undefined) {
-                      return (
-                        <div className="rounded-xl border border-border bg-background p-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-foreground">Store cash in hand</span>
-                            <span className="text-sm font-medium text-primary">₹{storeCashForTotal.amount.toLocaleString()}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-2 pt-2 border-t border-border/70">
-                            Production house hasn't logged its cash for this day yet, so a combined total isn't available.
-                          </p>
-                        </div>
-                      );
-                    }
-                    const total = storeCashForTotal.amount + productionAmount;
-                    return (
-                      <div className="space-y-2">
-                        <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                          <span className="text-sm text-foreground">Store cash in hand{!storeCashForTotal.isActual ? ' (estimated)' : ''}</span>
-                          <span className="text-sm font-medium text-foreground">₹{storeCashForTotal.amount.toLocaleString()}</span>
-                        </div>
-                        <div className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                          <span className="text-sm text-foreground">Production cash in hand{!productionIsActual ? ' (estimated)' : ''}</span>
-                          <span className="text-sm font-medium text-foreground">₹{productionAmount.toLocaleString()}</span>
-                        </div>
-                        <div className="rounded-xl border border-primary/30 bg-secondary/40 p-3 flex items-center justify-between">
-                          <span className="text-sm font-medium text-foreground">Total cash in hand</span>
-                          <span className="text-sm font-bold text-primary">₹{total.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
+                <Section title="All cash in hand">
+                  <FigureCard>
+                    <FigureRow label={`Store cash${!storeCashForTotal.isActual ? ' (estimate)' : ''}`} value={formatINR(storeCashForTotal.amount)} />
+                    {productionAmountForTotal === undefined ? (
+                      <FigureRow label="Production cash" caption="Not logged for this day yet, so there's no combined total" value="–" />
+                    ) : (
+                      <>
+                        <FigureRow label={`Production cash${!productionIsActual ? ' (estimate)' : ''}`} value={formatINR(productionAmountForTotal)} />
+                        <FigureRow label="Total cash in hand" value={formatINR(storeCashForTotal.amount + productionAmountForTotal)} emphasis />
+                      </>
+                    )}
+                  </FigureCard>
+                </Section>
               )}
 
-              {/* Status */}
-              <div className="bg-card rounded-2xl border border-border p-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Logged by</p>
-                    <p className="text-sm text-foreground mt-0.5">{entry.createdByName || entry.createdByEmail || entry.createdBy}</p>
-                  </div>
-                  {entry.approvalStatus === 'approved' ? (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
-                      <CheckCircle className="w-4 h-4" /> Approved
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
-                      <Clock className="w-4 h-4" /> Pending approval
-                    </span>
-                  )}
-                </div>
-              </div>
+              <FigureCard>
+                <FigureRow label="Logged by" value={<span className="font-medium">{entry.createdByName || entry.createdByEmail || entry.createdBy}</span>} />
+              </FigureCard>
             </>
           )}
         </>
       )}
 
-      {/* Info Message */}
-      <div className="mt-4 bg-secondary rounded-2xl p-4">
-        <div className="flex gap-3">
-          <Lock className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-foreground">
-            You're viewing sales data in read-only mode. Only the operations manager can log or edit sales entries.
-          </p>
-        </div>
-      </div>
-
-      {/* Cash Top-up Request - operations manager/production incharge can ask the cluster
-          head for more physical cash when the offline till is running low. (Store incharge
-          has the same section on their own Sales page, SalesManagement.tsx.) */}
-      {(isOperationsManager || isProductionIncharge) && (
-        <div className="mt-6 bg-card rounded-2xl border border-border p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-                <IndianRupee className="w-4 h-4" />
-              </div>
-              <h2 className="text-foreground font-bold">Cash top-up</h2>
-            </div>
-            <button
-              onClick={() => {
-                // No real choice to make when a production incharge only supplies one
-                // store - pre-select it instead of forcing a manual pick every time.
-                if (isProductionIncharge && suppliedStores.length === 1) {
-                  setTopupTargetStoreId(suppliedStores[0].id);
-                }
-                setTopupDate(selectedDate);
-                setShowTopupModal(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm hover:opacity-90 transition-opacity"
-            >
-              <PlusCircle className="w-4 h-4" /> Request Top-up
-            </button>
-          </div>
-          {myPendingTopups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No pending top-up requests.</p>
-          ) : (
-            <div className="space-y-2">
-              {myPendingTopups.map((r) => (
-                <div key={r.id} className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                    <p className="text-sm text-foreground">₹{r.requestedAmount.toLocaleString()} for {r.date}</p>
-                      {/* Short reference so a specific request can be pointed to in conversation - */}
-                      <span className="text-[10px] font-mono text-muted-foreground/60 bg-secondary rounded px-1.5 py-0.5">#{r.id.slice(-6).toUpperCase()}</span>
+      {showCashContent && (
+        <>
+          {/* Production cash in hand: counted by the production incharge / operations manager,
+              approved by the cluster head; read-only for everyone else. Lives with the other
+              cash figures (Cash & Paytm), and doesn't wait for the store's day close - it sat
+              inside the day review, so it couldn't be counted until the store had closed. On
+              its own tab it brings the day picker with it, to look back at an earlier day. */}
+          {productionHouseIdForTotal && activeTab === 'cash' && <DayBand value={selectedDate} onChange={setSelectedDate} />}
+          {productionHouseIdForTotal && selectedDate >= PRODUCTION_CASH_GO_LIVE_DATE && (
+            <Section title="Production cash in hand">
+              {productionCashLoading ? (
+                <SkeletonListRows count={4} />
+              ) : (
+                <>
+                  <FigureCard>
+                    <FigureRow label="Opening balance" value={formatINR(productionCashOpening)} />
+                    <FigureRow label="Today's cash top-up" value={formatINR(productionCashTopup)} />
+                    <FigureRow
+                      label="Today's production spend"
+                      caption={productionCashStoreBills > 0 ? `incl. ${formatINR(productionCashStoreBills)} of store bills paid from production cash` : undefined}
+                      value={formatINR(productionCashExpenses)}
+                    />
+                    <FigureRow label="Expected closing" value={formatINR(productionCashExpectedClosing)} emphasis />
+                    {!canReconcileProductionCash && (
+                      <FigureRow label="Counted" value={productionCashEntry?.actualCashInHand != null ? formatINR(productionCashEntry.actualCashInHand) : 'Not counted yet'} />
+                    )}
+                    <div className="flex min-h-13 items-center gap-3 px-4 py-2">
+                      <span className="flex-1 text-body-md font-medium text-text">{t('dc.difference')}</span>
+                      <DiffChip diff={productionCashSavedDiscrepancy ?? 0} notCounted={productionCashSavedDiscrepancy === null} />
                     </div>
-                    <p className="text-xs text-muted-foreground">{TOPUP_REASON_LABELS[r.reason]}</p>
-                    <p className="text-xs text-muted-foreground/70 mt-0.5">Requested {formatDateTimeIST(r.requestDate, false)}</p>
-                  </div>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs">
-                    <Clock className="w-3.5 h-3.5" /> Pending
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          {/* Global ledger - every requester sees the full history across all
-              stores/production house, same as what a cluster head sees. */}
-          <CashTopupHistory requests={topupRequests} />
-        </div>
-      )}
+                  </FigureCard>
 
-      {/* Discrepancy Approval Queue - cluster head only. High cash/Paytm discrepancies a
-          store incharge has requested approval for. Only rendered when there's something
-          pending, unlike the top-up queue below - there's no useful "history" view for
-          this yet, so an empty state has nothing to anchor. */}
-      {isClusterHead && pendingDiscrepancyApprovals.length > 0 && (
-        <div className="mt-6 bg-card rounded-2xl border border-border p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-            <h2 className="text-foreground font-bold">Discrepancy approval requests</h2>
-          </div>
-          <div className="space-y-2">
-            {pendingDiscrepancyApprovals.map((sale) => {
-              const expectedCash = (sale.actualCashInHand || 0) - (sale.cashOffset || 0);
-              const requestedDiscrepancy = (sale.requestedCashInHand || 0) - expectedCash;
-              return (
-                <div key={sale.id} className="rounded-xl border border-border bg-background p-3">
-                  <div className="mb-2">
-                    <p className="text-sm text-foreground">{formatDateIST(sale.date)}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Expected cash: ₹{expectedCash.toFixed(2)}</p>
-                    <p className="text-xs text-muted-foreground">Actual cash reported: ₹{(sale.requestedCashInHand || 0).toFixed(2)}</p>
-                    <p className={`text-xs font-semibold mt-0.5 ${requestedDiscrepancy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      Discrepancy: {requestedDiscrepancy >= 0 ? '+' : ''}₹{requestedDiscrepancy.toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApproveDiscrepancy(sale.id)}
-                      disabled={resolvingDiscrepancyId === sale.id}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors disabled:opacity-50"
-                    >
-                      <CheckCircle className="w-4 h-4" /> Approve
-                    </button>
-                    <button
-                      onClick={() => handleRejectDiscrepancy(sale.id)}
-                      disabled={resolvingDiscrepancyId === sale.id}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200 transition-colors disabled:opacity-50"
-                    >
-                      <XCircle className="w-4 h-4" /> Reject
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Cash Top-up Approval Queue - cluster head only. Kept visible even with 0
-          pending so the history below stays reachable. */}
-      {isClusterHead && (
-        <div className="mt-6 bg-card rounded-2xl border border-border p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-              <IndianRupee className="w-4 h-4" />
-            </div>
-            <h2 className="text-foreground font-bold">Cash top-up requests</h2>
-          </div>
-          {clusterHeadPendingTopups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No pending top-up requests.</p>
-          ) : (
-          <div className="space-y-2">
-            {clusterHeadPendingTopups.map((r) => (
-              <div key={r.id} className="rounded-xl border border-border bg-background p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                    <p className="text-sm text-foreground">₹{r.requestedAmount.toLocaleString()} for {r.date}</p>
-                      <span className="text-[10px] font-mono text-muted-foreground/60 bg-secondary rounded px-1.5 py-0.5">#{r.id.slice(-6).toUpperCase()}</span>
+                  {canReconcileProductionCash && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+                      <Field label="Cash counted" helper={productionCashInput ? (productionCashDiscrepancy === 0 ? 'Matches exactly' : `${productionCashDiscrepancy > 0 ? 'Excess' : 'Short'} of ${formatINR(Math.abs(productionCashDiscrepancy))}`) : 'Count the physical cash and enter it'}>
+                        <MoneyInput value={productionCashInput} onValueChange={(_, raw) => setProductionCashInput(raw)} disabled={!!productionCashEntry?.approvedBy} />
+                      </Field>
+                      {productionCashNeedsApproval && <Callout tone="warning" title={t('dc.needsApproval')} />}
+                      {productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
+                        <StatusChip tone="warning" icon={Clock}>Approval asked - waiting for the cluster head</StatusChip>
+                      )}
+                      {productionCashEntry?.approvedBy && <StatusChip tone="success" icon={Check}>Approved by {productionCashEntry.approvedBy}</StatusChip>}
+                      {productionCashEntry?.rejectedBy && (
+                        <Callout tone="danger" title={`Rejected by ${productionCashEntry.rejectedBy}`}>{productionCashEntry.rejectionReason || ''}</Callout>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        {productionCashEntry && productionCashNeedsApproval && !productionCashEntry.approvedBy && !productionCashEntry.approvalRequested && (
+                          <Button variant="secondary" onClick={handleRequestProductionCashApproval} disabled={productionCashSubmitting}>Ask for approval</Button>
+                        )}
+                        {!productionCashEntry?.approvedBy && (
+                          <Button variant="secondary" onClick={handleSaveProductionCash} loading={productionCashSubmitting} disabled={!productionCashInput}>
+                            {productionCashEntry ? 'Update production cash' : 'Save production cash'}
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Requested by {r.requestedByName} ({r.requestedByEntityName}) — {TOPUP_REASON_LABELS[r.reason]}
-                    </p>
-                    <p className="text-xs text-muted-foreground/70 mt-0.5">Requested {formatDateTimeIST(r.requestDate, false)}</p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleApproveTopup(r.id)}
-                    disabled={resolvingTopupId === r.id}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors disabled:opacity-50"
-                  >
-                    <CheckCircle className="w-4 h-4" /> Approve
-                  </button>
-                  <button
-                    onClick={() => handleRejectTopup(r.id)}
-                    disabled={resolvingTopupId === r.id}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200 transition-colors disabled:opacity-50"
-                  >
-                    <XCircle className="w-4 h-4" /> Reject
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                  )}
+
+                  {/* The cluster head decides a pending production cash difference here. */}
+                  {isClusterHead && productionCashEntry?.approvalRequested && !productionCashEntry.approvedBy && !productionCashEntry.rejectedBy && (
+                    <div className="flex gap-2">
+                      <Button variant="danger-ghost" onClick={() => handleRejectProductionCash(productionCashEntry.id)}>Reject</Button>
+                      <Button variant="secondary" leadingIcon={<Check />} onClick={() => handleApproveProductionCash(productionCashEntry.id)}>Approve</Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </Section>
           )}
-          <CashTopupHistory requests={topupRequests} />
-        </div>
-      )}
-
-      {isClusterHead && (
-        <PaytmWeeklyReconciliation context={context} initialStoreId={effectiveStoreId} initialDate={selectedDate} />
-      )}
-
-      {/* Cash Top-up Request Modal */}
-      {showTopupModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
-          <div className="bg-card rounded-2xl max-w-sm w-full p-6 border border-border">
-            <h3 className="text-foreground font-bold mb-4">Request Cash Top-up</h3>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Date this top-up is for</label>
-            <DatePicker
-              value={topupDate}
-              onChange={setTopupDate}
-              max={getTodayIST()}
-              className="w-full mb-3"
-            />
-            <p className="text-xs text-muted-foreground mb-3">
-              Defaults to the date you're viewing - change this if the top-up is for an earlier day (e.g. a late vendor settlement).
-            </p>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Amount (₹)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={topupAmount}
-              onChange={(e) => setTopupAmount(e.target.value)}
-              className="w-full px-3 py-2 border border-border rounded-lg mb-3 bg-background text-foreground"
-              placeholder="Enter amount needed"
-              autoFocus
-            />
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Reason</label>
-            <select
-              value={topupReason}
-              onChange={(e) => setTopupReason(e.target.value as api.CashTopupReason)}
-              className="w-full px-3 py-2 border border-border rounded-lg mb-3 bg-background text-foreground"
+          {/* Cash top-ups: operations manager / production incharge request, the cluster head
+              adds straight away and decides requests (event stall cash: from store Paytm or
+              from production cash). */}
+          {(isOperationsManager || isProductionIncharge || isClusterHead) && (
+            <ListGroup
+              title={isClusterHead ? 'Cash top-ups' : t('topup.title')}
+              meta={isClusterHead && clusterHeadPendingTopups.length > 0 ? `${clusterHeadPendingTopups.length} waiting` : undefined}
+              action={<Button variant="secondary" size="sm" leadingIcon={<Plus />} onClick={openTopup}>{isClusterHead ? 'Add top-up' : t('topup.request')}</Button>}
+              empty={<p className="px-4 py-4 text-body-sm text-text-2">{t('topup.none')}</p>}
             >
-              <option value="store_inventory">Store Inventory</option>
-              <option value="production_inventory">Production House Inventory</option>
-              <option value="other">Other</option>
-            </select>
-            {isProductionIncharge && suppliedStores.length > 1 && (
-              <>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Which store to credit</label>
-                <select
-                  value={topupTargetStoreId}
-                  onChange={(e) => setTopupTargetStoreId(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg mb-4 bg-background text-foreground"
-                >
-                  <option value="">Select a store...</option>
-                  {suppliedStores.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-              </>
-            )}
-            {isProductionIncharge && suppliedStores.length === 1 && (
-              <p className="text-xs text-muted-foreground mb-4">
-                Credits <strong>{suppliedStores[0].name}</strong> (the only store this production house supplies).
-              </p>
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowTopupModal(false)}
-                className="flex-1 px-4 py-2 border border-border rounded-lg text-sm text-foreground hover:bg-secondary transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRequestTopup}
-                disabled={isSubmittingTopup}
-                className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {isSubmittingTopup ? 'Sending...' : 'Send Request'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      </>
+              {isClusterHead
+                ? clusterHeadPendingTopups.map((r) => (
+                    <TopupRow key={r.id} request={r} showRequester>
+                      {r.reason === 'event_cash' ? (
+                        <>
+                          <Button variant="secondary" size="sm" leadingIcon={<Smartphone />} disabled={resolvingTopupId === r.id} onClick={() => handleApproveTopup(r.id, 'store_paytm')}>From store Paytm</Button>
+                          <Button variant="secondary" size="sm" leadingIcon={<Factory />} disabled={resolvingTopupId === r.id} onClick={() => handleApproveTopup(r.id, 'production_cash')}>From production cash</Button>
+                        </>
+                      ) : (
+                        <Button variant="secondary" size="sm" leadingIcon={<Check />} disabled={resolvingTopupId === r.id} onClick={() => handleApproveTopup(r.id)}>Approve</Button>
+                      )}
+                      <Button variant="danger-ghost" size="sm" disabled={resolvingTopupId === r.id} onClick={() => handleRejectTopup(r.id)}>Reject</Button>
+                    </TopupRow>
+                  ))
+                : myPendingTopups.map((r) => <TopupRow key={r.id} request={r} />)}
+            </ListGroup>
+          )}
+          {(isOperationsManager || isProductionIncharge || isClusterHead) && <CashTopupHistory requests={topupRequests} />}
+
+          {entry && (
+            <PaytmLedger input={{
+              salesData: context.salesData,
+              overheads: context.overheads,
+              aggregatorSettlements: context.aggregatorSettlements || [],
+              onlinePayoutData: [],
+              onlineLoans,
+              employeePayouts,
+              topupRequests,
+              onlineCashRecalibrations: context.onlineCashRecalibrations || [],
+              effectiveStoreId: effectiveStoreId ?? null,
+            }} />
+          )}
+
+          {isClusterHead && (
+            <PaytmWeeklyReconciliation context={context} initialStoreId={effectiveStoreId} initialDate={selectedDate} />
+          )}
+        </>
       )}
 
       {/* Loan management - operations manager can request, cluster head can approve/reject */}
       {activeTab === 'loans' && (isOperationsManager || isClusterHead) && (
-        <div>
-          <LoanManagementSection
-            context={context}
-            effectiveStoreId={effectiveStoreId}
-            selectedDate={selectedDate}
-            loans={onlineLoans}
-            isLoading={isLoadingLoans}
-            onReload={loadOnlineLoans}
-            canApply={isOperationsManager || isClusterHead}
-            canApprove={isClusterHead}
-          />
-        </div>
+        <LoanManagementSection
+          context={context}
+          effectiveStoreId={effectiveStoreId}
+          selectedDate={selectedDate}
+          loans={onlineLoans}
+          isLoading={isLoadingLoans}
+          onReload={loadOnlineLoans}
+          canApply={isOperationsManager || isClusterHead}
+          canApprove={isClusterHead}
+        />
       )}
 
       {/* Aggregator payout reconciliation - operations manager / cluster head only */}
       {activeTab === 'payout' && canManagePayouts && (
-        <div>
-          <OnlineSalesTab
-            context={context}
-            selectedStoreId={selectedStoreId}
-            selectedDate={selectedDate}
-            onDateChange={setSelectedDate}
-          />
-        </div>
+        <OnlineSalesTab
+          context={context}
+          selectedStoreId={selectedStoreId}
+          selectedDate={selectedDate}
+          onDateChange={setSelectedDate}
+        />
       )}
-    </div>
+
+      {activeTab === 'entry' && pendingThisDay && (
+        <StickyFooter>
+          <Button variant="danger-ghost" size="lg" disabled={resolvingDiscrepancyId === pendingThisDay.id} onClick={() => handleRejectDiscrepancy(pendingThisDay.id)}>Reject</Button>
+          <Button size="lg" className="flex-1" loading={resolvingDiscrepancyId === pendingThisDay.id} onClick={() => handleApproveDiscrepancy(pendingThisDay.id)}>Approve</Button>
+        </StickyFooter>
+      )}
+
+      <FormulaSheet
+        open={formulaOpen}
+        onOpenChange={setFormulaOpen}
+        title={t('dc.formulaTitle')}
+        lines={formulaLines}
+        totalLabel={t('dc.expectedDrawer')}
+        total={storeCashCard?.expectedCash ?? 0}
+        note={storeCashCard?.notYetReconciled ? 'Not counted by the store incharge yet - this is an estimate, not the counted cash.' : t('dc.formulaNote')}
+      />
+
+      <TopupSheet
+        open={showTopupModal}
+        onOpenChange={setShowTopupModal}
+        mode={isClusterHead ? 'owner' : 'request'}
+        destinations={ownerDestinations}
+        stores={isProductionIncharge && suppliedStores.length > 1 ? suppliedStores.map((s) => ({ id: s.id, name: s.name })) : undefined}
+        singleStoreName={isProductionIncharge && suppliedStores.length === 1 ? suppliedStores[0].name : undefined}
+        value={{ date: topupDate, amount: topupAmount, reason: topupReason, destination: topupDestination, storeId: topupTargetStoreId }}
+        onChange={(v) => { setTopupDate(v.date); setTopupAmount(v.amount); setTopupReason(v.reason); setTopupDestination(v.destination); setTopupTargetStoreId(v.storeId); }}
+        onSubmit={handleRequestTopup}
+        submitting={isSubmittingTopup}
+        reasonChoices={isClusterHead ? ['store_inventory', 'other'] : ['store_inventory', 'production_inventory', 'other']}
+      />
+
+      {/* Cluster head: re-pull a range of past days from the POS, one day at a time. */}
+      <ResponsiveModal
+        open={showBulkSync}
+        onOpenChange={(open) => { if (!isBulkSyncing) setShowBulkSync(open); }}
+        title="Re-sync days from the POS"
+        description="Re-pulls each day's real totals from Ciferon and overwrites those records."
+        footer={
+          <Button size="lg" fullWidth leadingIcon={<RefreshCw />} loading={isBulkSyncing} onClick={handleBulkSync}>
+            {isBulkSyncing && bulkSyncProgress ? `Syncing ${bulkSyncProgress.done}/${bulkSyncProgress.total}` : 'Re-sync these days'}
+          </Button>
+        }
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="From">
+            <Input type="date" value={bulkSyncStart} max={getTodayIST()} onChange={(e) => setBulkSyncStart(e.target.value)} disabled={isBulkSyncing} />
+          </Field>
+          <Field label="To">
+            <Input type="date" value={bulkSyncEnd} max={getTodayIST()} onChange={(e) => setBulkSyncEnd(e.target.value)} disabled={isBulkSyncing} />
+          </Field>
+        </div>
+      </ResponsiveModal>
+    </MoneyPage>
   );
 }

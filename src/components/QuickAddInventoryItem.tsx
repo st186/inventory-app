@@ -1,7 +1,16 @@
 import { useState } from 'react';
-import { Plus, X, Check, AlertCircle } from 'lucide-react';
-import { Card } from './ui/card';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { projectId } from '../utils/supabase/info';
+import { currentAccessToken } from '../utils/accessToken';
+import { useT, hasTranslation } from '../utils/i18n';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Field } from './ui/field';
+import { NativeSelect } from './ui/select';
+import { ChoiceChips } from './ui/chip';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { unitKey } from './setup/itemLabels';
 
 type Props = {
   entityType: 'store' | 'production_house';
@@ -11,34 +20,35 @@ type Props = {
   onItemAdded?: () => void;
 };
 
+const UNITS = ['pieces', 'kg', 'liters', 'grams', 'ml'];
+const EMPTY = { displayName: '', unit: 'pieces', linkType: 'specific' as 'specific' | 'global' };
+
+// "Add a new item" on the stock screens: a small sheet that adds one catalogue item for this
+// store / production house (or all of them).
 export function QuickAddInventoryItem({ entityType, entityId, entityName, category = 'finished_product', onItemAdded }: Props) {
+  const { t, lang } = useT();
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
-  const [formData, setFormData] = useState({
-    displayName: '',
-    unit: 'pieces',
-    linkType: 'specific' as 'specific' | 'global',
-  });
+  const [formData, setFormData] = useState({ ...EMPTY });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+
     // Prevent duplicate submissions
-    if (loading) {
-      console.log('⚠️ Submission already in progress, ignoring duplicate request');
+    if (loading) return;
+    if (!formData.displayName.trim()) {
+      setError(t('assets.err.name'));
       return;
     }
-    
+
     setLoading(true);
     setError(null);
-    setSuccess(null);
 
     try {
       const name = formData.displayName.toLowerCase().replace(/\s+/g, '_');
-      
+
       const payload = {
         name,
         displayName: formData.displayName,
@@ -55,7 +65,7 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`
+            'Authorization': `Bearer ${await currentAccessToken()}`
           },
           body: JSON.stringify(payload),
         }
@@ -66,126 +76,63 @@ export function QuickAddInventoryItem({ entityType, entityId, entityName, catego
         throw new Error(errorData.error || 'Failed to add item');
       }
 
-      setSuccess('Item added successfully!');
-      setFormData({ displayName: '', unit: 'pieces', linkType: 'specific' });
+      toast.success(t('items.created'));
       setShowForm(false);
-      
+
       if (onItemAdded) {
         setTimeout(onItemAdded, 500);
       }
     } catch (err) {
       console.error('Error adding item:', err);
-      setError(err instanceof Error ? err.message : 'Failed to add item');
+      setError(err instanceof Error ? err.message : t('items.saveFailed'));
     } finally {
       setLoading(false);
     }
   };
 
-  if (!showForm) {
-    return (
-      <div className="mb-4">
-        {success && (
-          <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-sm">
-            <Check className="w-4 h-4 text-green-600" />
-            <span className="text-green-800">{success}</span>
-            <button onClick={() => setSuccess(null)} className="ml-auto">
-              <X className="w-4 h-4 text-green-600" />
-            </button>
-          </div>
-        )}
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:shadow-md transition-all text-sm"
-        >
-          <Plus className="w-4 h-4" />
-          Add New {category.replace('_', ' ')} Item
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <Card className="p-4 mb-4 rounded-2xl border-2 border-orange-200 bg-orange-50/30">
-      <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-        <Plus className="w-4 h-4" />
-        Add New Item to {entityName}
-      </h3>
+    <div className="mb-4">
+      <Button variant="secondary" size="sm" leadingIcon={<Plus />} onClick={() => setShowForm(true)}>
+        {t('items.quick.add')}
+      </Button>
 
-      {error && (
-        <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-sm">
-          <AlertCircle className="w-4 h-4 text-red-600" />
-          <span className="text-red-800">{error}</span>
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <div>
-          <label className="block text-xs mb-1 text-gray-700">Item Name *</label>
-          <input
-            type="text"
-            value={formData.displayName}
-            onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-            placeholder="e.g., Schezwan Momo"
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-            required
-            disabled={loading}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs mb-1 text-gray-700">Unit *</label>
-            <select
-              value={formData.unit}
-              onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              required
+      <ResponsiveModal
+        open={showForm}
+        onOpenChange={setShowForm}
+        onClosed={() => { setFormData({ ...EMPTY }); setError(null); }}
+        title={t('items.quick.title', { place: entityName })}
+        dirty={!!formData.displayName.trim() && !loading}
+        footer={<Button size="lg" className="flex-1" loading={loading} onClick={() => handleSubmit()}>{t('items.add')}</Button>}
+      >
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4" lang={lang}>
+          <Field label={t('items.name')} required error={error}>
+            <Input
+              value={formData.displayName}
+              onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+              placeholder={t('items.namePlaceholder')}
               disabled={loading}
-            >
-              <option value="pieces">Pieces</option>
-              <option value="kg">Kilograms (kg)</option>
-              <option value="liters">Liters</option>
-              <option value="grams">Grams</option>
-              <option value="ml">Milliliters (ml)</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs mb-1 text-gray-700">Availability *</label>
-            <select
+            />
+          </Field>
+          <Field label={t('items.unit')}>
+            <NativeSelect value={formData.unit} onChange={(e) => setFormData({ ...formData, unit: e.target.value })} disabled={loading}>
+              {UNITS.map((u) => <option key={u} value={u}>{hasTranslation('en', unitKey(u)) ? t(unitKey(u)) : u}</option>)}
+            </NativeSelect>
+          </Field>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-body-sm font-medium text-text">{t('items.quick.availability')}</span>
+            <ChoiceChips
+              aria-label={t('items.quick.availability')}
               value={formData.linkType}
-              onChange={(e) => setFormData({ ...formData, linkType: e.target.value as 'specific' | 'global' })}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              disabled={loading}
-            >
-              <option value="specific">Only {entityName}</option>
-              <option value="global">All {entityType === 'store' ? 'Stores' : 'Production Houses'}</option>
-            </select>
+              onValueChange={(v) => setFormData({ ...formData, linkType: v })}
+              options={[
+                { value: 'specific', label: t('items.quick.only', { place: entityName }) },
+                { value: 'global', label: entityType === 'store' ? t('items.quick.allStores') : t('items.quick.allHouses') },
+              ]}
+            />
           </div>
-        </div>
-
-        <div className="flex gap-2 justify-end pt-2">
-          <button
-            type="button"
-            onClick={() => {
-              setShowForm(false);
-              setError(null);
-              setFormData({ displayName: '', unit: 'pieces', linkType: 'specific' });
-            }}
-            className="px-4 py-2 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-            disabled={loading}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="px-4 py-2 text-sm bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-lg hover:shadow-lg disabled:opacity-50"
-            disabled={loading}
-          >
-            {loading ? 'Adding...' : 'Add Item'}
-          </button>
-        </div>
-      </form>
-    </Card>
+          <button type="submit" className="sr-only" tabIndex={-1}>{t('items.add')}</button>
+        </form>
+      </ResponsiveModal>
+    </div>
   );
 }

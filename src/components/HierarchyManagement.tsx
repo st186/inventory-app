@@ -1,7 +1,21 @@
 import { useState, useEffect } from 'react';
-import { Users, UserPlus, ChevronRight, Building2, UserCog, User, Network } from 'lucide-react';
+import { Network } from 'lucide-react';
+import { toast } from 'sonner';
 import * as api from '../utils/api';
-import { ManagerCard } from './ManagerCard';
+import { peekStoredSession } from '../utils/accessToken';
+import { ManagerCard, TreeRow, formatDesignation } from './ManagerCard';
+import { AssignManagers } from './AssignManagers';
+import { Button } from './ui/button';
+import { Field } from './ui/field';
+import { NativeSelect } from './ui/select';
+import { ListGroup } from './ui/list-row';
+import { StatSplit } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { SegmentedControl } from './ui/segmented-control';
+import { EmptyState } from './ui/empty-state';
+import { ErrorState } from './ui/error-state';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SetupPage, LoadingList } from './setup/SetupPage';
 
 type Employee = api.Employee;
 
@@ -29,20 +43,31 @@ interface HierarchyManagementProps {
   userRole: 'cluster_head' | 'manager' | 'employee';
   selectedStoreId?: string | null;
   accessToken?: string;
+  /** The owner's own employee id, for "Assign managers". Found from the signed-in email when left out. */
+  currentEmployeeId?: string | null;
+  /** Inside another page that already has the page padding (Employees). */
+  embedded?: boolean;
 }
 
-export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: HierarchyManagementProps) {
+// Setup > Who reports to whom: the organisation tree, and (owner) assigning managers - one screen
+// for what used to be the Hierarchy and Assign managers tabs.
+export function HierarchyManagement({ userRole, selectedStoreId, accessToken, currentEmployeeId, embedded = false }: HierarchyManagementProps) {
   const [hierarchy, setHierarchy] = useState<HierarchyNode[]>([]);
   const [unassignedManagers, setUnassignedManagers] = useState<Employee[]>([]);
   const [unassignedEmployees, setUnassignedEmployees] = useState<Employee[]>([]);
   const [stats, setStats] = useState({ totalClusterHeads: 0, totalManagers: 0, totalEmployees: 0 });
   const [loading, setLoading] = useState(false);
-  const [showAssignClusterHead, setShowAssignClusterHead] = useState(false);
-  const [showAssignManager, setShowAssignManager] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedManager, setSelectedManager] = useState<Employee | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [choice, setChoice] = useState('');
+  const [assigning, setAssigning] = useState(false);
   const [clusterHeads, setClusterHeads] = useState<Employee[]>([]);
   const [managers, setManagers] = useState<Employee[]>([]);
+  const [ownerId, setOwnerId] = useState<string | null>(currentEmployeeId || null);
+  const [view, setView] = useState<'structure' | 'assign'>('structure');
 
   useEffect(() => {
     loadHierarchy();
@@ -51,26 +76,19 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
   const loadHierarchy = async () => {
     if (!accessToken) {
       console.error('No access token available');
+      setLoaded(true);
       return;
     }
-    
+
     try {
       setLoading(true);
       const data = await api.getOrganizationalHierarchy(selectedStoreId);
-      
-      console.log('[Hierarchy Frontend] Received data:', {
-        hierarchyCount: data.hierarchy?.length || 0,
-        unassignedManagersCount: data.unassignedManagers?.length || 0,
-        unassignedEmployeesCount: data.unassignedEmployees?.length || 0,
-        stats: data.stats,
-        selectedStoreId: selectedStoreId
-      });
-      
+
       setHierarchy((data.hierarchy as any) || []);
       setUnassignedManagers(data.unassignedManagers || []);
       setUnassignedEmployees(data.unassignedEmployees || []);
       setStats(data.stats || { totalClusterHeads: 0, totalManagers: 0, totalEmployees: 0 });
-      
+
       // Only load cluster heads if user has permission (cluster heads only)
       if (userRole === 'cluster_head') {
         try {
@@ -80,444 +98,226 @@ export function HierarchyManagement({ userRole, selectedStoreId, accessToken }: 
           console.log('User not authorized to view all cluster heads');
         }
       }
-      
+
       const allEmployees = await api.getAllEmployees();
       const allManagers = allEmployees.filter((emp: Employee) => emp.role === 'manager');
       setManagers(allManagers);
+      if (!currentEmployeeId && userRole === 'cluster_head') {
+        const email = peekStoredSession()?.user?.email?.toLowerCase();
+        const me = allEmployees.find((emp: Employee) => emp.role === 'cluster_head' && !!email && emp.email?.toLowerCase() === email);
+        setOwnerId(me?.employeeId || null);
+      }
+      setLoadError(null);
     } catch (error) {
       console.error('Error loading hierarchy:', error);
-      // Don't show alert for auth errors, just log them
+      // Don't show an error for auth errors, just log them
       if (error instanceof Error && !error.message.includes('JWT') && !error.message.includes('Unauthorized')) {
-        alert('Failed to load organizational hierarchy');
+        setLoadError(error.message || 'Failed to load organizational hierarchy');
       }
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
+  };
+
+  const openClusterHeadSheet = (manager: Employee) => {
+    setSelectedEmployee(null);
+    setSelectedManager(manager);
+    setChoice('');
+    setSheetOpen(true);
+  };
+
+  const openManagerSheet = (employee: Employee) => {
+    setSelectedManager(null);
+    setSelectedEmployee(employee);
+    setChoice('');
+    setSheetOpen(true);
   };
 
   const handleAssignClusterHead = async (managerId: string, clusterHeadId: string) => {
     try {
+      setAssigning(true);
       await api.assignClusterHeadToManager(managerId, clusterHeadId);
-      alert('Cluster head assigned successfully!');
-      setShowAssignClusterHead(false);
-      setSelectedManager(null);
+      toast.success('Cluster head assigned');
+      setSheetOpen(false);
       await loadHierarchy();
     } catch (error) {
       console.error('Error assigning cluster head:', error);
-      alert('Failed to assign cluster head');
+      toast.error('Failed to assign cluster head');
+    } finally {
+      setAssigning(false);
     }
   };
 
   const handleAssignManager = async (employeeId: string, managerId: string) => {
     try {
+      setAssigning(true);
       await api.assignManagerToEmployee(employeeId, managerId);
-      alert('Manager assigned successfully!');
-      setShowAssignManager(false);
-      setSelectedEmployee(null);
+      toast.success('Manager assigned');
+      setSheetOpen(false);
       await loadHierarchy();
     } catch (error) {
       console.error('Error assigning manager:', error);
-      alert('Failed to assign manager');
+      toast.error('Failed to assign manager');
+    } finally {
+      setAssigning(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6 flex items-center justify-center">
-        <div className="text-gray-500">Loading hierarchy...</div>
+  const assign = () => {
+    if (!choice) {
+      toast.error(selectedManager ? 'Choose a cluster head' : 'Choose a manager');
+      return;
+    }
+    if (selectedManager) handleAssignClusterHead(selectedManager.employeeId, choice);
+    else if (selectedEmployee) handleAssignManager(selectedEmployee.employeeId, choice);
+  };
+
+  const teamManagers = unassignedManagers.filter((m: any) => (m.employees && m.employees.length > 0) || (m.incharges && m.incharges.length > 0));
+  const nobody = hierarchy.length === 0 && unassignedManagers.length === 0 && unassignedEmployees.length === 0;
+
+  const structure = !loaded ? (
+    <LoadingList leading="avatar" rows={6} />
+  ) : loadError ? (
+    <ErrorState title="Couldn't load who reports to whom" body={loadError} onRetry={loadHierarchy} retrying={loading} />
+  ) : (
+    <>
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <StatSplit items={[
+          { label: 'Cluster heads', value: stats.totalClusterHeads },
+          { label: 'Managers', value: stats.totalManagers },
+          { label: 'Employees', value: stats.totalEmployees },
+        ]} />
       </div>
-    );
-  }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
-            <Network className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Organizational Hierarchy</h1>
-            <p className="text-sm sm:text-base text-gray-500">Manage reporting relationships across the organization</p>
-          </div>
+      {nobody ? (
+        <div className="rounded-lg border border-border bg-surface">
+          <EmptyState icon={Network} title="Nobody here yet" body="Add people in Team > People first." />
         </div>
+      ) : (
+        <>
+          {/* Cluster head trees */}
+          {hierarchy.map((clusterHead) => (
+            <ListGroup key={clusterHead.employeeId} title={clusterHead.name} meta="Cluster head">
+              {(clusterHead.managers || []).length === 0 && (clusterHead.employees || []).length === 0 && (
+                <p className="px-4 py-3 text-body-sm text-text-2">Nobody reports to {clusterHead.name} yet.</p>
+              )}
+              {clusterHead.managers?.map((manager) => (
+                <ManagerCard key={manager.employeeId} manager={manager} />
+              ))}
+              {clusterHead.employees?.map((employee) => (
+                <TreeRow key={employee.employeeId} depth={0} name={employee.name} meta={employee.employeeId} />
+              ))}
+            </ListGroup>
+          ))}
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mb-6">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg shadow-blue-500/20 p-6 text-white">
-            <div className="flex items-center justify-between">
-              <Building2 className="w-12 h-12 opacity-80" />
-              <div className="text-right">
-                <div className="text-2xl font-semibold">{stats.totalClusterHeads}</div>
-                <div className="text-sm opacity-90">Cluster Heads</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg shadow-orange-500/20 p-6 text-white">
-            <div className="flex items-center justify-between">
-              <UserCog className="w-12 h-12 opacity-80" />
-              <div className="text-right">
-                <div className="text-2xl font-semibold">{stats.totalManagers}</div>
-                <div className="text-sm opacity-90">Managers</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl shadow-lg shadow-rose-500/20 p-6 text-white">
-            <div className="flex items-center justify-between">
-              <Users className="w-12 h-12 opacity-80" />
-              <div className="text-right">
-                <div className="text-2xl font-semibold">{stats.totalEmployees}</div>
-                <div className="text-sm opacity-90">Employees</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Hierarchy Tree */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight">Organizational Structure</h2>
-            <Network className="w-6 h-6 text-indigo-600" />
-          </div>
-
-          {hierarchy.length === 0 && unassignedManagers.length === 0 && unassignedEmployees.length === 0 ? (
-            <div className="text-center py-12">
-              <Building2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">No employees found. Create employees to get started.</p>
-            </div>
-          ) : (
-            <>
-              {/* Cluster Head Hierarchies */}
-              {hierarchy.length > 0 && (
-                <div className="space-y-6 mb-6">
-                  {hierarchy.map((clusterHead) => (
-                    <div key={clusterHead.employeeId} className="border border-gray-200 rounded-xl overflow-hidden">
-                      {/* Cluster Head */}
-                      <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-3 sm:p-4">
-                        <div className="flex items-center gap-2 sm:gap-3">
-                          <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
-                            <Building2 className="w-6 h-6" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-lg font-bold text-gray-900 truncate min-w-0 flex-1">{clusterHead.name}</h3>
-                              <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded flex-shrink-0">Cluster Head</span>
-                            </div>
-                            <div className="text-sm text-gray-600 truncate">{clusterHead.employeeId} • {clusterHead.email}</div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Managers under this Cluster Head */}
-                      {clusterHead.managers && clusterHead.managers.length > 0 && (
-                        <div className="p-4 bg-gray-50">
-                          {clusterHead.managers.map((manager) => (
-                            <ManagerCard key={manager.employeeId} manager={manager} />
-                          ))}
-                        </div>
-                      )}
+          {/* Managers without a cluster head who lead a team */}
+          {teamManagers.length > 0 && (
+            <ListGroup title="Managers and their teams">
+              {teamManagers.map((manager: any) => (
+                <div key={manager.employeeId} className="[&>*+*]:border-t [&>*+*]:border-border">
+                  <TreeRow depth={0} name={manager.name} meta={`Manager · ${manager.employeeId}`} />
+                  {(manager.incharges || []).map((incharge: InchargeNode) => (
+                    <div key={incharge.employeeId} className="[&>*+*]:border-t [&>*+*]:border-border">
+                      <TreeRow
+                        depth={1}
+                        name={incharge.name}
+                        meta={incharge.employeeId}
+                        trailing={<StatusChip tone="info">{incharge.designation === 'store_incharge' ? 'Store incharge' : 'Production incharge'}</StatusChip>}
+                      />
+                      {(incharge.employees || []).map((employee: Employee) => (
+                        <TreeRow key={employee.employeeId} depth={2} name={employee.name} meta={employee.employeeId} />
+                      ))}
                     </div>
                   ))}
-                </div>
-              )}
-
-              {/* Managers without Cluster Heads */}
-              {unassignedManagers.length > 0 && unassignedManagers.some((m: any) => (m.employees && m.employees.length > 0) || (m.incharges && m.incharges.length > 0)) && (
-                <div className="space-y-4 mb-6">
-                  <h3 className="text-lg font-bold text-gray-900">Managers and Their Teams</h3>
-                  {unassignedManagers
-                    .filter((m: any) => (m.employees && m.employees.length > 0) || (m.incharges && m.incharges.length > 0))
-                    .map((manager: any) => (
-                    <div key={manager.employeeId} className="border border-gray-200 rounded-xl bg-white overflow-hidden">
-                      {/* Manager */}
-                      <div className="bg-gradient-to-r from-orange-50 to-orange-100 p-3 sm:p-4">
-                        <div className="flex items-center gap-2 sm:gap-3">
-                          <div className="w-10 h-10 bg-orange-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
-                            <UserCog className="w-5 h-5" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <h4 className="text-gray-900 truncate min-w-0 flex-1">{manager.name}</h4>
-                              <span className="px-2 py-1 bg-orange-600 text-white text-xs rounded flex-shrink-0">Manager</span>
-                            </div>
-                            <div className="text-sm text-gray-600 truncate">{manager.employeeId} • {manager.email}</div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Incharges and Employees under this Manager */}
-                      {(manager.incharges || manager.employees) && (
-                        <div className="p-4 space-y-4">
-                          {/* Incharges */}
-                          {manager.incharges && manager.incharges.length > 0 && (
-                            <div className="space-y-3">
-                              {manager.incharges.map((incharge: InchargeNode) => (
-                                <div key={incharge.employeeId} className="border border-blue-200 rounded-lg overflow-hidden bg-blue-50/50">
-                                  {/* Incharge Header */}
-                                  <div className="bg-gradient-to-r from-blue-100 to-blue-200 p-3">
-                                    <div className="flex items-center gap-2">
-                                      <ChevronRight className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                                      <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
-                                        <UserCog className="w-4 h-4" />
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <span className="text-sm text-gray-900 truncate block">{incharge.name}</span>
-                                        <span className="inline-block mt-1 px-2 py-0.5 bg-blue-600 text-white text-xs rounded max-w-full truncate align-top">
-                                          {incharge.designation === 'store_incharge' ? 'Store Incharge' : 'Production Incharge'}
-                                        </span>
-                                        <div className="text-xs text-gray-600 truncate mt-1">{incharge.employeeId}</div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                  
-                                  {/* Employees under Incharge */}
-                                  {incharge.employees && incharge.employees.length > 0 && (
-                                    <div className="p-3">
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                        {incharge.employees.map((employee: Employee) => (
-                                          <div key={employee.employeeId} className="flex items-center gap-2 p-2 bg-white rounded border border-blue-100">
-                                            <ChevronRight className="w-3 h-3 text-gray-300" />
-                                            <div className="w-6 h-6 bg-rose-500 rounded-full flex items-center justify-center text-white text-xs">
-                                              <User className="w-3 h-3" />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                              <div className="text-xs text-gray-900 truncate">{employee.name}</div>
-                                              <div className="text-xs text-gray-500 truncate">{employee.employeeId}</div>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          
-                          {/* Direct Employees under Manager */}
-                          {manager.employees && manager.employees.length > 0 && (
-                            <div>
-                              <p className="text-xs text-gray-500 mb-2">Direct Reports:</p>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {manager.employees.map((employee: Employee) => (
-                                  <div key={employee.employeeId} className="flex items-center gap-3 p-3 bg-rose-50 rounded-lg">
-                                    <ChevronRight className="w-4 h-4 text-gray-400" />
-                                    <div className="w-8 h-8 bg-rose-600 rounded-full flex items-center justify-center text-white text-sm">
-                                      <User className="w-4 h-4" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="text-sm text-gray-900 truncate">{employee.name}</div>
-                                      <div className="text-xs text-gray-600 truncate">{employee.employeeId}</div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                  {(manager.employees || []).map((employee: Employee) => (
+                    <TreeRow key={employee.employeeId} depth={1} name={employee.name} meta={`Direct report · ${employee.employeeId}`} />
                   ))}
                 </div>
-              )}
-            </>
+              ))}
+            </ListGroup>
           )}
-        </div>
 
-        {/* Unassigned Section */}
-        {(unassignedManagers.length > 0 || unassignedEmployees.length > 0) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Unassigned Managers */}
-            {unassignedManagers.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold text-gray-900">Unassigned Managers</h3>
-                  <span className="px-3 py-1 bg-orange-100 text-orange-700 text-sm rounded-full">
-                    {unassignedManagers.length}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {unassignedManagers.map((manager) => (
-                    <div key={manager.employeeId} className="border border-gray-200 rounded-xl p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                            <UserCog className="w-5 h-5 text-orange-600" />
-                          </div>
-                          <div>
-                            <div className="text-gray-900">{manager.name}</div>
-                            <div className="text-sm text-gray-600">{manager.employeeId}</div>
-                          </div>
-                        </div>
-                      </div>
-                      {userRole === 'cluster_head' && (
-                        <button
-                          onClick={() => {
-                            setSelectedManager(manager);
-                            setShowAssignClusterHead(true);
-                          }}
-                          className="w-full px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm"
-                        >
-                          Assign Cluster Head
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+          {/* Not placed yet */}
+          {unassignedManagers.length > 0 && (
+            <ListGroup title="Managers without a cluster head" meta={String(unassignedManagers.length)} footer={userRole === 'cluster_head' ? 'Tap a manager to choose their cluster head.' : undefined}>
+              {unassignedManagers.map((manager) => (
+                <TreeRow
+                  key={manager.employeeId}
+                  depth={0}
+                  name={manager.name}
+                  meta={`${formatDesignation(manager.designation)} · ${manager.employeeId}`}
+                  trailing={<StatusChip tone="warning">Not placed</StatusChip>}
+                  onClick={userRole === 'cluster_head' ? () => openClusterHeadSheet(manager) : undefined}
+                />
+              ))}
+            </ListGroup>
+          )}
 
-            {/* Unassigned Employees */}
-            {unassignedEmployees.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold text-gray-900">Unassigned Employees</h3>
-                  <span className="px-3 py-1 bg-orange-100 text-orange-700 text-sm rounded-full">
-                    {unassignedEmployees.length}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {unassignedEmployees.map((employee) => (
-                    <div key={employee.employeeId} className="border border-gray-200 rounded-xl p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-rose-100 rounded-full flex items-center justify-center">
-                            <User className="w-5 h-5 text-rose-600" />
-                          </div>
-                          <div>
-                            <div className="text-gray-900">{employee.name}</div>
-                            <div className="text-sm text-gray-600">{employee.employeeId}</div>
-                          </div>
-                        </div>
-                      </div>
-                      {(userRole === 'cluster_head' || userRole === 'manager') && (
-                        <button
-                          onClick={() => {
-                            setSelectedEmployee(employee);
-                            setShowAssignManager(true);
-                          }}
-                          className="w-full px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm"
-                        >
-                          Assign Manager
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Assign Cluster Head Modal */}
-        {showAssignClusterHead && selectedManager && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-              <h3 className="text-xl font-bold text-gray-900 mb-4">Assign Cluster Head to Manager</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Manager: <strong>{selectedManager.name}</strong> ({selectedManager.employeeId})
-              </p>
-              
-              <div className="mb-4">
-                <label className="block text-sm text-gray-700 mb-2">Select Cluster Head</label>
-                <select
-                  id="clusterHeadSelect"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  defaultValue=""
-                >
-                  <option value="" disabled>Choose a cluster head...</option>
-                  {clusterHeads.map((ch) => (
-                    <option key={ch.employeeId} value={ch.employeeId}>
-                      {ch.name} ({ch.employeeId})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    const select = document.getElementById('clusterHeadSelect') as HTMLSelectElement;
-                    if (select.value) {
-                      handleAssignClusterHead(selectedManager.employeeId, select.value);
-                    } else {
-                      alert('Please select a cluster head');
-                    }
-                  }}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:shadow-lg transition-all"
-                >
-                  Assign
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAssignClusterHead(false);
-                    setSelectedManager(null);
-                  }}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Assign Manager Modal */}
-        {showAssignManager && selectedEmployee && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-              <h3 className="text-xl font-bold text-gray-900 mb-4">Assign Manager to Employee</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Employee: <strong>{selectedEmployee.name}</strong> ({selectedEmployee.employeeId})
-              </p>
-              
-              <div className="mb-4">
-                <label className="block text-sm text-gray-700 mb-2">Select Manager</label>
-                <select
-                  id="managerSelect"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  defaultValue=""
-                >
-                  <option value="" disabled>Choose a manager...</option>
-                  {managers.map((mgr) => (
-                    <option key={mgr.employeeId} value={mgr.employeeId}>
-                      {mgr.name} ({mgr.employeeId})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    const select = document.getElementById('managerSelect') as HTMLSelectElement;
-                    if (select.value) {
-                      handleAssignManager(selectedEmployee.employeeId, select.value);
-                    } else {
-                      alert('Please select a manager');
-                    }
-                  }}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-600 to-orange-700 text-white rounded-lg hover:shadow-lg transition-all"
-                >
-                  Assign
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAssignManager(false);
-                    setSelectedEmployee(null);
-                  }}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+          {unassignedEmployees.length > 0 && (
+            <ListGroup title="Staff without a manager" meta={String(unassignedEmployees.length)} footer={userRole === 'cluster_head' || userRole === 'manager' ? 'Tap someone to choose their manager.' : undefined}>
+              {unassignedEmployees.map((employee) => (
+                <TreeRow
+                  key={employee.employeeId}
+                  depth={0}
+                  name={employee.name}
+                  meta={`${formatDesignation(employee.designation, 'Employee')} · ${employee.employeeId}`}
+                  trailing={<StatusChip tone="warning">No manager</StatusChip>}
+                  onClick={userRole === 'cluster_head' || userRole === 'manager' ? () => openManagerSheet(employee) : undefined}
+                />
+              ))}
+            </ListGroup>
+          )}
+        </>
+      )}
+    </>
   );
+
+  const canAssignManagers = userRole === 'cluster_head' && !!ownerId;
+  const content = (
+    <>
+      {canAssignManagers && (
+        <SegmentedControl
+          aria-label="Who reports to whom"
+          value={view}
+          onValueChange={setView}
+          options={[{ value: 'structure', label: 'Structure' }, { value: 'assign', label: 'Assign managers' }]}
+        />
+      )}
+      {view === 'assign' && canAssignManagers ? <AssignManagers clusterHeadId={ownerId!} embedded /> : structure}
+
+      <ResponsiveModal
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        onClosed={() => { setSelectedManager(null); setSelectedEmployee(null); }}
+        title={selectedManager ? 'Choose a cluster head' : 'Choose a manager'}
+        description={selectedManager ? `${selectedManager.name} (${selectedManager.employeeId})` : selectedEmployee ? `${selectedEmployee.name} (${selectedEmployee.employeeId})` : undefined}
+        dirty={!!choice && !assigning}
+        footer={<Button size="lg" className="flex-1" loading={assigning} disabled={!choice} onClick={assign}>Assign</Button>}
+      >
+        {selectedManager ? (
+          <Field label="Cluster head">
+            <NativeSelect value={choice} onChange={(e) => setChoice(e.target.value)}>
+              <option value="">Choose a cluster head</option>
+              {clusterHeads.map((ch) => (
+                <option key={ch.employeeId} value={ch.employeeId}>{ch.name} ({ch.employeeId})</option>
+              ))}
+            </NativeSelect>
+          </Field>
+        ) : (
+          <Field label="Manager">
+            <NativeSelect value={choice} onChange={(e) => setChoice(e.target.value)}>
+              <option value="">Choose a manager</option>
+              {managers.map((mgr) => (
+                <option key={mgr.employeeId} value={mgr.employeeId}>{mgr.name} ({mgr.employeeId})</option>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
+      </ResponsiveModal>
+    </>
+  );
+
+  if (embedded) return <div className="flex flex-col gap-5">{content}</div>;
+  return <SetupPage>{content}</SetupPage>;
 }

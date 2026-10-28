@@ -1,8 +1,27 @@
+// Insights > Production > Store–production SLA: the scorecard against the three operational
+// cutoffs, fulfilment, staff attendance, store wastage, stock-outs, requested vs delivered and the
+// pipeline timing. Lists on phones (tables only from 1024 px); the period is one chip.
 import { useEffect, useMemo, useState } from 'react';
-import { Package, Droplet, AlertTriangle, Clock, BarChart3, UserX, Users, Trash2 } from 'lucide-react';
+import { Package, Droplet, AlertTriangle, Clock, Users, Trash2, PackageX, CheckCircle2, RotateCw } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { Card } from './ui/card';
+import { CHART_COLORS, CHART_SERIES, ChartTooltipCard, ShareBars, chartAxisProps, chartCursor, chartGridProps } from './ui/chart-theme';
+import { EmptyState } from './ui/empty-state';
+import { ErrorState } from './ui/error-state';
+import { Field, controlClasses } from './ui/field';
+import { ListGroup, ListRow } from './ui/list-row';
+import { SkeletonListRows } from './ui/skeleton';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { cn } from './ui/utils';
+import { HowItWorks, OptionChip, SectionHeading } from './insights/parts/common';
 import type { ProductionRequest, Employee, Timesheet } from '../utils/api';
 import * as api from '../utils/api';
+import { wasteReasonLabel } from '../utils/batches';
+import { STOCK_OUT_REASONS, istClock, istDate, stockOutDuration, stockOutMinutes, stockOutReasonLabel, type StockOutEntry } from '../utils/stockOuts';
 
 interface StockAnalysisProps {
   requests: ProductionRequest[];
@@ -32,14 +51,15 @@ const PERIOD_LABELS: Record<Period, string> = {
 };
 
 // Calendar-date (YYYY-MM-DD) arithmetic in IST, so a late-night check doesn't land on the
-// wrong day - same approach as the Analytics page's own date filters. Weeks run Sun-Sat.
+// wrong day - same approach as the Analytics page's own date filters. Weeks run Mon-Sun.
 const todayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 const shiftDate = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().substring(0, 10);
 };
-const weekdayOf = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay();
+// Days since Monday (Mon = 0 ... Sun = 6), so "This week" matches the Analytics page's week.
+const weekdayOf = (iso: string) => (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
 
 // Inclusive [start, end] for a period, or null when it's unbounded ("All time", or a custom
 // range that isn't filled in yet).
@@ -71,10 +91,16 @@ function resolvePeriodRange(period: Period, custom: { from: string; to: string }
 // gotten there yet. Only delivered/partially-delivered rows tell us what really arrived.
 const isDeliveredStatus = (status: string) => status === 'delivered' || status === 'partially-delivered';
 
+// Requests closed in bulk long after the fact (57 Feb-Sep 2026 shipments, closed 25 Oct 2026)
+// carry the shipped time as their delivered time - they count as delivered for stock, but have
+// no real delivery time, so the SLA timings leave them out.
+const deliveryTime = (r: ProductionRequest) => ((r as any).deliveryClosedInBulk ? undefined : r.deliveredAt);
+
+// Whole IST calendar days between a date (YYYY-MM-DD or a UTC timestamp) and today. Both
+// sides are IST dates: the old UTC "today" was a day behind between midnight and 5:30 AM.
 function daysAgo(dateStr: string): number {
-  const then = new Date(dateStr.substring(0, 10) + 'T00:00:00');
-  const now = new Date(new Date().toISOString().substring(0, 10) + 'T00:00:00');
-  return Math.round((now.getTime() - then.getTime()) / (1000 * 60 * 60 * 24));
+  const then = dateStr.length > 10 ? istDate(dateStr) : dateStr.substring(0, 10);
+  return Math.round((Date.parse(`${todayIST()}T00:00:00Z`) - Date.parse(`${then}T00:00:00Z`)) / (1000 * 60 * 60 * 24));
 }
 
 // Time-of-day as a decimal hour (14.5 = 2:30 PM), for plotting against a fixed 10am-10pm
@@ -108,10 +134,10 @@ const PIPELINE_AXIS_MAX = 22; // 10 PM
 const PIPELINE_AXIS_TICKS = [10, 12, 14, 16, 18, 20, 22];
 
 function efficiencyTone(pct: number | null): string {
-  if (pct === null) return 'text-gray-400';
-  if (pct >= 90) return 'text-emerald-600';
-  if (pct >= 70) return 'text-amber-600';
-  return 'text-red-600';
+  if (pct === null) return 'text-text-3';
+  if (pct >= 90) return 'text-success';
+  if (pct >= 70) return 'text-warning';
+  return 'text-danger';
 }
 
 // Operational SLA thresholds this business runs on - surfaced as their own card rather
@@ -131,6 +157,9 @@ function hoursBetween(fromIso: string, toIso: string): number {
 const TIMESHEET_AUTO_APPROVE_DAYS = 5;
 export function StockAnalysis({ requests, finishedProducts, salesData, storeIds = [], accessToken = '' }: StockAnalysisProps) {
   const [period, setPeriod] = useState<Period>('30d');
+  const [showAllComplete, setShowAllComplete] = useState(false);
+  const [showAllWasteDays, setShowAllWasteDays] = useState(false);
+  const [openEmployee, setOpenEmployee] = useState<string | null>(null);
   const [customRange, setCustomRange] = useState<{ from: string; to: string }>(() => {
     const today = todayIST();
     return { from: shiftDate(today, -7), to: today };
@@ -153,6 +182,40 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
     return () => { cancelled = true; };
   }, [accessToken, storeIdsKey, periodRange]);
 
+  // ---- Out-of-stock log (store SOP ST-28), for the same period and stores. ----
+  const [stockOuts, setStockOuts] = useState<StockOutEntry[]>([]);
+  useEffect(() => {
+    if (!accessToken || storeIds.length === 0) { setStockOuts([]); return; }
+    let cancelled = false;
+    const from = periodRange?.start || '2026-10-25';
+    const to = periodRange?.end || todayIST();
+    Promise.all(storeIds.map((id) => api.getStockOuts(accessToken, id, from, to).catch(() => [] as StockOutEntry[])))
+      .then((lists) => { if (!cancelled) setStockOuts(lists.flat()); });
+    return () => { cancelled = true; };
+  }, [accessToken, storeIdsKey, periodRange]);
+
+  const stockOutSummary = useMemo(() => {
+    const byItem = new Map<string, { item: string; times: number; minutes: number }>();
+    const byReason = new Map<string, number>();
+    let minutes = 0;
+    for (const e of stockOuts) {
+      const m = stockOutMinutes(e.startAt, e.endAt);
+      minutes += m;
+      const row = byItem.get(e.item) || { item: e.item, times: 0, minutes: 0 };
+      row.times += 1;
+      row.minutes += m;
+      byItem.set(e.item, row);
+      byReason.set(e.reason, (byReason.get(e.reason) || 0) + 1);
+    }
+    return {
+      items: [...byItem.values()].sort((a, b) => b.minutes - a.minutes),
+      reasons: STOCK_OUT_REASONS.filter((r) => byReason.has(r.id)).map((r) => ({ ...r, times: byReason.get(r.id)! })).sort((a, b) => b.times - a.times),
+      open: stockOuts.filter((e) => !e.endAt),
+      latest: [...stockOuts].sort((a, b) => b.startAt.localeCompare(a.startAt)).slice(0, 8),
+      minutes,
+    };
+  }, [stockOuts]);
+
   const wastageSummary = useMemo(() => {
     const labelByKey = new Map(finishedProducts.map((p) => [p.camelKey, p.label]));
     const byType = new Map<string, number>();
@@ -170,7 +233,23 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       .sort((a, b) => (a.date < b.date ? 1 : -1))
       .map((e) => ({ date: e.date, pieces: Object.values(e.wastage || {}).reduce((x, y) => x + (y || 0), 0), by: e.submittedByName || '', notes: e.notes || '' }));
     const lastLogged = days.length > 0 ? days[0].date : null;
-    return { rows, total, days, lastLogged, maxPieces: rows[0]?.pieces || 0 };
+    // Pieces per SOP reason code across the period; totals saved before reason codes (or by
+    // an older app) show as "No reason recorded".
+    const byReason = new Map<string, number>();
+    for (const e of wastageEntries) {
+      for (const [key, pieces] of Object.entries(e.wastage || {})) {
+        let coded = 0;
+        for (const [code, n] of Object.entries(e.reasons?.[key] || {})) {
+          byReason.set(code, (byReason.get(code) || 0) + n);
+          coded += n;
+        }
+        if ((pieces || 0) > coded) byReason.set('', (byReason.get('') || 0) + (pieces || 0) - coded);
+      }
+    }
+    const reasonRows = [...byReason.entries()]
+      .map(([code, pieces]) => ({ code, label: wasteReasonLabel(code || undefined), pieces }))
+      .sort((a, b) => b.pieces - a.pieces);
+    return { rows, total, days, lastLogged, maxPieces: rows[0]?.pieces || 0, reasonRows };
   }, [wastageEntries, finishedProducts]);
 
   const periodLabel = period === 'custom' && periodRange ? `${periodRange.start} to ${periodRange.end}` : PERIOD_LABELS[period];
@@ -399,7 +478,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   // was shipped - this is the case the delivered-stage chart needs to surface, not just
   // the average clock time.
   const isDelayedDelivery = (r: ProductionRequest) =>
-    !!r.shippedAt && !!r.deliveredAt && r.shippedAt.substring(0, 10) !== r.deliveredAt.substring(0, 10);
+    !!r.shippedAt && !!deliveryTime(r) && r.shippedAt.substring(0, 10) !== deliveryTime(r)!.substring(0, 10);
 
   // ---- Section D: what time of day each pipeline stage typically happens, per day -
   // plotted against a fixed 10am-10pm axis rather than elapsed duration. Grouped by the
@@ -431,8 +510,8 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
         byDay[day].ship.push(timeOfDayHours(r.shippedAt));
         if (r.shippedAt.substring(0, 10) !== day) byDay[day].shippedNextDayCount++;
       }
-      if (r.deliveredAt) {
-        byDay[day].deliver.push(timeOfDayHours(r.deliveredAt));
+      if (deliveryTime(r)) {
+        byDay[day].deliver.push(timeOfDayHours(deliveryTime(r)!));
         if (isDelayedDelivery(r)) byDay[day].delayedCount++;
       }
     });
@@ -456,7 +535,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       .filter(isDelayedDelivery)
       .map((r) => {
         const shippedDate = r.shippedAt!.substring(0, 10);
-        const deliveredDate = r.deliveredAt!.substring(0, 10);
+        const deliveredDate = deliveryTime(r)!.substring(0, 10);
         const daysLate = Math.round((new Date(deliveredDate).getTime() - new Date(shippedDate).getTime()) / (1000 * 60 * 60 * 24));
         return {
           id: r.id,
@@ -464,7 +543,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
           requestedAt: r.createdAt || r.requestDate || shippedDate,
           acceptedAt: r.acceptedAt || null,
           shippedAt: r.shippedAt!,
-          deliveredAt: r.deliveredAt!,
+          deliveredAt: deliveryTime(r)!,
           daysLate,
         };
       })
@@ -476,11 +555,11 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   const slaStats = useMemo(() => {
     const accepted = periodRequests.filter((r) => !!r.acceptedAt);
     const shipped = periodRequests.filter((r) => !!r.shippedAt);
-    const deliveredWithShip = periodRequests.filter((r) => !!r.shippedAt && !!r.deliveredAt);
+    const deliveredWithShip = periodRequests.filter((r) => !!r.shippedAt && !!deliveryTime(r));
 
     const acceptedOnTime = accepted.filter((r) => timeOfDayHours(r.acceptedAt!) <= ACCEPT_BY_HOUR);
     const shippedOnTime = shipped.filter((r) => timeOfDayHours(r.shippedAt!) <= SHIP_BY_HOUR);
-    const deliveredOnTime = deliveredWithShip.filter((r) => hoursBetween(r.shippedAt!, r.deliveredAt!) <= DELIVER_WITHIN_HOURS);
+    const deliveredOnTime = deliveredWithShip.filter((r) => hoursBetween(r.shippedAt!, deliveryTime(r)!) <= DELIVER_WITHIN_HOURS);
 
     return {
       accepted: { met: acceptedOnTime.length, total: accepted.length },
@@ -512,7 +591,7 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
   const chartEfficiency = useMemo(() => {
     const acceptedTotal = periodRequests.filter((r) => !!r.acceptedAt).length;
     const shippedTotal = periodRequests.filter((r) => !!r.shippedAt).length;
-    const deliveredTotal = periodRequests.filter((r) => !!r.shippedAt && !!r.deliveredAt).length;
+    const deliveredTotal = periodRequests.filter((r) => !!r.shippedAt && !!deliveryTime(r)).length;
     return {
       requestedCount: periodRequests.length,
       acceptedSameDayPct: acceptedTotal > 0 ? Math.round(((acceptedTotal - nextDayCounts.acceptedNextDay) / acceptedTotal) * 100) : null,
@@ -612,547 +691,506 @@ export function StockAnalysis({ requests, finishedProducts, salesData, storeIds 
       (dataKey === 'Shipped' && payload.shippedNextDayCount > 0) ||
       (dataKey === 'Delivered' && payload.delayedCount > 0);
     if (flagged) {
-      return <circle key={`dot-${payload.day}`} cx={cx} cy={cy} r={6} fill="#ef4444" stroke="#fff" strokeWidth={1.5} />;
+      return <circle key={`dot-${payload.day}`} cx={cx} cy={cy} r={6} fill="var(--danger)" stroke="var(--surface)" strokeWidth={1.5} />;
     }
     return <circle key={`dot-${payload.day}`} cx={cx} cy={cy} r={3} fill={color} />;
   };
 
+  const dateTime = (iso: string) => new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  const pctChip = (pct: number | null) => pct === null
+    ? <StatusChip tone="neutral">-</StatusChip>
+    : <StatusChip tone={pct >= 90 ? 'success' : pct >= 60 ? 'warning' : 'danger'}><span className="num">{pct}%</span></StatusChip>;
+  const completedRequests = [...fulfillmentCompleteness.full, ...fulfillmentCompleteness.ninetyPlus].sort((a, b) => b.requestDate.localeCompare(a.requestDate));
+  const SHOW = 8;
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-600 rounded-2xl p-6 shadow-xl">
-        <div className="absolute inset-0 bg-white/10" />
-        <div className="relative flex items-center gap-4">
-          <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
-            <BarChart3 className="w-7 h-7 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Store-Production SLA Analysis</h1>
-            <p className="text-sm sm:text-base text-white/80 mt-1">Request fulfillment and pipeline timing</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Period filter */}
-      <div className="flex flex-wrap gap-2">
-        {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
-          <button
-            key={p}
-            onClick={() => setPeriod(p)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              period === p ? 'bg-indigo-600 text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            {PERIOD_LABELS[p]}
-          </button>
-        ))}
+    <div className="flex flex-col gap-6">
+      {/* Header: the period, then the scorecard */}
+      <SectionHeading title="Store–production SLA" caption="Request fulfilment and pipeline timing" />
+      <div className="flex flex-col gap-3">
+        <OptionChip
+          title="Period"
+          value={period}
+          onChange={setPeriod}
+          options={(Object.keys(PERIOD_LABELS) as Period[]).map((p) => ({ value: p, label: PERIOD_LABELS[p] }))}
+          className="self-start"
+        />
         {period === 'custom' && (
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <input
-              type="date"
-              aria-label="From date"
-              value={customRange.from}
-              max={customRange.to || undefined}
-              onChange={(e) => setCustomRange((r) => ({ ...r, from: e.target.value }))}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
-            />
-            <span className="text-sm text-gray-500">to</span>
-            <input
-              type="date"
-              aria-label="To date"
-              value={customRange.to}
-              min={customRange.from || undefined}
-              onChange={(e) => setCustomRange((r) => ({ ...r, to: e.target.value }))}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
-            />
+          <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+            <Field label="From">
+              <input type="date" value={customRange.from} max={customRange.to || undefined} onChange={(e) => setCustomRange((r) => ({ ...r, from: e.target.value }))} className={controlClasses} />
+            </Field>
+            <Field label="To">
+              <input type="date" value={customRange.to} min={customRange.from || undefined} onChange={(e) => setCustomRange((r) => ({ ...r, to: e.target.value }))} className={controlClasses} />
+            </Field>
           </div>
         )}
       </div>
 
-      {/* SLA Scorecard + Key Observations - the three fixed operational cutoffs this
-          business runs on, checked against every request that actually has the relevant
-          timestamp, plus a handful of auto-generated callouts pulled from the sections
-          below so the headline issues surface without reading every table. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <AlertTriangle className="w-4 h-4 text-indigo-600" />
-          <h3 className="text-sm font-semibold text-gray-900">SLA Scorecard &amp; Key Observations</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
-        </div>
-        <div className="p-4 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {([
-              { label: `Accepted by ${formatHourShort(ACCEPT_BY_HOUR)}`, stat: slaStats.accepted, sub: 'Requested → Accepted' },
-              { label: `Shipped by ${formatHourShort(SHIP_BY_HOUR)}`, stat: slaStats.shipped, sub: 'Cutoff for dispatch' },
-              { label: `Delivered within ${DELIVER_WITHIN_HOURS}h of shipping`, stat: slaStats.delivered, sub: 'Shipped → Delivered' },
-            ] as const).map(({ label, stat, sub }) => {
-              const pct = stat.total > 0 ? Math.round((stat.met / stat.total) * 100) : null;
-              const tone = pct === null ? 'text-gray-400' : pct >= 90 ? 'text-emerald-600' : pct >= 70 ? 'text-amber-600' : 'text-red-600';
-              const barTone = pct === null ? 'bg-gray-200' : pct >= 90 ? 'bg-emerald-500' : pct >= 70 ? 'bg-amber-500' : 'bg-red-500';
-              return (
-                <div key={label} className="border border-gray-200 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-gray-700">{label}</p>
-                  <p className="text-[11px] text-gray-400 mb-2">{sub}</p>
-                  <div className="flex items-end justify-between">
-                    <span className={`text-2xl font-bold tabular-nums ${tone}`}>{pct === null ? '-' : `${pct}%`}</span>
-                    <span className="text-xs text-gray-500 tabular-nums">{stat.met}/{stat.total} met</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-gray-100 mt-2 overflow-hidden">
-                    <div className={`h-full rounded-full ${barTone}`} style={{ width: `${pct ?? 0}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      {/* SLA scorecard: the three fixed operational cutoffs, against every request that has the timestamp */}
+      <section className="flex flex-col gap-3" aria-labelledby="sla-score-title">
+        <SectionHeading as="h3" id="sla-score-title" title="SLA scorecard" caption={periodLabel} />
+        <StatGrid columns={3}>
+          {([
+            { label: `Accepted by ${formatHourShort(ACCEPT_BY_HOUR)}`, stat: slaStats.accepted, sub: 'Requested → accepted' },
+            { label: `Shipped by ${formatHourShort(SHIP_BY_HOUR)}`, stat: slaStats.shipped, sub: 'Cutoff for dispatch' },
+            { label: `Delivered within ${DELIVER_WITHIN_HOURS}h of shipping`, stat: slaStats.delivered, sub: 'Shipped → delivered' },
+          ] as const).map(({ label, stat, sub }, i) => {
+            const pct = stat.total > 0 ? Math.round((stat.met / stat.total) * 100) : null;
+            return (
+              <StatTile
+                key={label}
+                className={i === 2 ? 'col-span-2 lg:col-span-1' : undefined}
+                label={label}
+                value={pct === null ? '-' : `${pct}%`}
+                tone={pct !== null && pct < 70 ? 'danger' : 'default'}
+                chip={pct === null ? undefined : <StatusChip tone={pct >= 90 ? 'success' : pct >= 70 ? 'warning' : 'danger'}>{stat.met}/{stat.total} met</StatusChip>}
+                caption={sub}
+              />
+            );
+          })}
+        </StatGrid>
+        <ListGroup title="What stands out">
+          {observations.map((note, i) => (
+            <ListRow
+              key={i}
+              density="compact"
+              icon={note.startsWith('No SLA breaches') ? CheckCircle2 : AlertTriangle}
+              iconTone={note.startsWith('No SLA breaches') ? 'success' : 'warning'}
+              title={<span className="text-body-sm font-normal">{note}</span>}
+            />
+          ))}
+        </ListGroup>
+      </section>
 
-          <div className="border-t border-gray-100 pt-3">
-            <p className="text-xs font-semibold text-gray-700 mb-2">Key Observations</p>
-            <ul className="space-y-1.5">
-              {observations.map((note, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
-                  <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${note.startsWith('No SLA breaches') ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                  <span>{note}</span>
-                </li>
+      {/* Request fulfilment completeness: per delivered request, how much of what it asked for arrived */}
+      {fulfillmentCompleteness.total > 0 && (
+        <section className="flex flex-col gap-3" aria-labelledby="sla-complete-title">
+          <SectionHeading as="h3" id="sla-complete-title" title="Requests fulfilled in full" caption={`${fulfillmentCompleteness.total} delivered requests`} />
+          <StatGrid columns={3}>
+            <StatTile label="100% fulfilled" value={fulfillmentCompleteness.full.length} caption={`of ${fulfillmentCompleteness.total} delivered requests`} />
+            <StatTile label="90-99% fulfilled" value={fulfillmentCompleteness.ninetyPlus.length} caption={`of ${fulfillmentCompleteness.total} delivered requests`} />
+            <StatTile className="col-span-2 lg:col-span-1" label="Below 90%" value={fulfillmentCompleteness.belowNinety.length} tone={fulfillmentCompleteness.belowNinety.length > 0 ? 'danger' : 'default'} caption={`of ${fulfillmentCompleteness.total} delivered requests`} />
+          </StatGrid>
+          {completedRequests.length > 0 && (
+            <ListGroup>
+              {completedRequests.slice(0, showAllComplete ? undefined : SHOW).map((row) => (
+                <ListRow
+                  key={row.id}
+                  density="compact"
+                  title={row.requestedAt ? dateTime(row.requestedAt) : row.requestDate}
+                  subtitle={`Requested ${row.totalRequested.toLocaleString()} · delivered ${row.totalDelivered.toLocaleString()} (all items)`}
+                  trailing={<StatusChip tone={row.pct >= 99.5 ? 'success' : 'warning'}><span className="num">{Math.round(row.pct)}%</span></StatusChip>}
+                />
               ))}
-            </ul>
-          </div>
-
-          {/* Request fulfillment completeness - per delivered request, what fraction of
-              everything it asked for actually arrived, bucketed into fully fulfilled
-              (100%) and substantially fulfilled (90-99%), each with the specific requests
-              listed so "when" has real dates attached. */}
-          {fulfillmentCompleteness.total > 0 && (
-            <div className="border-t border-gray-100 pt-3">
-              <p className="text-xs font-semibold text-gray-700 mb-2">Request Fulfillment Completeness</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-                <div className="border border-emerald-200 bg-emerald-50 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-emerald-800">100% Fulfilled</p>
-                  <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{fulfillmentCompleteness.full.length}</p>
-                  <p className="text-[11px] text-emerald-700/70">of {fulfillmentCompleteness.total} delivered requests</p>
-                </div>
-                <div className="border border-amber-200 bg-amber-50 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-amber-800">90-99% Fulfilled</p>
-                  <p className="text-2xl font-bold text-amber-700 tabular-nums mt-1">{fulfillmentCompleteness.ninetyPlus.length}</p>
-                  <p className="text-[11px] text-amber-700/70">of {fulfillmentCompleteness.total} delivered requests</p>
-                </div>
-                <div className="border border-red-200 bg-red-50 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-red-800">Below 90%</p>
-                  <p className="text-2xl font-bold text-red-700 tabular-nums mt-1">{fulfillmentCompleteness.belowNinety.length}</p>
-                  <p className="text-[11px] text-red-700/70">of {fulfillmentCompleteness.total} delivered requests</p>
-                </div>
-              </div>
-
-              {(fulfillmentCompleteness.full.length > 0 || fulfillmentCompleteness.ninetyPlus.length > 0) && (
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="overflow-x-auto max-h-64 overflow-y-auto">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-gray-50">
-                        <tr className="text-left text-gray-500 uppercase tracking-wide">
-                          <th className="px-3 py-1.5">Request Date</th>
-                          <th className="px-3 py-1.5 text-right">Requested (all items)</th>
-                          <th className="px-3 py-1.5 text-right">Delivered (all items)</th>
-                          <th className="px-3 py-1.5 text-right">Fulfillment</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...fulfillmentCompleteness.full, ...fulfillmentCompleteness.ninetyPlus]
-                          .sort((a, b) => b.requestDate.localeCompare(a.requestDate))
-                          .map((row) => (
-                            <tr key={row.id} className="border-t border-gray-100">
-                              <td className="px-3 py-1.5 text-gray-700">{row.requestedAt ? new Date(row.requestedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : row.requestDate}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">{row.totalRequested.toLocaleString()}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums text-gray-700">{row.totalDelivered.toLocaleString()}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums font-semibold">
-                                <span className={row.pct >= 99.5 ? 'text-emerald-600' : 'text-amber-600'}>{Math.round(row.pct)}%</span>
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+              {!showAllComplete && completedRequests.length > SHOW && (
+                <ListRow muted density="compact" title={`See all (${completedRequests.length})`} onClick={() => setShowAllComplete(true)} chevron="down" />
               )}
-            </div>
+            </ListGroup>
           )}
-        </div>
-      </div>
+        </section>
+      )}
 
-      {/* Staff Attendance Compliance - who hasn't submitted a timesheet in the last week,
-          and how long any pending one has been waiting on manager approval (auto-approves
-          after 5 days - see TIMESHEET_AUTO_APPROVE_DAYS). Org-wide, not scoped to this
-          page's store/period filters above, since attendance isn't a stock concept. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Users className="w-4 h-4 text-indigo-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Staff Attendance Compliance</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}{attendanceReport.days > 0 ? ` - ${attendanceReport.days} day${attendanceReport.days === 1 ? '' : 's'}` : ''}</span>
-        </div>
+      {/* Staff attendance compliance - org-wide, not scoped to the store/period filters above */}
+      <section className="flex flex-col gap-3" aria-labelledby="sla-attendance-title">
+        <SectionHeading
+          as="h3"
+          id="sla-attendance-title"
+          title="Staff attendance"
+          caption={`${periodLabel}${attendanceReport.days > 0 ? ` · ${attendanceReport.days} day${attendanceReport.days === 1 ? '' : 's'}` : ''}`}
+        />
         {attendanceLoading ? (
-          <div className="p-6 text-center text-sm text-gray-500">Loading attendance data...</div>
+          <SkeletonListRows count={4} />
         ) : attendanceError ? (
-          <div className="p-6 text-center text-sm text-red-600">
-            Could not load attendance: {attendanceError}.{' '}
-            <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="underline">Try again</button>
-          </div>
+          <ErrorState title="Could not load attendance" body={attendanceError} onRetry={() => setAttendanceReloadKey((k) => k + 1)} />
         ) : (
-          <div className="p-4 space-y-4">
-            <div>
-              <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
-                <UserX className="w-3.5 h-3.5 text-red-600" /> Timesheets filled vs missing
-              </p>
-              {attendanceReport.days === 0 || attendanceReport.rows.length === 0 ? (
-                <div className="text-sm text-gray-500">No working days to check in this period yet.</div>
-              ) : (
-                <>
-                  <p className="text-xs text-gray-500 mb-2">
-                    {attendanceReport.totalFilled} of {attendanceReport.totalExpected} expected timesheets filled
-                    {attendanceReport.totalExpected > 0 ? ` (${Math.round((attendanceReport.totalFilled / attendanceReport.totalExpected) * 100)}%)` : ''}.
-                    Approved leave days are not counted as missing, and today is not counted until the day is over.
-                    {' '}Based on {timesheets.length} timesheets loaded.{' '}
-                    <button type="button" onClick={() => setAttendanceReloadKey((k) => k + 1)} className="text-indigo-600 underline">Reload</button>
-                  </p>
-                  <div className="border border-gray-200 rounded-lg overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-xs uppercase tracking-wide text-gray-500 bg-gray-50 border-b border-gray-100">
-                          <th className="px-3 py-2">Employee</th>
-                          <th className="px-3 py-2 text-right">Filled</th>
-                          <th className="px-3 py-2 text-right">Missing</th>
-                          <th className="px-3 py-2 text-right">Leave</th>
-                          <th className="px-3 py-2">Approval</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {attendanceReport.rows.map((row) => (
-                          <tr key={row.employeeId} className="border-b border-gray-50 align-top">
-                            <td className="px-3 py-2">
-                              <p className="font-medium text-gray-900">{row.name} <span className="text-gray-400 font-normal">({row.employeeId})</span></p>
-                              {row.missing > 0 && (
-                                <details className="mt-0.5">
-                                  <summary className="text-xs text-red-600 cursor-pointer">Show missing dates</summary>
-                                  <p className="text-xs text-gray-500 mt-1">{row.missingDates.slice().reverse().join(', ')}</p>
-                                </details>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
-                              <span className="font-semibold text-emerald-700">{row.filled}</span>
-                              <span className="text-gray-400"> / {row.expected - row.onLeave}</span>
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${row.missing > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{row.missing}</span>
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-gray-600">{row.onLeave}</td>
-                            <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
-                              {row.approved} approved{row.pending > 0 ? ` · ${row.pending} pending` : ''}{row.rejected > 0 ? ` · ${row.rejected} rejected` : ''}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="border-t border-gray-100 pt-3">
-              <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-amber-600" /> Pending Manager Approval
-              </p>
-              {pendingAttendanceApprovals.length === 0 ? (
-                <div className="flex items-center gap-2 text-sm text-emerald-600">
-                  <span>No timesheets awaiting approval.</span>
-                </div>
-              ) : (
-                <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-100">
-                  {pendingAttendanceApprovals.map((row, i) => (
-                    <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-900">{row.name} <span className="text-gray-400 font-normal">({row.employeeId})</span></p>
-                        <p className="text-xs text-gray-500 mt-0.5">Timesheet for {row.date}</p>
+          <>
+            {attendanceReport.days === 0 || attendanceReport.rows.length === 0 ? (
+              <Card><EmptyState compact icon={Users} title="No working days to check in this period yet" /></Card>
+            ) : (
+              <>
+                <p className="text-body-sm text-text-2">
+                  <span className="num font-semibold text-text">{attendanceReport.totalFilled} of {attendanceReport.totalExpected}</span> expected timesheets filled
+                  {attendanceReport.totalExpected > 0 ? ` (${Math.round((attendanceReport.totalFilled / attendanceReport.totalExpected) * 100)}%)` : ''}.
+                  {' '}Based on {timesheets.length} timesheets loaded.
+                </p>
+                <ListGroup
+                  className="lg:hidden"
+                  footer="Approved leave days are not counted as missing, and today is not counted until the day is over."
+                >
+                  {attendanceReport.rows.map((row) => {
+                    const open = openEmployee === row.employeeId;
+                    return (
+                      <div key={row.employeeId}>
+                        <ListRow
+                          title={`${row.name} (${row.employeeId})`}
+                          subtitle={`Filled ${row.filled}/${row.expected - row.onLeave} · leave ${row.onLeave} · ${row.approved} approved${row.pending > 0 ? ` · ${row.pending} pending` : ''}${row.rejected > 0 ? ` · ${row.rejected} rejected` : ''}`}
+                          trailing={<StatusChip tone={row.missing > 0 ? 'danger' : 'success'}><span className="num">{row.missing}</span> missing</StatusChip>}
+                          onClick={row.missing > 0 ? () => setOpenEmployee(open ? null : row.employeeId) : undefined}
+                          chevron={row.missing > 0 ? 'down' : false}
+                          aria-expanded={row.missing > 0 ? open : undefined}
+                        />
+                        {open && (
+                          <p className="bg-surface-2 px-4 py-2.5 text-label text-text-2">Missing: {row.missingDates.slice().reverse().join(', ')}</p>
+                        )}
                       </div>
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 ${
-                        row.willAutoApproveToday ? 'bg-amber-100 text-amber-800' : row.daysPending >= 3 ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-600'
-                      }`}>
-                        {row.willAutoApproveToday ? `Auto-approves today (${row.daysPending}d)` : `${row.daysPending}d pending`}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
+                </ListGroup>
+                <div className="hidden flex-col gap-2 lg:flex">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead numeric>Filled</TableHead>
+                        <TableHead numeric>Missing</TableHead>
+                        <TableHead numeric>Leave</TableHead>
+                        <TableHead>Approval</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {attendanceReport.rows.map((row) => (
+                        <TableRow key={row.employeeId} className="align-top">
+                          <TableCell>
+                            <span className="font-medium">{row.name}</span> <span className="text-text-3">({row.employeeId})</span>
+                            {row.missing > 0 && <span className="mt-0.5 block text-label text-text-3">Missing: {row.missingDates.slice().reverse().join(', ')}</span>}
+                          </TableCell>
+                          <TableCell numeric><span className="font-semibold">{row.filled}</span><span className="text-text-3"> / {row.expected - row.onLeave}</span></TableCell>
+                          <TableCell numeric><StatusChip tone={row.missing > 0 ? 'danger' : 'success'}>{row.missing}</StatusChip></TableCell>
+                          <TableCell numeric className="text-text-2">{row.onLeave}</TableCell>
+                          <TableCell className="whitespace-nowrap text-text-2">{row.approved} approved{row.pending > 0 ? ` · ${row.pending} pending` : ''}{row.rejected > 0 ? ` · ${row.rejected} rejected` : ''}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  <p className="text-label text-text-3">Approved leave days are not counted as missing, and today is not counted until the day is over.</p>
                 </div>
-              )}
-              <p className="text-[11px] text-gray-400 mt-2">
-                A timesheet still pending after {TIMESHEET_AUTO_APPROVE_DAYS} days is automatically approved so attendance records don't get stuck on a forgotten approval.
-              </p>
-            </div>
-          </div>
+              </>
+            )}
+            <Button variant="ghost" size="sm" leadingIcon={<RotateCw />} className="self-start" onClick={() => setAttendanceReloadKey((k) => k + 1)}>Reload attendance</Button>
+            <ListGroup
+              title="Waiting for manager approval"
+              footer={`A timesheet still pending after ${TIMESHEET_AUTO_APPROVE_DAYS} days is approved automatically, so attendance records don't get stuck on a forgotten approval.`}
+              empty={<ListRow density="compact" icon={CheckCircle2} iconTone="success" title="No timesheets waiting for approval" />}
+            >
+              {pendingAttendanceApprovals.map((row, i) => (
+                <ListRow
+                  key={i}
+                  density="compact"
+                  title={`${row.name} (${row.employeeId})`}
+                  subtitle={`Timesheet for ${row.date}`}
+                  trailing={
+                    <StatusChip tone={row.willAutoApproveToday || row.daysPending >= 3 ? 'warning' : 'neutral'} icon={Clock}>
+                      {row.willAutoApproveToday ? `Auto-approves today (${row.daysPending}d)` : `${row.daysPending}d pending`}
+                    </StatusChip>
+                  }
+                />
+              ))}
+            </ListGroup>
+          </>
         )}
-      </div>
+      </section>
 
-      {/* Store wastage - what the store incharge logs under Stock Requests > Log Wastage. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Trash2 className="w-4 h-4 text-red-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Store Wastage</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
-        </div>
+      {/* Store wastage - what the store incharge logs under Stock Requests > Log Wastage */}
+      <section className="flex flex-col gap-3" aria-labelledby="sla-wastage-title">
+        <SectionHeading as="h3" id="sla-wastage-title" title="Store wastage" caption={periodLabel} />
         {wastageLoading ? (
-          <div className="p-6 text-center text-sm text-gray-500">Loading wastage...</div>
+          <SkeletonListRows count={3} />
         ) : wastageSummary.days.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">
-            No wastage logged in this period. The store incharge logs it from Stock Requests &rarr; Log Wastage (tracked from 30 Aug 2026).
-          </div>
+          <Card><EmptyState compact icon={Trash2} title="No wastage logged in this period" body="The store incharge logs it from Stock Requests → Log wastage (tracked from 30 Aug 2026)." /></Card>
         ) : (
-          <div className="p-4 space-y-4">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-lg bg-red-50 p-3">
-                <p className="text-xs text-gray-600">Pieces wasted</p>
-                <p className="text-xl font-bold text-red-700 tabular-nums">{wastageSummary.total.toLocaleString('en-IN')}</p>
-              </div>
-              <div className="rounded-lg bg-gray-50 p-3">
-                <p className="text-xs text-gray-600">Days logged</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{wastageSummary.days.length}</p>
-              </div>
-              <div className="rounded-lg bg-gray-50 p-3">
-                <p className="text-xs text-gray-600">Last logged</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{wastageSummary.lastLogged ? new Date(`${wastageSummary.lastLogged}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'}</p>
-              </div>
-            </div>
-            <div className="space-y-2">
-              {wastageSummary.rows.map((r) => (
-                <div key={r.key} className="flex items-center gap-3">
-                  <span className="w-32 text-sm text-gray-700 truncate">{r.label}</span>
-                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-red-400 rounded-full" style={{ width: `${wastageSummary.maxPieces > 0 ? (r.pieces / wastageSummary.maxPieces) * 100 : 0}%` }} />
-                  </div>
-                  <span className="w-16 text-right text-sm font-semibold tabular-nums">{r.pieces}</span>
-                </div>
+          <>
+            <StatGrid columns={3}>
+              <StatTile label="Pieces wasted" value={wastageSummary.total.toLocaleString('en-IN')} />
+              <StatTile label="Days logged" value={wastageSummary.days.length} />
+              <StatTile className="col-span-2 lg:col-span-1" label="Last logged" value={wastageSummary.lastLogged ? new Date(`${wastageSummary.lastLogged}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-'} />
+            </StatGrid>
+            <Card>
+              <ShareBars items={wastageSummary.rows.map((r) => ({ label: r.label, value: r.pieces, color: CHART_COLORS.primary, valueText: `${r.pieces} pcs` }))} />
+            </Card>
+            {wastageSummary.reasonRows.some((r) => r.code) && (
+              <ListGroup title="By reason" footer="Q = short or damaged at delivery (from the store's count). S = staff meals, counted here because they leave stock too.">
+                {wastageSummary.reasonRows.map((r) => (
+                  <ListRow key={r.code || 'none'} density="compact" title={r.code ? `${r.code} · ${r.label}` : r.label} muted={!r.code} trailing={<span className="num text-body-md font-semibold text-text">{r.pieces} pcs</span>} />
+                ))}
+              </ListGroup>
+            )}
+            <ListGroup title="Day by day">
+              {wastageSummary.days.slice(0, showAllWasteDays ? undefined : SHOW).map((d) => (
+                <ListRow
+                  key={d.date}
+                  density="compact"
+                  title={new Date(`${d.date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  subtitle={d.notes || d.by}
+                  trailing={<span className="num text-body-md font-semibold text-text">{d.pieces} pcs</span>}
+                />
               ))}
-            </div>
-            <div className="max-h-48 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
-              {wastageSummary.days.map((d) => (
-                <div key={d.date} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                  <span className="text-gray-700">{new Date(`${d.date}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                  <span className="text-gray-500 truncate flex-1 text-xs">{d.notes || d.by}</span>
-                  <span className="font-semibold tabular-nums">{d.pieces} pcs</span>
-                </div>
-              ))}
-            </div>
-          </div>
+              {!showAllWasteDays && wastageSummary.days.length > SHOW && (
+                <ListRow muted density="compact" title={`See all (${wastageSummary.days.length})`} onClick={() => setShowAllWasteDays(true)} chevron="down" />
+              )}
+            </ListGroup>
+          </>
         )}
-      </div>
+      </section>
 
-      {/* Section A: Items requested vs delivered */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Package className="w-4 h-4 text-orange-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Items Requested vs Delivered</h3>
-          <span className="text-xs text-gray-500 ml-auto">{periodLabel}</span>
-        </div>
+      {/* Out of stock - logged by whoever bills at the store (Out of Stock page, SOP ST-28) */}
+      <section className="flex flex-col gap-3" aria-labelledby="sla-oos-title">
+        <SectionHeading as="h3" id="sla-oos-title" title="Out of stock" caption={periodLabel} />
+        {stockOuts.length === 0 ? (
+          <Card><EmptyState compact icon={PackageX} title="No stock-outs logged in this period" body="The store logs them from the Out of Stock page." /></Card>
+        ) : (
+          <>
+            <StatGrid columns={3}>
+              <StatTile label="Times out" value={stockOuts.length} />
+              <StatTile label="Time out in total" value={stockOutDuration(new Date(0).toISOString(), new Date(stockOutSummary.minutes * 60000).toISOString())} />
+              <StatTile className="col-span-2 lg:col-span-1" label="Out right now" value={stockOutSummary.open.length} tone={stockOutSummary.open.length ? 'danger' : 'default'} />
+            </StatGrid>
+            {stockOutSummary.open.length > 0 && (
+              <Callout tone="danger" title="Out of stock now">
+                {stockOutSummary.open.map((e) => `${e.item} since ${istClock(e.startAt)} (${stockOutDuration(e.startAt)})`).join(' · ')}
+              </Callout>
+            )}
+            <ListGroup title="By item">
+              {stockOutSummary.items.map((r) => (
+                <ListRow key={r.item} density="compact" title={r.item} trailing={<span className="num text-body-sm text-text-2">{r.times}× · {stockOutDuration(new Date(0).toISOString(), new Date(r.minutes * 60000).toISOString())}</span>} />
+              ))}
+            </ListGroup>
+            <ListGroup title="By reason">
+              {stockOutSummary.reasons.map((r) => (
+                <ListRow key={r.id} density="compact" title={r.label} trailing={<span className="num text-body-md font-semibold text-text">{r.times}</span>} />
+              ))}
+            </ListGroup>
+            <ListGroup title="Latest">
+              {stockOutSummary.latest.map((e) => (
+                <ListRow
+                  key={e.id}
+                  density="compact"
+                  title={e.item}
+                  subtitle={`${new Date(`${istDate(e.startAt)}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} ${istClock(e.startAt)} - ${e.endAt ? istClock(e.endAt) : 'still out'} · ${stockOutDuration(e.startAt, e.endAt)} · ${stockOutReasonLabel(e.reason)}${e.reasonNote ? ` (${e.reasonNote})` : ''} · ${e.createdByName}`}
+                />
+              ))}
+            </ListGroup>
+          </>
+        )}
+      </section>
+
+      {/* Items requested vs delivered */}
+      <section className="flex flex-col gap-3" aria-labelledby="sla-items-title">
+        <SectionHeading as="h3" id="sla-items-title" title="Items requested vs delivered" caption={periodLabel} />
         {itemStats.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">No requests in this period.</div>
+          <Card><EmptyState compact icon={Package} title="No requests in this period" /></Card>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 uppercase tracking-wide">
-                  <th className="px-4 py-2">Item</th>
-                  <th className="px-4 py-2 text-right">Requested</th>
-                  <th className="px-4 py-2 text-right">Delivered</th>
-                  <th className="px-4 py-2 text-right">Sold</th>
-                  <th className="px-4 py-2 text-right">Fulfillment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {itemStats.map((row) => (
-                  <tr key={row.label} className="border-t border-gray-100">
-                    <td className="px-4 py-2.5 text-gray-900">{row.label}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.requested.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.delivered.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.sold.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums font-medium">
-                      {row.pct === null ? '-' : (
-                        <span className={row.pct >= 90 ? 'text-emerald-600' : row.pct >= 60 ? 'text-amber-600' : 'text-red-600'}>{row.pct}%</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <ListGroup className="lg:hidden">
+              {itemStats.map((row) => (
+                <ListRow
+                  key={row.label}
+                  title={row.label}
+                  subtitle={`Requested ${row.requested.toLocaleString()} · delivered ${row.delivered.toLocaleString()} · sold ${row.sold.toLocaleString()}`}
+                  trailing={pctChip(row.pct)}
+                />
+              ))}
+            </ListGroup>
+            <div className="hidden lg:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead numeric>Requested</TableHead>
+                    <TableHead numeric>Delivered</TableHead>
+                    <TableHead numeric>Sold</TableHead>
+                    <TableHead numeric>Fulfilment</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {itemStats.map((row) => (
+                    <TableRow key={row.label}>
+                      <TableCell>{row.label}</TableCell>
+                      <TableCell numeric className="text-text-2">{row.requested.toLocaleString()}</TableCell>
+                      <TableCell numeric className="text-text-2">{row.delivered.toLocaleString()}</TableCell>
+                      <TableCell numeric className="text-text-2">{row.sold.toLocaleString()}</TableCell>
+                      <TableCell numeric>{pctChip(row.pct)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
-      </div>
+      </section>
 
-      {/* Section B: Sauces requested vs delivered */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Droplet className="w-4 h-4 text-rose-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Sauces - Requested vs Delivered</h3>
-          <span className="text-xs text-gray-500 ml-auto">by number of requests, {periodLabel}</span>
-        </div>
+      {/* Sauces requested vs delivered */}
+      <section className="flex flex-col gap-3" aria-labelledby="sla-sauces-title">
+        <SectionHeading as="h3" id="sla-sauces-title" title="Sauces requested vs delivered" caption={`By number of requests · ${periodLabel}`} />
         {sauceStats.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">No sauces requested in this period.</div>
+          <Card><EmptyState compact icon={Droplet} title="No sauces requested in this period" /></Card>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 uppercase tracking-wide">
-                  <th className="px-4 py-2">Sauce</th>
-                  <th className="px-4 py-2 text-right">Times Requested</th>
-                  <th className="px-4 py-2 text-right">Times Delivered</th>
-                  <th className="px-4 py-2 text-right">Fulfillment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sauceStats.map((row) => (
-                  <tr key={row.name} className="border-t border-gray-100">
-                    <td className="px-4 py-2.5 text-gray-900 capitalize">{row.name.replace(/_/g, ' ')}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.requestedCount}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{row.deliveredCount}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums font-medium">
-                      {row.pct === null ? '-' : (
-                        <span className={row.pct >= 90 ? 'text-emerald-600' : row.pct >= 60 ? 'text-amber-600' : 'text-red-600'}>{row.pct}%</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <ListGroup className="lg:hidden">
+              {sauceStats.map((row) => (
+                <ListRow
+                  key={row.name}
+                  title={<span className="capitalize">{row.name.replace(/_/g, ' ')}</span>}
+                  subtitle={`Requested ${row.requestedCount} times · delivered ${row.deliveredCount}`}
+                  trailing={pctChip(row.pct)}
+                />
+              ))}
+            </ListGroup>
+            <div className="hidden lg:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Sauce</TableHead>
+                    <TableHead numeric>Times requested</TableHead>
+                    <TableHead numeric>Times delivered</TableHead>
+                    <TableHead numeric>Fulfilment</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sauceStats.map((row) => (
+                    <TableRow key={row.name}>
+                      <TableCell className="capitalize">{row.name.replace(/_/g, ' ')}</TableCell>
+                      <TableCell numeric className="text-text-2">{row.requestedCount}</TableCell>
+                      <TableCell numeric className="text-text-2">{row.deliveredCount}</TableCell>
+                      <TableCell numeric>{pctChip(row.pct)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
-      </div>
+      </section>
 
-      {/* Section C: Items not delivered for several days */}
-      <div className="border border-red-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border-b border-red-200">
-          <AlertTriangle className="w-4 h-4 text-red-600" />
-          <h3 className="text-sm font-semibold text-red-900">Not Delivered Recently</h3>
-          <div className="flex items-center gap-1.5 ml-auto text-xs text-red-700">
-            <span>Flag after</span>
+      {/* Items not delivered for several days */}
+      <ListGroup
+        title="Not delivered recently"
+        action={
+          <label className="flex items-center gap-2 text-label text-text-2">
+            Flag after
             <input
               type="number"
               min={1}
               value={staleDays}
               onChange={(e) => setStaleDays(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-12 px-1.5 py-0.5 border border-red-300 rounded text-center"
+              className={cn(controlClasses, 'num h-11 w-16 px-2 text-center')}
             />
-            <span>days</span>
-          </div>
-        </div>
-        {staleItems.length === 0 ? (
-          <div className="p-6 text-center text-sm text-gray-500">Nothing flagged - every requested item has been delivered recently.</div>
-        ) : (
-          <div className="divide-y divide-red-100">
-            {staleItems.map((row) => (
-              <div key={`${row.kind}-${row.label}`} className="flex items-center justify-between gap-3 px-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-900 capitalize">{row.label.replace(/_/g, ' ')}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {row.lastDelivered
-                      ? `Last delivered ${row.lastDelivered} (${row.daysSince} day${row.daysSince === 1 ? '' : 's'} ago)`
-                      : 'Never delivered'}
-                    {' - '}{row.requestsSinceDelivery} request{row.requestsSinceDelivery === 1 ? '' : 's'} since
-                  </p>
-                </div>
-                <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold whitespace-nowrap flex-shrink-0">
-                  {row.daysSince === null ? 'Never' : `${row.daysSince}d`}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+            days
+          </label>
+        }
+        empty={<ListRow density="compact" icon={CheckCircle2} iconTone="success" title="Nothing flagged" subtitle="Every requested item has been delivered recently." />}
+      >
+        {staleItems.map((row) => (
+          <ListRow
+            key={`${row.kind}-${row.label}`}
+            title={<span className="capitalize">{row.label.replace(/_/g, ' ')}</span>}
+            subtitle={`${row.lastDelivered ? `Last delivered ${row.lastDelivered} (${row.daysSince} day${row.daysSince === 1 ? '' : 's'} ago)` : 'Never delivered'} · ${row.requestsSinceDelivery} request${row.requestsSinceDelivery === 1 ? '' : 's'} since`}
+            trailing={<StatusChip tone="danger">{row.daysSince === null ? 'Never' : `${row.daysSince}d`}</StatusChip>}
+          />
+        ))}
+      </ListGroup>
 
-      {/* Section D: Pipeline timing - one chart per stage, so each stage's own daily
-          rhythm reads clearly instead of three overlapping lines. */}
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-        <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-          <Clock className="w-4 h-4 text-blue-600" />
-          <h3 className="text-sm font-semibold text-gray-900">Pipeline Time of Day, by Stage</h3>
-        </div>
-        <div className="p-4">
-          {timingChartData.length === 0 ? (
-            <div className="text-center text-sm text-gray-500 py-8">No timestamped requests in this period.</div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-              {([
-                { key: 'Requested', color: '#6366f1', nextDayField: null, efficiency: `${chartEfficiency.requestedCount} placed`, efficiencyTone: 'text-gray-500' },
-                { key: 'Accepted', color: '#f59e0b', nextDayField: 'acceptedNextDayCount', efficiency: chartEfficiency.acceptedSameDayPct === null ? null : `${chartEfficiency.acceptedSameDayPct}% same-day`, efficiencyTone: efficiencyTone(chartEfficiency.acceptedSameDayPct) },
-                { key: 'Shipped', color: '#3b82f6', nextDayField: 'shippedNextDayCount', efficiency: chartEfficiency.shippedSameDayPct === null ? null : `${chartEfficiency.shippedSameDayPct}% same-day`, efficiencyTone: efficiencyTone(chartEfficiency.shippedSameDayPct) },
-                { key: 'Delivered', color: '#10b981', nextDayField: 'delayedCount', efficiency: chartEfficiency.deliveredSameDayPct === null ? null : `${chartEfficiency.deliveredSameDayPct}% same-day as shipped`, efficiencyTone: efficiencyTone(chartEfficiency.deliveredSameDayPct) },
-              ] as const).map(({ key, color, nextDayField, efficiency, efficiencyTone: tone }) => (
-                <div key={key}>
-                  <div className="flex items-baseline justify-between mb-1">
-                    <p className="text-xs font-semibold text-gray-700">{key}</p>
-                    {efficiency && <p className={`text-[11px] font-semibold tabular-nums ${tone}`}>{efficiency}</p>}
-                  </div>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={timingChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+      {/* Pipeline timing - one small chart per stage */}
+      <section className="flex flex-col gap-3" aria-labelledby="sla-pipeline-title">
+        <SectionHeading as="h3" id="sla-pipeline-title" title="Pipeline time of day, by stage" caption="When each stage happened, grouped by the day the request was placed" />
+        {timingChartData.length === 0 ? (
+          <Card><EmptyState compact icon={Clock} title="No timestamped requests in this period" /></Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {([
+              { key: 'Requested', color: CHART_SERIES[3], nextDayField: null, efficiency: `${chartEfficiency.requestedCount} placed`, pct: null as number | null },
+              { key: 'Accepted', color: CHART_SERIES[2], nextDayField: 'acceptedNextDayCount', efficiency: chartEfficiency.acceptedSameDayPct === null ? null : `${chartEfficiency.acceptedSameDayPct}% same day`, pct: chartEfficiency.acceptedSameDayPct },
+              { key: 'Shipped', color: CHART_SERIES[0], nextDayField: 'shippedNextDayCount', efficiency: chartEfficiency.shippedSameDayPct === null ? null : `${chartEfficiency.shippedSameDayPct}% same day`, pct: chartEfficiency.shippedSameDayPct },
+              { key: 'Delivered', color: CHART_SERIES[1], nextDayField: 'delayedCount', efficiency: chartEfficiency.deliveredSameDayPct === null ? null : `${chartEfficiency.deliveredSameDayPct}% same day as shipped`, pct: chartEfficiency.deliveredSameDayPct },
+            ] as const).map(({ key, color, nextDayField, efficiency, pct }) => (
+              <Card key={key} className="min-w-0 gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-body-sm font-semibold text-text">{key}</span>
+                  {efficiency && (pct === null
+                    ? <span className="num text-label text-text-3">{efficiency}</span>
+                    : <StatusChip tone={pct >= 90 ? 'success' : pct >= 70 ? 'warning' : 'danger'}><span className="num">{efficiency}</span></StatusChip>)}
+                </div>
+                <div role="img" aria-label={`${key}: time of day for each placement day`}>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <LineChart data={timingChartData} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
+                      <CartesianGrid {...chartGridProps} />
+                      <XAxis dataKey="day" {...chartAxisProps} minTickGap={16} />
                       <YAxis
                         domain={[PIPELINE_AXIS_MIN, PIPELINE_AXIS_MAX]}
                         ticks={PIPELINE_AXIS_TICKS}
                         tickFormatter={formatHourShort}
-                        tick={{ fontSize: 10 }}
-                        width={40}
+                        {...chartAxisProps}
+                        width={52}
                       />
                       <Tooltip
-                        formatter={(value: number) => [formatHourPrecise(value), key]}
-                        labelFormatter={(label: string, payload: any[]) => {
-                          const flagCount = nextDayField ? (payload?.[0]?.payload?.[nextDayField] || 0) : 0;
-                          if (flagCount === 0) return label;
-                          const verb = key === 'Delivered' ? 'delivered' : key === 'Shipped' ? 'shipped' : 'accepted';
-                          return `${label} - ${flagCount} ${verb} on a LATER calendar day (not ${label})`;
-                        }}
+                        cursor={chartCursor}
+                        content={(p: any) => (
+                          <ChartTooltipCard
+                            {...p}
+                            formatValue={(v: number) => formatHourPrecise(v)}
+                            formatLabel={(label: any) => {
+                              const flagCount = nextDayField ? (p.payload?.[0]?.payload?.[nextDayField] || 0) : 0;
+                              if (flagCount === 0) return label;
+                              const verb = key === 'Delivered' ? 'delivered' : key === 'Shipped' ? 'shipped' : 'accepted';
+                              return `${label} - ${flagCount} ${verb} on a later day`;
+                            }}
+                          />
+                        )}
                       />
-                      <Line type="monotone" dataKey={key} stroke={color} strokeWidth={2} dot={renderTimingDot(color)} connectNulls />
+                      <Line type="monotone" dataKey={key} stroke={color} strokeWidth={2} dot={renderTimingDot(color)} connectNulls isAnimationActive={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+              </Card>
+            ))}
+          </div>
+        )}
+        <HowItWorks title="Pipeline time of day">
+          <p>"Requested" is when the request was placed. The other three are grouped under that same placement day, so a point's clock time doesn't by itself confirm the stage happened that same day.</p>
+          {(delayedDeliveries.length > 0 || nextDayCounts.acceptedNextDay > 0 || nextDayCounts.shippedNextDay > 0) && (
+            <p>A large red point on Accepted, Shipped or Delivered means at least one request in that day's group actually happened on a later calendar date - tap the point to see how many.</p>
+          )}
+        </HowItWorks>
+        {delayedDeliveries.length > 0 && (
+          <>
+            <ListGroup title="Delivered later than shipped" meta={String(delayedDeliveries.length)} className="lg:hidden">
+              {delayedDeliveries.map((row) => (
+                <ListRow
+                  key={row.id}
+                  title={`Requested ${dateTime(row.requestedAt)}`}
+                  subtitle={`Accepted ${row.acceptedAt ? dateTime(row.acceptedAt) : '-'} · shipped ${dateTime(row.shippedAt)} · delivered ${dateTime(row.deliveredAt)}`}
+                  trailing={<StatusChip tone="danger">{row.daysLate}d late</StatusChip>}
+                />
               ))}
+            </ListGroup>
+            <div className="hidden flex-col gap-2 lg:flex">
+              <h4 className="text-subtitle font-semibold text-text">Delivered later than shipped ({delayedDeliveries.length})</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Request date</TableHead>
+                    <TableHead>Accepted</TableHead>
+                    <TableHead>Shipped</TableHead>
+                    <TableHead>Delivered</TableHead>
+                    <TableHead numeric>Days late</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {delayedDeliveries.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="text-text-2">{dateTime(row.requestedAt)}</TableCell>
+                      <TableCell className="text-text-2">{row.acceptedAt ? dateTime(row.acceptedAt) : '-'}</TableCell>
+                      <TableCell className="text-text-2">{dateTime(row.shippedAt)}</TableCell>
+                      <TableCell className="text-text-2">{dateTime(row.deliveredAt)}</TableCell>
+                      <TableCell numeric className="font-semibold text-danger">{row.daysLate}d</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-          )}
-          <p className="text-xs text-gray-500 mt-3">
-            "Requested" is when the request was placed - the other three are grouped under that
-            same placement day, so a point's clock time doesn't by itself confirm the stage
-            happened that same day. {(delayedDeliveries.length > 0 || nextDayCounts.acceptedNextDay > 0 || nextDayCounts.shippedNextDay > 0) && (
-              <>Where <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 align-middle mx-1" /> appears on Accepted/Shipped/Delivered, at least one request in that day's group actually happened on a later calendar date - hover the point for how many.</>
-            )}
-          </p>
-
-          {delayedDeliveries.length > 0 && (
-            <div className="mt-4 border border-red-200 rounded-lg overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border-b border-red-200">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-                <p className="text-xs font-semibold text-red-900">Delivered later than shipped ({delayedDeliveries.length})</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-gray-500 uppercase tracking-wide">
-                      <th className="px-3 py-1.5">Request Date</th>
-                      <th className="px-3 py-1.5">Accepted</th>
-                      <th className="px-3 py-1.5">Shipped</th>
-                      <th className="px-3 py-1.5">Delivered</th>
-                      <th className="px-3 py-1.5 text-right">Days Late</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {delayedDeliveries.map((row) => (
-                      <tr key={row.id} className="border-t border-red-100">
-                        <td className="px-3 py-1.5 text-gray-700">{new Date(row.requestedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
-                        <td className="px-3 py-1.5 text-gray-700">{row.acceptedAt ? new Date(row.acceptedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '-'}</td>
-                        <td className="px-3 py-1.5 text-gray-700">{new Date(row.shippedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
-                        <td className="px-3 py-1.5 text-gray-700">{new Date(row.deliveredAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
-                        <td className="px-3 py-1.5 text-right font-semibold text-red-700">{row.daysLate}d</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+          </>
+        )}
+      </section>
     </div>
   );
 }

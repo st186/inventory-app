@@ -1,159 +1,45 @@
-import { projectId, publicAnonKey } from './supabase/info';
 import { getSupabaseClient } from './supabase/client';
 import { InventoryItem, OverheadItem, FixedCostItem, SalesData, ProductionData } from '../App';
+import type { DispatchInfo, DeliveryReceipt } from './batches';
+import type { StockOutEntry } from './stockOuts';
+import type { AccuracySummary, BacktestDay, CalendarEvent, DayRecord, EffectLearning, ForecastDay, ForecastSettings } from './forecast';
+import { currentAccessToken, getAccessToken } from './accessToken';
+import { API_BASE, PASSWORD_EXPIRED_EVENT, authFetch, getLatestVersion, requestJson } from './http';
 
-export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d`;
+export { API_BASE, PASSWORD_EXPIRED_EVENT };
 
-// Helper to create Supabase client for browser
+// The ~60 helpers below use this only for `auth.getSession()`, to check someone is signed in before
+// calling fetchWithAuth (which reads the current token itself). It answers from accessToken.ts:
+// from memory while the token is good, never waiting long on a renewal over a weak signal -
+// supabase-js's own getSession() can block for 30 s there, and did, on every one of these calls.
 function createBrowserSupabase() {
-  return getSupabaseClient();
-}
-
-// Helper to get current session with automatic token refresh
-export async function getSession() {
-  const supabase = createBrowserSupabase();
-  
-  // First check if there's an existing session
-  const { data: { session: existingSession } } = await supabase.auth.getSession();
-  
-  if (!existingSession) {
-    // No session at all
-    return null;
-  }
-  
-  // Try to refresh the session to get a fresh token
-  const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
-  
-  if (refreshError || !refreshedSession) {
-    console.warn('Token refresh failed, using existing session:', refreshError?.message || 'No session returned');
-    // Fall back to existing session
-    return existingSession;
-  }
-  
-  return refreshedSession;
-}
-
-// Global flag to prevent multiple logout redirects
-let isHandlingUnauthorized = false;
-
-// Supabase refresh tokens are single-use/rotating: if several requests 401 at once
-// (e.g. loadData's ~14 parallel fetches after the token expired while the app was
-// backgrounded) and each independently calls refreshSession(), only the first actually
-// succeeds - the rest get an "already used" error and used to force-logout the user
-// even though the session was perfectly fine. Sharing one in-flight refresh across all
-// concurrent callers fixes that false-logout race.
-let inFlightRefresh: ReturnType<typeof _doRefresh> | null = null;
-
-async function _doRefresh() {
-  const supabase = createBrowserSupabase();
-  return supabase.auth.refreshSession();
-}
-
-async function refreshAccessTokenShared() {
-  if (!inFlightRefresh) {
-    inFlightRefresh = _doRefresh().finally(() => {
-      inFlightRefresh = null;
-    });
-  }
-  return inFlightRefresh;
-}
-
-async function fetchWithAuth(url: string, accessToken: string, options?: RequestInit, _retryCount = 0, _refreshed = false): Promise<any> {
-  const MAX_RETRIES = 2;
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        ...options?.headers,
+  return {
+    auth: {
+      getSession: async () => {
+        const token = await getAccessToken();
+        return { data: { session: token ? { access_token: token } : null } };
       },
-    });
+    },
+  };
+}
 
-    if (!response.ok) {
-      let errorMessage = 'Request failed';
-      let isWarning = false;
-      try {
-        const error = await response.json();
-        errorMessage = error.error || error.message || `HTTP ${response.status}: ${response.statusText}`;
-        // Check if this is a warning (non-critical error)
-        isWarning = !!error.warning;
-      } catch (e) {
-        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-      }
-      // Retry on 5xx server errors (cold start, temporary unavailability)
-      if (response.status >= 500 && _retryCount < MAX_RETRIES) {
-        console.warn(`Server error [${url}] (attempt ${_retryCount + 1}/${MAX_RETRIES + 1}):`, errorMessage, '- retrying...');
-        await new Promise(r => setTimeout(r, 1000 * (_retryCount + 1)));
-        return fetchWithAuth(url, accessToken, options, _retryCount + 1, _refreshed);
-      }
+// The current session for the few helpers that read it directly. It used to force a token renewal
+// on every call (a login-server round trip each time, and on a weak signal a 30 s wait); supabase-js
+// and accessToken.ts keep the session fresh instead.
+export async function getSession() {
+  const token = await getAccessToken();
+  if (!token) return null;
+  const { data: { session } } = await getSupabaseClient().auth.getSession().catch(() => ({ data: { session: null } }));
+  return session?.access_token === token ? session : { access_token: token };
+}
 
-      // A 401 here often just means the access token expired while the app was
-      // backgrounded (mobile) or idle in a tab - not that the session is truly gone.
-      // Try refreshing it once before concluding the user needs to log back in;
-      // this was force-logging people out on ordinary token expiry.
-      if (response.status === 401 && !_refreshed) {
-        console.warn(`[${url}] Got 401, attempting a token refresh before giving up...`);
-        const { data: { session: refreshedSession }, error: refreshError } = await refreshAccessTokenShared();
-        if (!refreshError && refreshedSession?.access_token) {
-          console.log('Token refresh succeeded, retrying request');
-          return fetchWithAuth(url, refreshedSession.access_token, options, _retryCount, true);
-        }
-        console.warn('Token refresh failed:', refreshError?.message || 'no session returned');
-      }
-
-      console.error(`API Error [${url}]:`, errorMessage);
-
-      // If unauthorized and a refresh was already tried (or isn't possible), force logout
-      // (but only once to prevent reload loops)
-      if (response.status === 401 && !isHandlingUnauthorized) {
-        isHandlingUnauthorized = true;
-        console.error('Session expired or invalid. Please log in again.');
-
-        // Clear the session
-        const supabase = createBrowserSupabase();
-        await supabase.auth.signOut();
-
-        // Use a flag to ensure we only reload once
-        if (!sessionStorage.getItem('logout_redirect_in_progress')) {
-          sessionStorage.setItem('logout_redirect_in_progress', 'true');
-
-          // Small delay to allow other pending requests to fail gracefully
-          setTimeout(() => {
-            sessionStorage.removeItem('logout_redirect_in_progress');
-            window.location.reload();
-          }, 100);
-        }
-      }
-
-      throw new Error(errorMessage);
-    }
-
-    const jsonData = await response.json();
-    
-    // Check for database unavailability warnings in successful responses
-    if (jsonData.warning) {
-      console.warn(`API Warning [${url}]:`, jsonData.warning);
-      // You could emit a toast notification here if needed
-    }
-    
-    return jsonData;
-  } catch (error) {
-    // Catch network errors like "Failed to fetch" and retry
-    if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      if (_retryCount < MAX_RETRIES) {
-        console.warn(`Network error [${url}] (attempt ${_retryCount + 1}/${MAX_RETRIES + 1}) - retrying in ${(_retryCount + 1)}s...`);
-        await new Promise(r => setTimeout(r, 1000 * (_retryCount + 1)));
-        return fetchWithAuth(url, accessToken, options, _retryCount + 1);
-      }
-      console.error(`Network Error [${url}]: Failed to fetch after ${MAX_RETRIES + 1} attempts`);
-      console.error('Request details:', { url, method: options?.method || 'GET' });
-      throw new Error('Network error: Unable to connect to server. Please check your internet connection.');
-    }
-    // Re-throw other errors
-    throw error;
-  }
+// Every request in this file comes through here (or through authFetch, for the helpers that read
+// the raw Response). The token argument is no longer used: the 246 call sites pass the copy taken
+// at login, which expired after an hour; http.ts sends the current one. See http.ts for the time
+// limits, retries (reads only, unless the server dedupes writes), sharing of identical reads and
+// the 401 handling - which no longer signs anyone out because a renewal couldn't reach the server.
+async function fetchWithAuth(url: string, _accessToken: string, options?: RequestInit): Promise<any> {
+  return requestJson(url, options);
 }
 
 export async function fetchInventory(accessToken: string): Promise<InventoryItem[]> {
@@ -355,11 +241,20 @@ export async function rejectDiscrepancy(accessToken: string, id: string, reason:
 // CASH TOP-UP REQUEST API
 // ============================================
 
-export type CashTopupReason = 'store_inventory' | 'production_inventory' | 'other';
+// 'event_cash': an event stall's cash (events.ts). It has no storeId (it isn't the store's till
+// money); the approver picks fundingSource - the store's Paytm (paytmStoreId) or the production
+// house's cash (fundedFromProductionHouseId).
+export type CashTopupReason = 'store_inventory' | 'production_inventory' | 'other' | 'event_cash';
 
 export interface CashTopupRequest {
   id: string;
   storeId: string;
+  eventId?: string;
+  eventName?: string;
+  note?: string;
+  fundingSource?: 'store_paytm' | 'production_cash';
+  paytmStoreId?: string;
+  fundedFromProductionHouseId?: string;
   // Set only when reason is 'production_inventory' - the approved amount credits this
   // production house's own cash ledger (see ProductionCashEntry below) instead of the
   // store's usedOnlineMoney. Undefined on requests made before this field existed, and on
@@ -377,6 +272,9 @@ export interface CashTopupRequest {
   requestDate: string;
   approvedBy: string | null;
   approvedAt: string | null;
+  // true = approvedAt is real UTC. Older approvals stored IST wall-clock time with a 'Z'
+  // suffix instead (see topupApprovedAtMs in utils/paytmRules.ts).
+  approvedAtIsUtc?: boolean;
   rejectedBy: string | null;
   rejectedAt: string | null;
   rejectionReason: string | null;
@@ -389,17 +287,21 @@ export async function fetchCashTopupRequests(accessToken: string): Promise<CashT
 
 // targetStoreId is required only for production incharges (who have no cash-in-hand ledger
 // of their own) - store incharges and operations managers credit their own store automatically.
-export async function requestCashTopup(accessToken: string, date: string, requestedAmount: number, reason: CashTopupReason, targetStoreId?: string): Promise<CashTopupRequest> {
+// A cluster head names the store (targetStoreId) or production house (targetProductionHouseId);
+// their request comes back already approved.
+export async function requestCashTopup(accessToken: string, date: string, requestedAmount: number, reason: CashTopupReason, targetStoreId?: string, targetProductionHouseId?: string): Promise<CashTopupRequest> {
   const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests`, accessToken, {
     method: 'POST',
-    body: JSON.stringify({ date, requestedAmount, reason, targetStoreId }),
+    body: JSON.stringify({ date, requestedAmount, reason, targetStoreId, targetProductionHouseId }),
   });
   return data.request;
 }
 
-export async function approveCashTopup(accessToken: string, id: string): Promise<CashTopupRequest> {
+// An event's request (reason 'event_cash') needs fundingSource: where the money comes from.
+export async function approveCashTopup(accessToken: string, id: string, fundingSource?: 'store_paytm' | 'production_cash'): Promise<CashTopupRequest> {
   const data = await fetchWithAuth(`${API_BASE}/cash-topup-requests/${id}/approve`, accessToken, {
     method: 'POST',
+    ...(fundingSource ? { body: JSON.stringify({ fundingSource }) } : {}),
   });
   return data.request;
 }
@@ -512,6 +414,7 @@ export interface StockWastageEntry {
   storeId: string;
   date: string; // YYYY-MM-DD
   wastage: Record<string, number>; // momo type key -> pieces wasted, zero entries omitted
+  reasons?: Record<string, Record<string, number>>; // type key -> SOP reason code -> pieces
   notes?: string;
   submittedBy: string;
   submittedByName?: string;
@@ -529,12 +432,211 @@ export async function getStockWastageRange(accessToken: string, storeId: string,
   return data.entries || [];
 }
 
-export async function saveStockWastageEntry(accessToken: string, storeId: string, date: string, wastage: Record<string, number>, notes?: string): Promise<StockWastageEntry> {
+export async function saveStockWastageEntry(accessToken: string, storeId: string, date: string, wastage: Record<string, number>, notes?: string, reasons?: Record<string, Record<string, number>>): Promise<StockWastageEntry> {
   const data = await fetchWithAuth(`${API_BASE}/stock-wastage`, accessToken, {
     method: 'POST',
-    body: JSON.stringify({ storeId, date, wastage, ...(notes !== undefined ? { notes } : {}) }),
+    body: JSON.stringify({ storeId, date, wastage, ...(notes !== undefined ? { notes } : {}), ...(reasons ? { reasons } : {}) }),
   });
   return data.entry;
+}
+
+// Insights: festival calendar, demand forecast and the Claude-written parts (server
+// insights.ts). The forecast numbers come from utils/forecast.ts, run on the server.
+export interface InsightsOverview {
+  today: string;
+  storeId: string | null;
+  history: DayRecord[];
+  events: CalendarEvent[];
+  forecast: ForecastDay[];
+  yesterday: { date: string; actual: number | null; actualPieces: DayRecord['pieces']; expected: ForecastDay };
+  learned: Record<string, EffectLearning>;
+  accuracy?: ForecastAccuracy; // missing until the server is redeployed
+}
+
+// How the forecast has done: each past day forecast again from earlier data only (forecast.ts backtest).
+export interface ForecastAccuracy {
+  date: string;
+  settings: ForecastSettings;
+  tuned: boolean;
+  tuningGain: number;
+  last28: AccuracySummary;
+  weeks: (AccuracySummary & { week: string })[];
+  misses: BacktestDay[];
+}
+
+export async function getInsightsOverview(accessToken: string, storeId?: string | null): Promise<InsightsOverview> {
+  return fetchWithAuth(`${API_BASE}/insights/overview${storeId ? `?storeId=${encodeURIComponent(storeId)}` : ''}`, accessToken);
+}
+
+export async function getStoreCalendar(accessToken: string, from: string, to: string): Promise<CalendarEvent[]> {
+  const data = await fetchWithAuth(`${API_BASE}/store-calendar?from=${from}&to=${to}`, accessToken);
+  return data.events || [];
+}
+
+export async function saveCalendarDay(accessToken: string, event: CalendarEvent): Promise<CalendarEvent> {
+  const data = await fetchWithAuth(`${API_BASE}/store-calendar/${event.date}`, accessToken, { method: 'PUT', body: JSON.stringify(event) });
+  return data.event;
+}
+
+export async function deleteCalendarDay(accessToken: string, date: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/store-calendar/${date}`, accessToken, { method: 'DELETE' });
+}
+
+export interface AiStatus { configured: boolean; model: string; spentThisMonthUsd: number; capUsd: number; canManage: boolean }
+
+export async function getAiStatus(accessToken: string): Promise<AiStatus> {
+  return fetchWithAuth(`${API_BASE}/ai/status`, accessToken);
+}
+
+export interface AiBrief { text: string; generatedAt: string; model: string; storeId: string | null; date: string; refreshes: number }
+
+export async function getAiBrief(accessToken: string, storeId: string | null, refresh = false): Promise<{ brief: AiBrief | null; note?: string }> {
+  return fetchWithAuth(`${API_BASE}/ai/brief`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, refresh }) });
+}
+
+// The week's production goal suggested from the forecast, festivals and event stalls. Goals are
+// keyed by forecast momo type ('chicken', 'veg', ...) - MOMO_TYPES' inventoryKey.
+export interface WeeklyGoalSuggestion {
+  weekStart: string;
+  goals: Record<string, number>;
+  base: Record<string, number>;
+  expected: Record<string, number>;
+  reasons: string[];
+  ai: boolean;
+  note?: string;
+}
+
+export async function suggestWeeklyGoal(accessToken: string, productionHouseId: string, weekStart: string, language: 'en' | 'bn' | 'hi'): Promise<WeeklyGoalSuggestion> {
+  return fetchWithAuth(`${API_BASE}/ai/weekly-goal`, accessToken, { method: 'POST', body: JSON.stringify({ productionHouseId, weekStart, language }) });
+}
+
+export interface GrowthIdea {
+  id: string;
+  storeId: string;
+  title: string;
+  why: string;
+  action: string;
+  expectedImpact: string;
+  effort: 'low' | 'medium' | 'high';
+  category: string;
+  status: 'new' | 'trying' | 'done' | 'dropped';
+  note?: string;
+  createdAt: string;
+}
+
+export async function getGrowthIdeas(accessToken: string, storeId: string | null): Promise<GrowthIdea[]> {
+  const data = await fetchWithAuth(`${API_BASE}/growth-ideas?storeId=${encodeURIComponent(storeId || 'all')}`, accessToken);
+  return data.ideas || [];
+}
+
+export async function generateGrowthIdeas(accessToken: string, storeId: string | null): Promise<GrowthIdea[]> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/growth`, accessToken, { method: 'POST', body: JSON.stringify({ storeId }) });
+  return data.ideas || [];
+}
+
+export async function updateGrowthIdea(accessToken: string, storeId: string, id: string, status: GrowthIdea['status'], note?: string): Promise<GrowthIdea> {
+  const data = await fetchWithAuth(`${API_BASE}/growth-ideas/${encodeURIComponent(storeId)}/${encodeURIComponent(id)}`, accessToken, { method: 'PUT', body: JSON.stringify({ status, note }) });
+  return data.idea;
+}
+
+// Days Claude drafted, waiting for the owner side to add or skip (drafted every Monday, or on tap).
+export interface CalendarSuggestion { date: string; name: string; effect: CalendarEvent['effect']; reason: string; confidence: 'high' | 'medium'; drafted?: 'weekly' | 'manual' }
+export interface CalendarDraftRun { at: string; drafted: 'weekly' | 'manual'; added: number }
+
+export async function draftCalendar(accessToken: string, from: string, to: string): Promise<{ added: number; suggestions: CalendarSuggestion[] }> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/calendar-draft`, accessToken, { method: 'POST', body: JSON.stringify({ from, to }) });
+  return { added: data.added || 0, suggestions: data.suggestions || [] };
+}
+
+export async function getCalendarSuggestions(accessToken: string): Promise<{ suggestions: CalendarSuggestion[]; lastRun: CalendarDraftRun | null }> {
+  const data = await fetchWithAuth(`${API_BASE}/calendar-suggestions`, accessToken);
+  return { suggestions: data.suggestions || [], lastRun: data.lastRun || null };
+}
+
+export async function acceptCalendarSuggestion(accessToken: string, date: string): Promise<CalendarEvent> {
+  const data = await fetchWithAuth(`${API_BASE}/calendar-suggestions/${date}/accept`, accessToken, { method: 'POST' });
+  return data.event;
+}
+
+export async function dismissCalendarSuggestion(accessToken: string, date: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/calendar-suggestions/${date}/dismiss`, accessToken, { method: 'POST' });
+}
+
+// Shortens the older part of a long Bunny chat into a summary (server /ai/summarize-chat).
+export async function summarizeChat(accessToken: string, summary: string, messages: { role: 'user' | 'assistant'; content: string }[]): Promise<string> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/summarize-chat`, accessToken, { method: 'POST', body: JSON.stringify({ summary, messages }) });
+  return data.summary || summary;
+}
+
+// "Complete your profile" (server profile.ts): the signed-in person's own Aadhaar photos, phone
+// and personal email.
+export interface MyProfileStatus { required: boolean; complete: boolean; missing: ('aadharFront' | 'aadharBack' | 'phone' | 'contactEmail')[]; phone?: string; contactEmail?: string }
+
+export async function getMyProfile(accessToken: string): Promise<MyProfileStatus> {
+  return fetchWithAuth(`${API_BASE}/me/profile`, accessToken);
+}
+
+export async function updateMyProfile(accessToken: string, updates: { phone?: string; contactEmail?: string; aadharFront?: string; aadharBack?: string }): Promise<MyProfileStatus> {
+  return fetchWithAuth(`${API_BASE}/me/profile`, accessToken, { method: 'PUT', body: JSON.stringify(updates) });
+}
+
+// Voice entry: one spoken sentence read into form fields (server /ai/voice-fill, Haiku).
+export interface VoiceSalesFields { paytm: number | null; cash: number | null; cashInHand: number | null; unclear: string }
+export interface VoiceExpenseItem { name: string; quantity: number | null; unit: string | null; packs?: number | null; perPack?: number | null; amount: number | null; pricePerPack?: number | null }
+export interface VoiceExpenseFields { items: VoiceExpenseItem[]; paidWith: 'cash' | 'online' | 'unknown'; unclear: string }
+
+export async function voiceFill(accessToken: string, kind: 'sales', text: string): Promise<VoiceSalesFields>;
+export async function voiceFill(accessToken: string, kind: 'expense', text: string): Promise<VoiceExpenseFields>;
+export async function voiceFill(accessToken: string, kind: 'sales' | 'expense', text: string) {
+  const data = await fetchWithAuth(`${API_BASE}/ai/voice-fill`, accessToken, { method: 'POST', body: JSON.stringify({ kind, text }) });
+  return data.fields;
+}
+
+// Ask Bunny (the floating chat): answers in the person's language about the screen they're on.
+export async function askBunny(
+  accessToken: string,
+  storeId: string | null,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  options: { language: 'en' | 'bn' | 'hi'; screen?: { page: string; tab?: string; text?: string }; summary?: string },
+): Promise<{ answer: string; followUps: string[]; toolsUsed: string[] }> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/ask`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, messages, ...options }) });
+  return { answer: data.answer, followUps: data.followUps || [], toolsUsed: data.toolsUsed || [] };
+}
+
+export interface ScannedInvoiceLine { asWritten: string; englishName: string; quantity: number; unit: string; rate: number; amount: number; unsure: boolean }
+export interface ScannedInvoice { readable: boolean; vendor: string; invoiceDate: string; invoiceNumber: string; language: string; items: ScannedInvoiceLine[]; billTotal: number; note: string }
+
+export async function readInvoice(accessToken: string, dataUrl: string): Promise<ScannedInvoice> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/invoice-read`, accessToken, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  return data.invoice;
+}
+
+// Out-of-stock log (store SOP ST-28) - see utils/stockOuts.ts.
+export async function getStockOuts(accessToken: string, storeId: string, from: string, to: string): Promise<StockOutEntry[]> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-outs?storeId=${encodeURIComponent(storeId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, accessToken);
+  return data.entries || [];
+}
+
+export async function createStockOut(
+  accessToken: string,
+  entry: Pick<StockOutEntry, 'storeId' | 'item' | 'category' | 'reason' | 'reasonNote' | 'startAt' | 'endAt' | 'offOnline' | 'backOnline'>
+): Promise<StockOutEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-outs`, accessToken, { method: 'POST', body: JSON.stringify(entry) });
+  return data.entry;
+}
+
+export async function updateStockOut(
+  accessToken: string,
+  storeId: string,
+  id: string,
+  changes: Partial<Pick<StockOutEntry, 'item' | 'category' | 'reason' | 'reasonNote' | 'startAt' | 'endAt' | 'offOnline' | 'backOnline'>>
+): Promise<StockOutEntry> {
+  const data = await fetchWithAuth(`${API_BASE}/stock-outs/${encodeURIComponent(storeId)}/${encodeURIComponent(id)}`, accessToken, { method: 'PUT', body: JSON.stringify(changes) });
+  return data.entry;
+}
+
+export async function deleteStockOut(accessToken: string, storeId: string, id: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/stock-outs/${encodeURIComponent(storeId)}/${encodeURIComponent(id)}`, accessToken, { method: 'DELETE' });
 }
 
 // Production Ledger - the raw-stock counterpart to Production Cash above. Dough/stuffing/
@@ -595,6 +697,7 @@ export interface ProductionLedgerEntry {
   closedByUserId?: string;
   closedAt?: string;
   manualOpeningOverride?: Record<string, number>;
+  leftoverReport?: LeftoverReport;
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -664,6 +767,7 @@ export interface ProductionWastageNote {
   description: string;
   quantity: number;
   unit: string;
+  reason?: string; // SOP 1.7 waste reason code
   loggedBy: string;
   loggedByName: string;
   loggedAt: string;
@@ -674,10 +778,10 @@ export async function getProductionWastageNotes(accessToken: string, productionH
   return data.notes || [];
 }
 
-export async function addProductionWastageNote(accessToken: string, productionHouseId: string, date: string, description: string, quantity: number, unit: string): Promise<ProductionWastageNote> {
+export async function addProductionWastageNote(accessToken: string, productionHouseId: string, date: string, description: string, quantity: number, unit: string, reason?: string): Promise<ProductionWastageNote> {
   const data = await fetchWithAuth(`${API_BASE}/production-wastage-notes`, accessToken, {
     method: 'POST',
-    body: JSON.stringify({ productionHouseId, date, description, quantity, unit }),
+    body: JSON.stringify({ productionHouseId, date, description, quantity, unit, ...(reason ? { reason } : {}) }),
   });
   return data.note;
 }
@@ -686,12 +790,54 @@ export async function deleteProductionWastageNote(accessToken: string, id: strin
   await fetchWithAuth(`${API_BASE}/production-wastage-notes/${id}`, accessToken, { method: 'DELETE' });
 }
 
-export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>): Promise<ProductionLedgerEntry> {
+export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport): Promise<ProductionLedgerEntry> {
   const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/close`, accessToken, {
     method: 'PUT',
-    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}) }),
+    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}), ...(leftoverReport ? { leftoverReport } : {}) }),
   });
   return data.entry;
+}
+
+// Why stuffing was left over at the day's close (server cleanLeftoverReport), and what the form
+// needs to ask it: the house's staff with today's check-in and lateness, and its machines.
+export type LeftoverKind = 'power_cut' | 'late_start' | 'long_break' | 'machine' | 'low_demand' | 'planned' | 'short_staff' | 'other';
+export interface LeftoverReason {
+  kind: LeftoverKind;
+  periods?: { from: string; to: string }[];
+  startedAt?: string | null; people?: any[]; why?: string; genuine?: 'yes' | 'no' | 'unsure' | '';
+  entries?: { id: string | null; name: string; minutes: number | null; why: string; genuine: 'yes' | 'no' | 'unsure' }[]; // long break, one per person
+  assetId?: string | null; machine?: string; downFrom?: string; downTo?: string | null; stillDown?: boolean; alternative?: string; raiseRepair?: boolean; repairAlertId?: string;
+  note?: string;
+}
+// lateCheck: what the server found holding a late start against the check-ins (raised as a production check).
+export interface LeftoverReport { reasons: LeftoverReason[]; leftoverKg?: number; by?: string; at?: string; lateCheck?: { issues: string[]; at?: string } }
+export interface LedgerDayContext {
+  date: string;
+  staff: { id: string; name: string; shiftStart: string; checkInAt: string | null; lateMin: number; onLeave: boolean }[];
+  machines: { id: string; name: string; condition: string }[];
+  minKg: number;
+}
+
+export async function getLedgerDayContext(accessToken: string, productionHouseId: string, date: string): Promise<LedgerDayContext> {
+  return fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/day-context`, accessToken);
+}
+
+// Machine breakdowns (server repairs.ts): open until someone marks the machine repaired.
+export interface RepairAlert {
+  id: string; status: 'open' | 'fixed';
+  locationKind: 'production' | 'store'; locationId: string; locationName?: string;
+  assetId?: string | null; machine: string; date: string;
+  downFrom?: string | null; downTo?: string | null; stillDown: boolean; alternative?: string;
+  reportedBy: string; reportedAt: string; fixedBy?: string; fixedAt?: string; fixNote?: string; repairCost?: number | null;
+}
+
+export async function getRepairAlerts(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<RepairAlert[]> {
+  const data = await fetchWithAuth(`${API_BASE}/repair-alerts?status=${status}`, await tokenOr(accessToken));
+  return data.alerts || [];
+}
+
+export async function markRepairFixed(id: string, note?: string, repairCost?: number | null, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/repair-alerts/${encodeURIComponent(id)}/fixed`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note, repairCost }) });
 }
 
 // Manually triggers today's Ciferon POS sync early, instead of waiting for the 10:30 PM
@@ -853,6 +999,23 @@ export interface Notification {
   relatedDate: string | null;
   read: boolean;
   createdAt: string;
+  // Notifications brought up to date (notificationRules.ts): priority, bundling, done-elsewhere.
+  category?: 'urgent' | 'action' | 'reminder' | 'update';
+  count?: number; // bundled: this many of the same kind; items holds the earlier messages
+  items?: string[];
+  readAt?: string;
+  resolvedAt?: string; resolvedBy?: string; resolvedVerb?: string;
+}
+
+export interface NotificationPrefs { quietOn: boolean; quietFrom: string; quietTo: string; muted: Partial<Record<'action' | 'reminder' | 'update', boolean>>; digest: boolean }
+export async function getNotificationPrefs(): Promise<{ prefs: NotificationPrefs; isOwner: boolean }> {
+  return fetchWithAuth(`${API_BASE}/notifications/prefs`, await tokenOr());
+}
+export async function saveNotificationPrefs(prefs: NotificationPrefs): Promise<{ prefs: NotificationPrefs }> {
+  return fetchWithAuth(`${API_BASE}/notifications/prefs`, await tokenOr(), { method: 'PUT', body: JSON.stringify(prefs) });
+}
+export async function sendTestNotification(): Promise<{ sent: boolean }> {
+  return fetchWithAuth(`${API_BASE}/notifications/test`, await tokenOr(), { method: 'POST', body: '{}' });
 }
 
 export async function getNotifications(): Promise<{ notifications: Notification[]; unreadCount: number }> {
@@ -913,14 +1076,11 @@ export async function markAllNotificationsAsRead(): Promise<void> {
 
 // No-login-required by design - see GET /app-version. Never throws; a stale/offline
 // build should just quietly skip the update nudge, not break anything else on load.
+// The same answer also carries the server's feature list, so it is fetched once per session
+// (http.ts loadServerFeatures) and shared.
 export async function getLatestAppVersion(): Promise<string | null> {
   try {
-    const response = await fetch(`${API_BASE}/app-version`, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}` },
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return data.latestVersion || null;
+    return await getLatestVersion();
   } catch {
     return null;
   }
@@ -1131,6 +1291,8 @@ export interface Employee {
   phone?: string;
   aadharFront?: string;
   aadharBack?: string;
+  // Set by the server instead of the images for anyone but the owner and the person themself.
+  hasAadharImages?: boolean;
   authUserId?: string;
   createdBy?: string;
   createdAt?: string;
@@ -1157,6 +1319,7 @@ export interface Employee {
 export interface SalaryComponent {
   label: string; // e.g. "Basic", "HRA", "Conveyance", "Special Allowance"
   amount: number; // fixed monthly amount for this component
+  fromMonth?: string; // YYYY-MM it starts (e.g. the food allowance from 2026-11); unpaid before
 }
 
 export async function getAllEmployees(accessToken?: string): Promise<Employee[]> {
@@ -1183,6 +1346,14 @@ export async function getEmployees(): Promise<Employee[]> {
   return getAllEmployees();
 }
 
+// One employee's Aadhaar photos (owner, or the person themself). Servers with the 'lean-lists-v1'
+// feature can leave the photos out of the employee lists (about 0.2-0.5 MB per list call) for
+// clients that ask; this is where a screen would then read them. The app doesn't ask yet: the
+// screens that show the photos still read them from the list.
+export async function getEmployeeDocuments(employeeId: string): Promise<{ aadharFront?: string; aadharBack?: string; [key: string]: unknown }> {
+  return fetchWithAuth(`${API_BASE}/employees/${encodeURIComponent(employeeId)}/documents`, '');
+}
+
 export async function getArchivedEmployees(): Promise<Employee[]> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
@@ -1203,7 +1374,7 @@ export async function createUnifiedEmployee(employeeData: any) {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/unified-employees`, {
+  const response = await authFetch(`${API_BASE}/unified-employees`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1228,7 +1399,7 @@ export async function deleteUnifiedEmployee(employeeId: string) {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/unified-employees/${employeeId}`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${employeeId}`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1244,6 +1415,27 @@ export async function deleteUnifiedEmployee(employeeId: string) {
   return await response.json();
 }
 
+// Owner only: brings a past employee back and switches their login back on.
+export async function restoreArchivedEmployee(employeeId: string): Promise<{ success: boolean; loginRestored: boolean | null }> {
+  const session = await getSession();
+  if (!session) throw new Error('Not authenticated');
+
+  const response = await authFetch(`${API_BASE}/archived-employees/${employeeId}/restore`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Failed to restore employee');
+  }
+
+  return await response.json();
+}
+
 export async function deleteEmployee(employeeId: string) {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
@@ -1252,7 +1444,7 @@ export async function deleteEmployee(employeeId: string) {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/employees/${employeeId}`, {
+  const response = await authFetch(`${API_BASE}/employees/${employeeId}`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1276,7 +1468,7 @@ export async function resetEmployeePassword(employeeId: string, newPassword: str
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/unified-employees/${employeeId}/reset-password`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${employeeId}/reset-password`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1333,7 +1525,7 @@ export async function migrateEmployeeStores() {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/migrate-employee-stores`, {
+  const response = await authFetch(`${API_BASE}/migrate-employee-stores`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1354,7 +1546,7 @@ export async function assignManagerToEmployee(employeeId: string, managerId: str
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/assign-manager-to-employee`, {
+  const response = await authFetch(`${API_BASE}/assign-manager-to-employee`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1376,7 +1568,7 @@ export async function updateEmployeeRole(employeeId: string, newRole: 'employee'
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/role`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/role`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1398,7 +1590,7 @@ export async function updateEmployeeStore(employeeId: string, newStoreId: string
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/store`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/store`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1427,7 +1619,7 @@ export async function updateEmployeeAssignments(
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
 
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/assignments`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/assignments`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1453,7 +1645,7 @@ export async function updateEmployeeDesignation(
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/designation`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/designation`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1475,7 +1667,7 @@ export async function assignInchargeToEmployee(employeeId: string, inchargeId: s
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employee/${employeeId}/assign-incharge`, {
+  const response = await authFetch(`${API_BASE}/employee/${employeeId}/assign-incharge`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1497,7 +1689,7 @@ export async function getEmployeesByIncharge(inchargeId: string) {
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/employees/by-incharge/${inchargeId}`, {
+  const response = await authFetch(`${API_BASE}/employees/by-incharge/${inchargeId}`, {
     headers: {
       'Authorization': `Bearer ${session.access_token}`
     }
@@ -1520,7 +1712,7 @@ export async function syncDesignations() {
     throw new Error('Not authenticated');
   }
   
-  const response = await fetch(`${API_BASE}/sync-designations`, {
+  const response = await authFetch(`${API_BASE}/sync-designations`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1546,7 +1738,7 @@ export async function assignClusterHeadToManager(managerId: string, clusterHeadI
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
 
-  const response = await fetch(`${API_BASE}/unified-employees/${managerId}/assign-cluster-head`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${managerId}/assign-cluster-head`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1567,7 +1759,7 @@ export async function updateUnifiedEmployee(employeeId: string, updates: any) {
   const session = await getSession();
   if (!session) throw new Error('Not authenticated');
   
-  const response = await fetch(`${API_BASE}/unified-employees/${employeeId}`, {
+  const response = await authFetch(`${API_BASE}/unified-employees/${employeeId}`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
@@ -1605,11 +1797,18 @@ export interface Payout {
   // as its own line alongside the fixed components.
   variablePay?: number;
   variablePayLabel?: string; // defaults to "Variable Pay" if omitted
+  // A one-off bonus (festival, reward), part of `amount` like variable pay; its own payslip line.
+  bonus?: number;
   // Which balance this payout actually came out of. Only 'paytm' payouts are subtracted
   // from the store's Online Cash (Paytm) balance - 'bank' and 'cash' payouts are settled
   // from elsewhere and must NOT drain the Paytm figure. Undefined (legacy records) is
   // treated as 'paytm', which was the implicit assumption before this field existed.
   paidFrom?: 'paytm' | 'bank' | 'cash';
+  // Salary-advance instalment(s) recovered from this payout: `amount` above is what was
+  // transferred, after this. advanceRecovery says which instalments, so deleting the
+  // payout can hand them back to the advance.
+  advanceDeduction?: number;
+  advanceRecovery?: { advanceId: string; month: string; amount: number }[];
 }
 
 export async function getPayouts(): Promise<Payout[]> {
@@ -1909,9 +2108,12 @@ export interface SalaryAdvance {
 export interface SalaryAdvanceDeduction {
   month: string; // YYYY-MM format
   amount: number;
-  deducted: boolean;
+  deducted: boolean; // fully recovered
   deductedDate?: string;
   payoutId?: string;
+  // How much of this instalment has been recovered so far - a payout too small to cover it
+  // recovers part (net pay never goes below zero) and the rest stays due.
+  recovered?: number;
 }
 
 export async function getSalaryAdvances(): Promise<SalaryAdvance[]> {
@@ -1997,11 +2199,11 @@ export async function fetchInventoryItems(
     if (entityId) params.append('entityId', entityId);
     if (category) params.append('category', category);
 
-    const response = await fetch(
+    const response = await authFetch(
       `${API_BASE}/inventory-items?${params.toString()}`,
       {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`
+          'Authorization': `Bearer ${await currentAccessToken()}`
         }
       }
     );
@@ -2025,11 +2227,11 @@ export async function fetchInventoryItems(
 export async function addInventoryItem(
   item: Omit<DynamicInventoryItem, 'id' | 'createdAt' | 'isActive'>
 ): Promise<DynamicInventoryItem> {
-  const response = await fetch(`${API_BASE}/inventory-items`, {
+  const response = await authFetch(`${API_BASE}/inventory-items`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     },
     body: JSON.stringify(item),
   });
@@ -2057,11 +2259,11 @@ export async function updateInventoryItem(
   id: string,
   updates: Partial<DynamicInventoryItem>
 ): Promise<DynamicInventoryItem> {
-  const response = await fetch(`${API_BASE}/inventory-items/${id}`, {
+  const response = await authFetch(`${API_BASE}/inventory-items/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     },
     body: JSON.stringify(updates),
   });
@@ -2076,10 +2278,10 @@ export async function updateInventoryItem(
 }
 
 export async function deleteInventoryItem(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/inventory-items/${id}`, {
+  const response = await authFetch(`${API_BASE}/inventory-items/${id}`, {
     method: 'DELETE',
     headers: {
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     }
   });
 
@@ -2090,10 +2292,10 @@ export async function deleteInventoryItem(id: string): Promise<void> {
 }
 
 export async function initializeDefaultInventoryItems(): Promise<DynamicInventoryItem[]> {
-  const response = await fetch(`${API_BASE}/inventory-items/initialize-defaults`, {
+  const response = await authFetch(`${API_BASE}/inventory-items/initialize-defaults`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${publicAnonKey}`
+      'Authorization': `Bearer ${await currentAccessToken()}`
     }
   });
 
@@ -2340,6 +2542,90 @@ export async function getAllLeaves(accessToken?: string): Promise<LeaveApplicati
   return data.leaves || [];
 }
 
+// Who is off and when, for the whole team (GET /team/leave-calendar): names, where they work,
+// the day, full or half day and approved or waiting - no reasons. Default today to the end of
+// next month.
+export interface TeamLeavePlace { key: string; kind: 'store' | 'production' | 'riders' | 'managers'; id: string | null; name: string; people: number }
+export interface TeamLeaveDay { leaveDate: string; employeeId: string; name: string; placeKey: string; leaveType: 'full' | 'half'; status: 'approved' | 'pending' }
+export interface TeamLeaveCalendar { today: string; from: string; to: string; people: number; places: TeamLeavePlace[]; leaves: TeamLeaveDay[]; myPlaceKey?: string | null }
+
+export async function getTeamLeaveCalendar(accessToken?: string, from?: string, to?: string): Promise<TeamLeaveCalendar> {
+  let token = accessToken;
+  if (!token) {
+    const { data: { session } } = await createBrowserSupabase().auth.getSession();
+    if (!session?.access_token) throw new Error('Not authenticated');
+    token = session.access_token;
+  }
+  const query = from && to ? `?from=${from}&to=${to}` : '';
+  return fetchWithAuth(`${API_BASE}/team/leave-calendar${query}`, token);
+}
+
+// Expense checks (server expenseReview.ts): problems found in new purchases and expenses, with a
+// fix to apply where there is one. The owner and operations managers see all; an incharge their place.
+export interface ExpenseFlag {
+  id: string;
+  expenseId: string;
+  source: 'inventory' | 'overhead';
+  kind: 'weight' | 'bundle' | 'category' | 'detail' | 'repeat' | 'unusual' | 'duplicate' | string;
+  date: string;
+  place: string;
+  title: string;
+  message: string;
+  suggestion?: Record<string, unknown>;
+  suggestionText?: string;
+  status: 'open' | 'fixed' | 'dismissed';
+  createdAt: string;
+  loggedBy?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  entry: (Record<string, any> & { id: string; date: string }) | null;
+  canDecide?: boolean; // an expense waiting for the owner's OK is only the owner's to decide
+}
+
+async function tokenOr(accessToken?: string): Promise<string> {
+  if (accessToken) return accessToken;
+  const { data: { session } } = await createBrowserSupabase().auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+  return session.access_token;
+}
+
+export async function getExpenseFlags(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<ExpenseFlag[]> {
+  const data = await fetchWithAuth(`${API_BASE}/expense-flags?status=${status}`, await tokenOr(accessToken));
+  return data.flags || [];
+}
+
+export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss', note?: string, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
+}
+
+// Production checks (server productionReview.ts): anomalies in a day's production entry, from the
+// rules and from Bunny (byAi). The owner and operations managers see all; a production incharge their house.
+export interface ProductionFlag {
+  id: string;
+  productionId: string;
+  kind: 'empty' | 'twin' | 'copy' | 'total' | 'type' | 'perKg' | 'sauce' | 'wastage' | 'late' | string;
+  date: string;
+  house: string;
+  title: string;
+  message: string;
+  byAi?: boolean;
+  status: 'open' | 'fixed' | 'dismissed';
+  createdAt: string;
+  loggedBy?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  entry: { date: string; pieces: number | null; approvalStatus: string | null } | null; // pieces null: a day-close check
+}
+
+export async function getProductionFlags(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<ProductionFlag[]> {
+  const data = await fetchWithAuth(`${API_BASE}/production-flags?status=${status}`, await tokenOr(accessToken));
+  return data.flags || [];
+}
+
+export async function dismissProductionFlag(id: string, note?: string, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/production-flags/${encodeURIComponent(id)}/dismiss`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
+}
+
 export async function applyLeave(leave: LeaveApplication): Promise<LeaveApplication> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
@@ -2388,16 +2674,18 @@ export async function deleteLeave(leaveId: string): Promise<{ success: boolean }
   });
 }
 
-export async function getLeaveBalance(employeeId: string, joiningDate: string): Promise<number> {
+// The leave balance since the 1 Aug 2026 reset, carried across years (approved leave deducted), and the days still waiting for a
+// decision. The server takes the joining date from the employee's own record.
+export async function getLeaveBalance(employeeId: string): Promise<{ balance: number; pendingDays: number }> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   if (!session?.access_token) {
     throw new Error('Not authenticated');
   }
-  
-  const data = await fetchWithAuth(`${API_BASE}/leaves/${employeeId}/balance?joiningDate=${joiningDate}`, session.access_token);
-  return data.balance || 0;
+
+  const data = await fetchWithAuth(`${API_BASE}/leaves/${employeeId}/balance`, session.access_token);
+  return { balance: data.balance || 0, pendingDays: data.pendingDays || 0 };
 }
 
 // Leave approval and rejection functions
@@ -2448,10 +2736,10 @@ export interface CustomItem {
 
 export async function getCustomItems(): Promise<CustomItem[]> {
   try {
-    const response = await fetch(`${API_BASE}/custom-items`, {
+    const response = await authFetch(`${API_BASE}/custom-items`, {
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${publicAnonKey}`
+        'Authorization': `Bearer ${await currentAccessToken()}`
       },
     });
     
@@ -2530,8 +2818,8 @@ export interface CustomCategory {
 
 export async function getCustomCategories(): Promise<CustomCategory[]> {
   try {
-    const response = await fetch(`${API_BASE}/custom-categories`, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+    const response = await authFetch(`${API_BASE}/custom-categories`, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await currentAccessToken()}` },
     });
     if (!response.ok) return [];
     const data = await response.json();
@@ -2602,6 +2890,8 @@ export interface ProductionRequest {
   shippingNotes?: Record<string, string>; // Notes for items with different quantities
   deliveredAt?: string;
   deliveredBy?: string; // Store In-Charge employee ID
+  dispatch?: DispatchInfo; // bags, batch codes, boxes - set when shipped from app 1.15.17
+  receipt?: DeliveryReceipt; // the store's count - set when received from app 1.15.17
   createdAt: string;
   updatedAt: string;
 }
@@ -2645,13 +2935,40 @@ export async function shipProductionRequest(
   shippedQuantities: Record<string, number>,
   shippingNotes: Record<string, string>,
   shippedBy: string,
-  shippedSauces?: Record<string, boolean>
+  shippedSauces?: Record<string, boolean>,
+  dispatch?: DispatchInfo
 ): Promise<ProductionRequest> {
   const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/ship`, accessToken, {
     method: 'PUT',
-    body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy, shippedSauces }),
+    body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy, shippedSauces, dispatch }),
   });
   return data.request;
+}
+
+// The store's count of a shipped request - any store login (crew included) can send it.
+export async function receiveProductionRequest(
+  accessToken: string,
+  id: string,
+  receipt: Omit<DeliveryReceipt, 'receivedBy' | 'receivedByName' | 'receivedAt'>
+): Promise<ProductionRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/receive`, accessToken, {
+    method: 'PUT',
+    body: JSON.stringify({ receipt }),
+  });
+  return data.request;
+}
+
+export async function uploadReceiptPhoto(accessToken: string, requestId: string, dataUrl: string): Promise<string> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${requestId}/receipt-photos`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ dataUrl }),
+  });
+  return data.photoId;
+}
+
+export async function getReceiptPhotos(accessToken: string, requestId: string): Promise<{ id: string; dataUrl: string; uploadedBy?: string; uploadedAt?: string }[]> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${requestId}/receipt-photos`, accessToken);
+  return data.photos || [];
 }
 
 export async function checkPendingProductionRequests(accessToken: string): Promise<{
@@ -3050,20 +3367,6 @@ export async function fetchOnlineCashRecalibrations(accessToken: string): Promis
   return response?.data || [];
 }
 
-// Convert offline cash to online cash (Paytm)
-export async function convertCashToOnline(
-  accessToken: string,
-  storeId: string,
-  date: string,
-  amount: number,
-  performedBy: string
-): Promise<void> {
-  await fetchWithAuth(`${API_BASE}/cash-conversion`, accessToken, {
-    method: 'POST',
-    body: JSON.stringify({ storeId, date, amount, performedBy }),
-  });
-}
-
 // ============================================
 // ONLINE LOANS (Paytm/Online Cash Loans)
 // ============================================
@@ -3079,6 +3382,10 @@ export type OnlineLoan = {
   status: 'pending' | 'active' | 'repaid' | 'rejected';
   repaidAmount: number;
   repaymentDate: string | null; // Date when fully repaid
+  // Each repayment on its own date, partial ones included, so Paytm moves on the day the money
+  // went out. Missing on loans not repaid since this was added (see loanRepayments in
+  // utils/paytmRules.ts for how those are read).
+  repayments?: { date: string; amount: number; recordedAt?: string }[];
   notes: string;
   createdBy: string;
   createdAt: string;
@@ -3333,6 +3640,8 @@ export interface RiderStop {
   name: string;
   latitude?: number | null;
   longitude?: number | null;
+  // Rider logins only, on rides still under way: who to call at this stop.
+  contact?: { name: string; phone: string } | null;
 }
 export type RiderFareStatus = 'agreed' | 'proposed' | 'needs_rate';
 
@@ -3351,6 +3660,8 @@ export interface RiderTrip {
   // Stock requests this ride carries; confirming the ride's delivery marks them delivered (and
   // marking them delivered in Stock Requests confirms the ride).
   requestIds?: string[];
+  // Rider logins only (they don't get the stock requests list): the linked requests' quantities.
+  linkedRequests?: { id: string; storeId: string; requestDate: string; status: string; shippedQuantities?: Record<string, number>; dispatch?: { bags?: Record<string, number>; boxes?: number } | null }[];
   productionHouseName: string | null;
   // Fare for the ride: the agreed amount, and (while the rider has asked for a different rate and
   // production hasn't answered) the amount being proposed.
@@ -3588,4 +3899,49 @@ export interface RiderTripEta {
 export async function getRiderTripEta(id: string): Promise<RiderTripEta> {
   const token = await riderToken();
   return fetchWithAuth(`${API_BASE}/rider/trips/${id}/eta`, token);
+}
+
+// ---- Password rotation (server: supabase/functions/make-server-c2dd9b9d/passwords.ts) ----
+
+export interface PasswordStatus {
+  changedAt: string;
+  expiresAt: string;
+  // Whole IST calendar days until the expiry day (0 = expires today).
+  daysLeft: number;
+  mustChange: boolean;
+  reason: 'expired' | 'reset' | null;
+  changedBy: 'self' | 'owner' | null;
+  assumed?: boolean;
+}
+
+export async function getPasswordStatus(accessToken: string): Promise<PasswordStatus> {
+  return fetchWithAuth(`${API_BASE}/auth/password-status`, accessToken);
+}
+
+// Errors carry details.code: WRONG_CURRENT_PASSWORD, WEAK_PASSWORD (with details.problems),
+// TOO_MANY_TRIES, AUTH_BUSY or MISSING_FIELDS.
+export async function changePassword(accessToken: string, currentPassword: string, newPassword: string): Promise<PasswordStatus & { success: boolean; otherSessionsSignedOut: boolean }> {
+  return fetchWithAuth(`${API_BASE}/auth/change-password`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+export interface ForcedPasswordReset {
+  success: boolean;
+  employeeId: string;
+  name: string;
+  email: string;
+  // Shown once to the owner; the server never stores it.
+  temporaryPassword: string;
+  signedOutEverywhere: boolean;
+}
+
+// Owner only: sets a temporary password, signs the person out everywhere and makes them choose a
+// new password at their next sign-in.
+export async function forcePasswordReset(employeeId: string): Promise<ForcedPasswordReset> {
+  return fetchWithAuth(`${API_BASE}/admin/employees/${encodeURIComponent(employeeId)}/force-password-reset`, await currentAccessToken(), {
+    method: 'POST',
+    cache: 'no-store',
+  });
 }

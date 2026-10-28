@@ -2,10 +2,11 @@
 
 import * as React from "react";
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group@1.2.3";
-import { CircleIcon } from "lucide-react@0.487.0";
 
 import { cn } from "./utils";
 
+// Radio buttons: a 20 px circle in a 44 px touch area. For 2-4 short options side by side,
+// SegmentedControl is usually better; radios suit lists (date presets, reasons).
 function RadioGroup({
   className,
   ...props
@@ -27,17 +28,21 @@ function RadioGroupItem({
     <RadioGroupPrimitive.Item
       data-slot="radio-group-item"
       className={cn(
-        "border-input text-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 aspect-square size-4 shrink-0 rounded-full border shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+        "group/radio peer relative -m-3 inline-flex size-11 min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full outline-none disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...props}
     >
-      <RadioGroupPrimitive.Indicator
-        data-slot="radio-group-indicator"
-        className="relative flex items-center justify-center"
+      <span
+        aria-hidden="true"
+        className={cn(
+          "flex size-5 items-center justify-center rounded-full border-[1.5px] border-border-strong bg-surface transition-colors duration-(--dur-fast)",
+          "group-data-[state=checked]/radio:border-primary",
+          "group-focus-visible/radio:ring-2 group-focus-visible/radio:ring-ring group-focus-visible/radio:ring-offset-2 group-focus-visible/radio:ring-offset-surface",
+        )}
       >
-        <CircleIcon className="fill-primary absolute top-1/2 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2" />
-      </RadioGroupPrimitive.Indicator>
+        <RadioGroupPrimitive.Indicator data-slot="radio-group-indicator" className="size-2.5 rounded-full bg-primary" />
+      </span>
     </RadioGroupPrimitive.Item>
   );
 }

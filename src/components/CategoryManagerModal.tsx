@@ -1,11 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Plus, Trash2, Store as StoreIcon, Factory, Loader2 } from 'lucide-react';
+import { Factory, ListChecks, Plus, Store as StoreIcon, Trash2 } from 'lucide-react';
 import * as api from '../utils/api';
 import {
   INVENTORY_CATEGORIES,
   CATEGORY_ITEMS,
   STORE_CATEGORY_ITEMS,
 } from '../utils/inventoryData';
+import { useCatalogCleanup, CatalogCleanupList, cleanupApplyLabel } from './ItemCatalogCleanup';
+import { MiscExpenseRecategorize } from './MiscExpenseRecategorize';
+import { Button } from './ui/button';
+import { IconButton } from './ui/icon-button';
+import { Input } from './ui/input';
+import { Field } from './ui/field';
+import { ListGroup, ListRow } from './ui/list-row';
+import { StatusChip } from './ui/status-chip';
+import { SegmentedControl } from './ui/segmented-control';
+import { ErrorState } from './ui/error-state';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { confirm } from './ui/confirm';
+import { LoadingList } from './setup/SetupPage';
+import { purchaseCategoryIcon, stripEmoji } from './setup/setupIcons';
 
 type Props = {
   onClose: () => void;
@@ -18,8 +32,10 @@ type Scope = 'store' | 'production';
 // whatever custom categories/items have been added on top. Kept as two separate scopes
 // throughout since a store's purchases are a small curated subset of what a production
 // house needs (see STORE_CATEGORY_ITEMS) - a category that makes sense for one doesn't
-// necessarily belong on the other.
+// necessarily belong on the other. Categories show a lucide icon, never their stored emoji.
 export function CategoryManagerModal({ onClose }: Props) {
+  const [open, setOpen] = useState(true);
+  const [view, setView] = useState<'categories' | 'cleanup'>('categories');
   const [scope, setScope] = useState<Scope>('store');
   const [customCategories, setCustomCategories] = useState<api.CustomCategory[]>([]);
   const [customItems, setCustomItems] = useState<api.CustomItem[]>([]);
@@ -28,12 +44,13 @@ export function CategoryManagerModal({ onClose }: Props) {
 
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryLabel, setNewCategoryLabel] = useState('');
-  const [newCategoryEmoji, setNewCategoryEmoji] = useState('📦');
   const [savingCategory, setSavingCategory] = useState(false);
 
   const [addingItemFor, setAddingItemFor] = useState<string | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [savingItem, setSavingItem] = useState(false);
+
+  const cleanup = useCatalogCleanup(view === 'cleanup');
 
   useEffect(() => {
     loadAll();
@@ -61,12 +78,12 @@ export function CategoryManagerModal({ onClose }: Props) {
   const categoryRows = useMemo(() => {
     const rows: { key: string; label: string; isBuiltIn: boolean }[] = builtInCategoryKeys.map((key) => ({
       key,
-      label: (INVENTORY_CATEGORIES as Record<string, string>)[key] || key,
+      label: stripEmoji((INVENTORY_CATEGORIES as Record<string, string>)[key] || key),
       isBuiltIn: true,
     }));
     for (const cat of customCategories) {
       if (cat.scope !== scope) continue;
-      rows.push({ key: cat.key, label: `${cat.emoji} ${cat.label}`, isBuiltIn: false });
+      rows.push({ key: cat.key, label: stripEmoji(cat.label), isBuiltIn: false });
     }
     return rows;
   }, [scope, customCategories, builtInCategoryKeys]);
@@ -89,9 +106,9 @@ export function CategoryManagerModal({ onClose }: Props) {
     setSavingCategory(true);
     setError(null);
     try {
-      await api.addCustomCategory(scope, newCategoryLabel.trim(), newCategoryEmoji.trim() || '📦');
+      // No emoji from the screen any more; the server keeps its default for older screens.
+      await api.addCustomCategory(scope, newCategoryLabel.trim());
       setNewCategoryLabel('');
-      setNewCategoryEmoji('📦');
       setShowAddCategory(false);
       await loadAll();
     } catch (err) {
@@ -101,8 +118,14 @@ export function CategoryManagerModal({ onClose }: Props) {
     }
   };
 
-  const handleDeleteCategory = async (key: string) => {
-    if (!confirm('Remove this category? Items already filed under it are unaffected, but you can only remove a category with nothing currently in it.')) return;
+  const handleDeleteCategory = async (key: string, label: string) => {
+    const ok = await confirm({
+      title: `Remove ${label}?`,
+      body: 'Only a category with nothing in it can be removed. Purchases already filed under it are unaffected.',
+      confirmLabel: 'Remove category',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setError(null);
     try {
       await api.deleteCustomCategory(key);
@@ -139,7 +162,15 @@ export function CategoryManagerModal({ onClose }: Props) {
     const isShared = !item?.entityType || item.entityType === 'both';
 
     if (isShared) {
-      if (!confirm(`"${name}" is also used on the ${scope === 'store' ? 'Production House' : 'Store'} side. Remove it from ${scope === 'store' ? 'Store' : 'Production House'} only (it will stay available there)?`)) return;
+      const here = scope === 'store' ? 'stores' : 'production houses';
+      const there = scope === 'store' ? 'production houses' : 'stores';
+      const ok = await confirm({
+        title: `Remove ${name} from ${here}?`,
+        body: `It is also used by ${there}, and stays available there.`,
+        confirmLabel: `Remove from ${here}`,
+        tone: 'danger',
+      });
+      if (!ok) return;
       setError(null);
       try {
         await api.updateCustomItem(id, { entityType: otherEntityType });
@@ -150,7 +181,13 @@ export function CategoryManagerModal({ onClose }: Props) {
       return;
     }
 
-    if (!confirm(`Remove "${name}" entirely? This doesn't touch any purchases already logged for it.`)) return;
+    const ok = await confirm({
+      title: `Remove ${name}?`,
+      body: 'It goes from the list entirely. Purchases already logged for it stay as they are.',
+      confirmLabel: 'Remove item',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setError(null);
     try {
       await api.deleteCustomItem(id);
@@ -160,175 +197,129 @@ export function CategoryManagerModal({ onClose }: Props) {
     }
   };
 
+  const inCleanup = view === 'cleanup';
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="bg-stone-800 p-6 text-white rounded-t-2xl flex items-center justify-between sticky top-0 z-10">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30 flex-shrink-0">
-              <StoreIcon className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="text-lg sm:text-xl font-bold tracking-tight">Manage Categories &amp; Items</h3>
-              <p className="text-sm text-gray-300 mt-1">Cluster head only - built-in categories/items are fixed; custom ones can be added or removed here.</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <ResponsiveModal
+      open={open}
+      onOpenChange={setOpen}
+      onClosed={onClose}
+      size="detail"
+      title={inCleanup ? 'Item catalogue clean-up' : 'Purchase categories and items'}
+      description={inCleanup ? undefined : 'Built-in ones are fixed; the ones you add can be removed.'}
+      onBack={inCleanup ? () => setView('categories') : undefined}
+      dirty={(!inCleanup && (!!newCategoryLabel.trim() || !!newItemName.trim())) && !savingCategory && !savingItem}
+      footer={inCleanup ? (
+        <Button size="lg" className="flex-1" loading={cleanup.saving} disabled={cleanup.pendingCount === 0} onClick={cleanup.applyAll}>
+          {cleanupApplyLabel(cleanup)}
+        </Button>
+      ) : undefined}
+    >
+      {inCleanup ? (
+        <CatalogCleanupList cleanup={cleanup} />
+      ) : (
+        <div className="flex flex-col gap-5">
+          <SegmentedControl
+            aria-label="Which purchases"
+            value={scope}
+            onValueChange={(v) => { setScope(v); setAddingItemFor(null); }}
+            options={[
+              { value: 'store', label: 'Store', icon: <StoreIcon className="size-4" aria-hidden="true" /> },
+              { value: 'production', label: 'Production house', icon: <Factory className="size-4" aria-hidden="true" /> },
+            ]}
+          />
 
-        <div className="p-6">
-          <div className="flex items-center gap-2 mb-5 bg-gray-100 p-1 rounded-full w-fit">
-            <button
-              onClick={() => setScope('store')}
-              className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${scope === 'store' ? 'bg-gradient-to-r from-orange-600 to-amber-500 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              <StoreIcon className="w-3.5 h-3.5" /> Store Inventory
-            </button>
-            <button
-              onClick={() => setScope('production')}
-              className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${scope === 'production' ? 'bg-gradient-to-r from-orange-600 to-amber-500 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              <Factory className="w-3.5 h-3.5" /> Production House Inventory
-            </button>
-          </div>
-
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
-              {error}
-            </div>
-          )}
+          {error && <ErrorState title="That didn't work" body={error} onRetry={loadAll} />}
 
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-6 h-6 animate-spin text-orange-600" />
-            </div>
+            <LoadingList rows={6} />
           ) : (
-            <div className="space-y-4">
+            <>
               {categoryRows.map((row) => {
                 const items = itemsForCategory(row.key);
+                const Icon = purchaseCategoryIcon(row.isBuiltIn ? row.key : null);
+                const adding = addingItemFor === row.key;
                 return (
-                  <div key={row.key} className="border border-gray-200 rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-medium text-gray-900">{row.label}</h4>
-                        {row.isBuiltIn ? (
-                          <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">Built-in</span>
-                        ) : (
-                          <button
-                            onClick={() => handleDeleteCategory(row.key)}
-                            className="text-xs px-2 py-0.5 bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition-colors"
-                          >
-                            Remove category
-                          </button>
+                  <ListGroup
+                    key={row.key}
+                    title={<span className="inline-flex items-center gap-2"><Icon className="size-5 text-text-2" aria-hidden="true" />{row.label}</span>}
+                    meta={row.isBuiltIn ? 'Built-in' : 'Added by you'}
+                    action={
+                      <div className="flex items-center gap-1">
+                        {!row.isBuiltIn && (
+                          <IconButton size="sm" variant="danger-ghost" label={`Remove ${row.label}`} icon={<Trash2 />} onClick={() => handleDeleteCategory(row.key, row.label)} />
                         )}
+                        <Button variant="secondary" size="sm" leadingIcon={<Plus />} onClick={() => { setAddingItemFor(adding ? null : row.key); setNewItemName(''); }}>
+                          Item
+                        </Button>
                       </div>
-                      <button
-                        onClick={() => { setAddingItemFor(addingItemFor === row.key ? null : row.key); setNewItemName(''); }}
-                        className="text-xs text-orange-600 hover:text-orange-800 inline-flex items-center gap-1"
-                      >
-                        <Plus className="w-3 h-3" /> Add Item
-                      </button>
-                    </div>
-
-                    {addingItemFor === row.key && (
-                      <div className="flex items-center gap-2 mb-3">
-                        <input
-                          type="text"
-                          autoFocus
-                          value={newItemName}
-                          onChange={(e) => setNewItemName(e.target.value)}
-                          placeholder="Item name"
-                          className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
-                          onKeyDown={(e) => e.key === 'Enter' && handleAddItem(row.key)}
-                        />
-                        <button
-                          onClick={() => handleAddItem(row.key)}
-                          disabled={savingItem || !newItemName.trim()}
-                          className="px-3 py-1.5 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg text-sm hover:shadow-lg hover:shadow-orange-500/30 transition-all disabled:opacity-50"
-                        >
-                          {savingItem ? 'Saving...' : 'Save'}
-                        </button>
+                    }
+                    empty={<p className="px-4 py-3 text-body-sm text-text-2">No items yet.</p>}
+                  >
+                    {adding && (
+                      <div className="flex items-end gap-2 px-4 py-3">
+                        <Field label={`New item in ${row.label}`} className="flex-1">
+                          <Input
+                            autoFocus
+                            value={newItemName}
+                            onChange={(e) => setNewItemName(e.target.value)}
+                            placeholder="Item name"
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddItem(row.key)}
+                          />
+                        </Field>
+                        <Button loading={savingItem} disabled={!newItemName.trim()} onClick={() => handleAddItem(row.key)}>Save</Button>
                       </div>
                     )}
-
-                    {items.length === 0 ? (
-                      <p className="text-sm text-gray-400">No items yet.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {items.map((item) => (
-                          <span
-                            key={item.id || item.name}
-                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-50 border border-gray-200 rounded-full text-sm text-gray-700"
-                          >
-                            {item.name}
-                            {item.isBuiltIn ? (
-                              <span className="text-xs text-gray-400">(built-in)</span>
-                            ) : (
-                              <button
-                                onClick={() => handleDeleteItem(item.id!, item.name)}
-                                className="text-red-500 hover:text-red-700"
-                                title="Remove item"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    {items.map((item) => (
+                      <ListRow
+                        key={item.id || item.name}
+                        density="compact"
+                        title={item.name}
+                        trailing={item.isBuiltIn ? (
+                          <StatusChip tone="neutral">Built-in</StatusChip>
+                        ) : (
+                          <IconButton size="sm" variant="danger-ghost" label={`Remove ${item.name}`} icon={<Trash2 />} onClick={() => handleDeleteItem(item.id!, item.name)} />
+                        )}
+                      />
+                    ))}
+                  </ListGroup>
                 );
               })}
 
               {showAddCategory ? (
-                <div className="border-2 border-dashed border-orange-300 rounded-xl p-4">
-                  <h4 className="font-medium text-gray-900 mb-3">New {scope === 'store' ? 'Store' : 'Production House'} Category</h4>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={newCategoryEmoji}
-                      onChange={(e) => setNewCategoryEmoji(e.target.value)}
-                      placeholder="🪔"
-                      className="w-16 px-3 py-2 border border-gray-300 rounded-lg text-sm text-center"
-                    />
-                    <input
-                      type="text"
+                <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+                  <Field label={`New ${scope === 'store' ? 'store' : 'production house'} category`}>
+                    <Input
                       autoFocus
                       value={newCategoryLabel}
                       onChange={(e) => setNewCategoryLabel(e.target.value)}
-                      placeholder="e.g. Puja Items"
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      placeholder="e.g. Puja items"
                       onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
                     />
-                    <button
-                      onClick={handleAddCategory}
-                      disabled={savingCategory || !newCategoryLabel.trim()}
-                      className="px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 text-white rounded-lg text-sm hover:shadow-lg hover:shadow-orange-500/30 transition-all disabled:opacity-50"
-                    >
-                      {savingCategory ? 'Saving...' : 'Save'}
-                    </button>
-                    <button
-                      onClick={() => setShowAddCategory(false)}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
+                  </Field>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={() => { setShowAddCategory(false); setNewCategoryLabel(''); }}>Cancel</Button>
+                    <Button className="flex-1" loading={savingCategory} disabled={!newCategoryLabel.trim()} onClick={handleAddCategory}>Add category</Button>
                   </div>
                 </div>
               ) : (
-                <button
-                  onClick={() => setShowAddCategory(true)}
-                  className="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-500 hover:border-orange-300 hover:text-orange-600 transition-colors inline-flex items-center justify-center gap-2"
-                >
-                  <Plus className="w-4 h-4" /> Add New Category
-                </button>
+                <Button variant="secondary" leadingIcon={<Plus />} onClick={() => setShowAddCategory(true)}>Add a category</Button>
               )}
-            </div>
+            </>
           )}
+
+          {/* Catalog clean-up tools (moved here from the Export page, which is downloads only). */}
+          <ListGroup overline="Clean-up tools">
+            <ListRow
+              icon={ListChecks}
+              title="Item catalogue clean-up"
+              subtitle="Duplicate or misspelled items and Bengali names. Nothing changes until you approve each row."
+              onClick={() => setView('cleanup')}
+            />
+          </ListGroup>
+          <MiscExpenseRecategorize />
         </div>
-      </div>
-    </div>
+      )}
+    </ResponsiveModal>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { currentAccessToken } from '../utils/accessToken';
 
 /**
  * Background scheduler component that triggers stock request reminders at 3pm daily
@@ -28,7 +29,7 @@ export function StockRequestReminderScheduler() {
             {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${publicAnonKey}`,
+                'Authorization': `Bearer ${await currentAccessToken()}`,
                 'Content-Type': 'application/json',
               },
             }

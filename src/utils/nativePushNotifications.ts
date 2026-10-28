@@ -1,8 +1,10 @@
 // Native (Android/Capacitor) Push Notification Utilities via Firebase Cloud Messaging
 import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
 import { PushNotifications, type Token, type PushNotificationSchema, type ActionPerformed } from '@capacitor/push-notifications';
 import { projectId, publicAnonKey } from './supabase/info';
 import { getNavigationTarget, type NotificationNavigationTarget } from './notificationNavigation';
+import { currentAccessToken } from './accessToken';
 
 export function isNativePushSupported(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
@@ -10,15 +12,18 @@ export function isNativePushSupported(): boolean {
 
 async function sendFcmTokenToServer(token: string, userId: string): Promise<boolean> {
   try {
+    // The Android build tells the server what this phone's notifications can do (from 1.17.0 a
+    // notification dealt with elsewhere can be taken off the tray).
+    const nativeBuild = await App.getInfo().then((info) => Number(info.build) || undefined).catch(() => undefined);
     const response = await fetch(
       `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/push/subscribe-fcm`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${await currentAccessToken()}`,
         },
-        body: JSON.stringify({ token, userId }),
+        body: JSON.stringify({ token, userId, nativeBuild }),
       }
     );
     return response.ok;
@@ -36,7 +41,7 @@ export async function unsubscribeNativePushNotifications(userId: string): Promis
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${await currentAccessToken()}`,
         },
         body: JSON.stringify({ userId }),
       }

@@ -14,8 +14,12 @@ import {
   STORE_CATEGORY_ITEMS,
   OVERHEAD_CATEGORY_META,
   STORE_OVERHEAD_CATEGORY_KEYS,
+  SELECTABLE_OVERHEAD_CATEGORY_KEYS,
+  INVENTORY_CATEGORIES,
   FIXED_COST_CATEGORIES,
+  SELECTABLE_FIXED_COST_CATEGORIES,
   BUILT_IN_ITEM_BENGALI,
+  canonicalCategory,
 } from './inventoryData';
 import { normalizeItemName, stringSimilarity } from './stringSimilarity';
 import type { CustomItem } from './api';
@@ -34,6 +38,9 @@ export interface ExpenseCandidate {
 // Real descriptions seen in this store's own data that don't match their category's
 // display name (a store incharge types "Toto", not "Goods Transportation Cost").
 const OVERHEAD_SYNONYMS: { label: string; category: string; entity: ExpenseEntity }[] = [
+  { label: 'AI Credits', category: 'ai_credits', entity: 'both' },
+  { label: 'Claude Credits', category: 'ai_credits', entity: 'both' },
+  { label: 'Anthropic', category: 'ai_credits', entity: 'both' },
   { label: 'Toto', category: 'transportation', entity: 'both' },
   { label: 'Rapido', category: 'transportation', entity: 'both' },
   { label: 'Petrol', category: 'fuel', entity: 'both' },
@@ -48,7 +55,72 @@ const OVERHEAD_SYNONYMS: { label: string; category: string; entity: ExpenseEntit
   { label: 'Colin', category: 'cleaning_supplies', entity: 'both' },
   { label: 'Deep cleaning', category: 'deep_cleaning', entity: 'production_house' },
   { label: 'Lamination', category: 'office_supplies', entity: 'both' },
+  // Supplies and tools that used to be logged as inventory (moved to overheads 23 Oct 2026)
+  { label: 'Garbage Bag', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Nirma', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Phenyl', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Dish Washing Liquid', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Dish Washing Bar', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Scotch Brite', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Duster', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Jharu', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Room Freshener', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Washing Powder', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Bleaching Powder', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Dustbin', category: 'cleaning_supplies', entity: 'both' },
+  { label: 'Gloves', category: 'hygiene_ppe', entity: 'both' },
+  { label: 'Cap', category: 'hygiene_ppe', entity: 'both' },
+  { label: 'Hairnet', category: 'hygiene_ppe', entity: 'both' },
+  { label: 'Apron', category: 'hygiene_ppe', entity: 'both' },
+  { label: 'KOT Rolls', category: 'office_supplies', entity: 'both' },
+  { label: 'Pen', category: 'office_supplies', entity: 'both' },
+  { label: 'Marker', category: 'office_supplies', entity: 'both' },
+  { label: 'Lock and Key', category: 'office_supplies', entity: 'both' },
+  { label: 'Charger', category: 'office_supplies', entity: 'both' },
+  { label: 'Dhup', category: 'puja_expense', entity: 'both' },
+  { label: 'Lebu Lanka', category: 'puja_expense', entity: 'store' },
+  { label: 'Spatula', category: 'utensils', entity: 'both' },
+  { label: 'Sauce Bottle', category: 'utensils', entity: 'both' },
+  { label: 'Sauce Container', category: 'utensils', entity: 'both' },
+  { label: 'Lemon Squeezer', category: 'utensils', entity: 'both' },
+  { label: 'Butter Brush', category: 'utensils', entity: 'both' },
+  { label: 'Dabba', category: 'utensils', entity: 'both' },
+  { label: 'Video Shoot', category: 'marketing', entity: 'both' },
+  { label: 'Market Research', category: 'marketing', entity: 'both' },
+  { label: 'CA Fee', category: 'professional_fees', entity: 'both' },
+  { label: 'GST Filing', category: 'professional_fees', entity: 'both' },
+  { label: 'Vehicle Paperwork', category: 'license', entity: 'both' },
+  { label: 'FSSAI Licence', category: 'license', entity: 'both' },
+  { label: 'Tyre', category: 'vehicle_maintenance', entity: 'both' },
+  { label: 'Vehicle Servicing', category: 'vehicle_maintenance', entity: 'both' },
+  { label: 'Team Lunch', category: 'staff_welfare', entity: 'both' },
+  { label: 'Furniture', category: 'asset_furniture', entity: 'both' },
+  { label: 'Chair', category: 'asset_furniture', entity: 'both' },
+  { label: 'Steamer', category: 'asset_kitchen_equipment', entity: 'both' },
+  { label: 'Induction', category: 'asset_kitchen_equipment', entity: 'both' },
+  { label: 'Microwave', category: 'asset_kitchen_equipment', entity: 'both' },
+  { label: 'RCCB', category: 'asset_electrical', entity: 'both' },
+  { label: 'Scooter', category: 'asset_vehicle', entity: 'both' },
+  { label: 'Scooter EMI', category: 'vehicle_emi', entity: 'both' },
+  { label: 'EMI', category: 'vehicle_emi', entity: 'both' },
 ];
+
+// Fixed-cost item names people actually type.
+const FIXED_SYNONYMS: { label: string; category: string }[] = [
+  { label: 'WiFi Recharge', category: 'internet_phone' },
+  { label: 'Mobile Recharge', category: 'internet_phone' },
+  { label: 'Ciferon', category: 'software_subscription' },
+  { label: 'POS Subscription', category: 'software_subscription' },
+];
+
+// A custom item saved under a retired/merged category is suggested under its new home
+// (e.g. "Nirma", once inventory > Cleaning & Sanitation, is now an overhead).
+function entryTypeForCategory(category: string, fallback: ExpenseEntryType): ExpenseEntryType {
+  if (category in INVENTORY_CATEGORIES) return 'inventory';
+  if (category in FIXED_COST_CATEGORIES) return 'fixedcost';
+  if (category in OVERHEAD_CATEGORY_META) return 'overhead';
+  return fallback;
+}
 
 const stripEmoji = (label: string) => label.replace(/^[^\w]+/u, '').trim();
 
@@ -89,26 +161,31 @@ export function buildExpenseCandidates(customItems: CustomItem[]): ExpenseCandid
   }
 
   // Overhead - the category's own label as a fallback candidate, plus the synonym list.
-  for (const [category, meta] of Object.entries(OVERHEAD_CATEGORY_META)) {
+  for (const category of SELECTABLE_OVERHEAD_CATEGORY_KEYS) {
+    const meta = OVERHEAD_CATEGORY_META[category];
     const entity: ExpenseEntity = STORE_OVERHEAD_CATEGORY_KEYS.includes(category) ? 'both' : 'production_house';
     candidates.push({ label: stripEmoji(meta.label), entryType: 'overhead', category, entity });
   }
   for (const synonym of OVERHEAD_SYNONYMS) {
-    candidates.push({ label: synonym.label, entryType: 'overhead', category: synonym.category, entity: synonym.entity });
+    candidates.push({ label: synonym.label, entryType: 'overhead', category: synonym.category, entity: synonym.entity, bengali: BUILT_IN_ITEM_BENGALI[synonym.label] });
   }
 
-  // Fixed costs - just the 3 categories, usable by either entity.
-  for (const [category, label] of Object.entries(FIXED_COST_CATEGORIES)) {
+  // Fixed costs, usable by either entity.
+  for (const [category, label] of Object.entries(SELECTABLE_FIXED_COST_CATEGORIES)) {
     candidates.push({ label: stripEmoji(label), entryType: 'fixedcost', category, entity: 'both' });
+  }
+  for (const synonym of FIXED_SYNONYMS) {
+    candidates.push({ label: synonym.label, entryType: 'fixedcost', category: synonym.category, entity: 'both' });
   }
 
   // Previously-classified custom items (from earlier quick-add uses or the legacy
   // "+ Add Custom Item" flow) - these take priority since they reflect real past choices.
   for (const item of customItems) {
+    const category = canonicalCategory(item.category);
     candidates.push({
       label: item.itemName,
-      entryType: item.entryType || 'inventory',
-      category: item.category,
+      entryType: entryTypeForCategory(category, item.entryType || 'inventory'),
+      category,
       entity: item.entityType || (storeItemKeys.has(`${item.category}::${normalizeItemName(item.itemName)}`) ? 'store' : 'production_house'),
       bengali: item.itemNameBengali || BUILT_IN_ITEM_BENGALI[item.itemName],
     });

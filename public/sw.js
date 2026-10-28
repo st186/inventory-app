@@ -27,13 +27,26 @@ self.addEventListener('push', (event) => {
   if (event.data) {
     try {
       const data = event.data.json();
+      // The server sends { title, message, tag, data: { type, relatedId, notificationId, ... } }.
+      // Flatten the inner data onto the payload so the click handler finds data.type.
+      const inner = data.data && typeof data.data === 'object' ? data.data : {};
+      const flat = { ...data, ...inner };
       notificationData = {
         ...notificationData,
         title: data.title || notificationData.title,
         body: data.message || data.body || notificationData.body,
         icon: data.icon || notificationData.icon,
-        tag: data.tag || notificationData.tag,
-        data: data, // Store full data for click handling
+        // One tag per notification: the server's tag is just the type, so a second push of
+        // the same type silently replaced the first one still waiting in the tray.
+        tag: flat.type && flat.notificationId ? `${flat.type}-${flat.notificationId}` : (data.tag || notificationData.tag),
+        data: flat, // Store full data for click handling
+        // Urgent stays on screen until dealt with; updates arrive without a sound; a bundle that
+        // grew buzzes again (notificationRules.ts).
+        requireInteraction: flat.category === 'urgent',
+        // A photo (a dirty area, a complaint) where the browser can show one.
+        ...(flat.imageUrl ? { image: flat.imageUrl } : {}),
+        silent: flat.category === 'update',
+        renotify: flat.category !== 'update',
       };
     } catch (e) {
       console.error('Error parsing push data:', e);
@@ -55,8 +68,9 @@ self.addEventListener('push', (event) => {
 
 // Build the deep-link target for a notification based on its type/relatedId.
 // Keep this in sync with the "type" values used in the backend's notifyUser() calls.
-// Valid "view" values must match App.tsx's activeView union type; "tab" (where
-// present) must match the target component's own internal tab identifiers
+// "view" values are the old screen names; the app maps each one to where that screen lives
+// now (src/components/shell/router.ts LEGACY_ALIASES - scripts/router-test.mjs checks every
+// entry here resolves). "tab" (where present) is passed on to the screen's own tabs
 // (e.g. AttendancePortal.tsx's activeTab values).
 const NOTIFICATION_VIEW_MAP = {
   inventory_logged: { view: 'inventory' },
@@ -69,14 +83,25 @@ const NOTIFICATION_VIEW_MAP = {
   discrepancy_rejected: { view: 'sales' },
   cash_topup_request: { view: 'sales' },
   cash_topup_approved: { view: 'sales' },
+  production_cash_store_bill: { view: 'sales' },
   cash_topup_rejected: { view: 'sales' },
+  // Event stalls: relatedId is the event id (opens that event); a momo return goes to the
+  // production queue, where production confirms it.
+  event_assigned: { view: 'events' },
+  event_day_closed: { view: 'events', tab: 'sales' },
+  event_momo_return: { view: 'stock-requests' },
+  event_momo_return_received: { view: 'events', tab: 'stock' },
+  paytm_recalibration_reminder: { view: 'sales' },
   pos_sync_stock_failed: { view: 'sales' },
-  low_stock_alert: { view: 'stock-requests' },
+  low_stock_alert: { view: 'analytics', tab: 'production-requests' },
   loan_requested: { view: 'sales' },
   loan_approved: { view: 'sales' },
   loan_rejected: { view: 'sales' },
   production_pending: { view: 'production', tab: 'approvals' },
   production_approved: { view: 'production' },
+  production_log_reminder: { view: 'production' },
+  delivery_incoming: { view: 'receive-stock' },
+  stock_out: { view: 'stock-outs' },
   // Attendance: the recipient of "*_pending" is the approver, so they land on
   // the approval tab; the recipient of "*_approved/rejected" is the employee
   // who submitted it, so they land on their own timesheet/leave tab.
@@ -87,14 +112,21 @@ const NOTIFICATION_VIEW_MAP = {
   leave_approved: { view: 'attendance', tab: 'leave' },
   leave_rejected: { view: 'attendance', tab: 'leave' },
   attendance_reminder: { view: 'attendance', tab: 'timesheet' },
-  stock_request_new: { view: 'stock-requests', tab: 'pending-fulfillment' },
-  stock_request_fulfilled: { view: 'stock-requests' },
-  stock_request_partial: { view: 'stock-requests' },
-  stock_request_cancelled: { view: 'stock-requests' },
+  stock_request_new: { view: 'analytics', tab: 'production-requests' },
+  stock_request_fulfilled: { view: 'analytics', tab: 'production-requests' },
+  stock_request_partial: { view: 'analytics', tab: 'production-requests' },
+  stock_request_cancelled: { view: 'analytics', tab: 'production-requests' },
+  stock_request_reminder: { view: 'analytics', tab: 'production-requests' },
   stock_request_delayed: { view: 'analytics' }, // tracks production requests, not stock requests, despite the name
   stock_recalibration: { view: 'analytics' },
-  fulfillment_reminder: { view: 'stock-requests', tab: 'pending-fulfillment' }, // covers both stock + production requests; lands on the fulfillment screen
+  calendar_suggestions: { view: 'analytics', tab: 'trends' }, // weekly AI festival-day draft
+  fulfillment_reminder: { view: 'analytics', tab: 'production-requests' }, // covers both stock + production requests; lands on the fulfillment screen
   data_entry_reminder: { view: 'inventory' },
+  expense_flag: { view: 'inventory' },
+  expense_approval: { view: 'inventory' },
+  expense_rejected: { view: 'inventory' },
+  production_flag: { view: 'production' },
+  repair_alert: { view: 'production' },
   rider_called: { view: 'riders' },
   rider_ready: { view: 'riders' },
   rider_on_the_way: { view: 'riders' },
@@ -106,17 +138,53 @@ const NOTIFICATION_VIEW_MAP = {
   rider_fare_proposed: { view: 'riders' },
   rider_fare_decided: { view: 'riders' },
   rider_receipt: { view: 'riders' }, // covers both inventory + sales reminders
+  password_expiring: { view: 'analytics' }, // home, where the expiry banner is (plain employees/riders are moved on to their own first screen)
+  // Workplace checks: staff land on their own list; "review" falls back to it for non-reviewers.
+  workplace_due: { view: 'workplace', tab: 'mine' },
+  opening_due: { view: 'home' },
+  opening_late: { view: 'home' },
+  opening_pick: { view: 'home' },
+  audit_assigned: { view: 'audits' },
+  audit_report: { view: 'audits' },
+  audit_paid: { view: 'audits' },
+  supply_low: { view: 'home' },
+  supply_sorted: { view: 'home' },
+  shopping_list: { view: 'home' },
+  shopping_done: { view: 'home' },
+  workplace_checked: { view: 'workplace', tab: 'mine' },
+  complaint_read: { view: 'complaints' },
+  complaint_answered: { view: 'complaints' },
+  workplace_missed: { view: 'workplace', tab: 'review' },
+  workplace_flag: { view: 'workplace', tab: 'review' },
+  workplace_alarm: { view: 'workplace', tab: 'review' },
+  kpi_ready: { view: 'my-kpis' }, // owner approved the month's review
+  shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
+  // Server reminders that had no screen to open (WP0b): stock requests waiting for the production
+  // house, deliveries to confirm, the end-of-day data alert, production cash gaps, salary and backup.
+  acceptance_reminder: { view: 'analytics', tab: 'production-requests' },
+  morning_request_reminder: { view: 'analytics', tab: 'production-requests' },
+  delivery_confirmation_reminder: { view: 'analytics', tab: 'production-requests' },
+  shipped_delivery_check: { view: 'analytics', tab: 'production-requests' },
+  eod_data_alert: { view: 'sales' },
+  production_cash_discrepancy: { view: 'sales' },
+  production_cash_discrepancy_request: { view: 'sales' },
+  production_cash_discrepancy_approved: { view: 'sales' },
+  production_cash_discrepancy_rejected: { view: 'sales' },
+  salary_credited: { view: 'payroll' },
+  backup_failed: { view: 'backup' },
 };
 
-function getNavigationTarget(data) {
+function getNavigationTarget(payload) {
+  // Notifications shown before the push handler flattened the payload keep type under .data.
+  const data = payload && payload.data && typeof payload.data === 'object' ? { ...payload, ...payload.data } : payload;
   if (!data || !data.type) return null;
 
   // Production requests always carry a specific request to highlight/scroll to
-  if (data.type.startsWith('production_request_') && data.relatedId) {
+  if ((data.type.startsWith('production_request_') || data.type === 'delivery_variance') && data.relatedId) {
     return { view: 'analytics', highlightRequestId: data.relatedId };
   }
   if (data.type === 'stock_request_new' && data.relatedId) {
-    return { view: 'stock-requests', tab: 'pending-fulfillment', highlightRequestId: data.relatedId };
+    return { view: 'analytics', tab: 'production-requests', highlightRequestId: data.relatedId };
   }
 
   const mapped = NOTIFICATION_VIEW_MAP[data.type];

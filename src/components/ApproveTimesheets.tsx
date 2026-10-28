@@ -1,353 +1,104 @@
-import { useState, useEffect, useMemo } from 'react';
-import { CheckCircle, XCircle, Clock, User, Calendar, AlertCircle } from 'lucide-react';
-import * as api from '../utils/api';
-import { RouteDebugger } from './RouteDebugger';
-import { employeeBelongsToStore } from '../utils/entityAccess';
-import type { Store } from '../utils/api';
+// Timesheets waiting for approval (Team → Attendance → Approvals): one row per day with inline
+// Approve / Reject (44 px), plus "Approve all". The owner approves managers; managers and
+// incharges approve their own staff.
+import * as React from 'react';
+import { Check, Clock, X } from 'lucide-react';
+import { Button } from './ui/button';
+import { IconButton } from './ui/icon-button';
+import { InitialsAvatar } from './ui/avatar';
+import { ListGroup, ListRow } from './ui/list-row';
+import { confirm, promptText } from './ui/confirm';
+import { toast } from './ui/sonner';
+import { useT } from '../utils/i18n';
+import { formatDay } from './team/shared';
+import type { TeamAttendance, TimesheetRow } from './team/attendance/useTeamAttendance';
 
-interface ApproveTimesheetsProps {
-  managerId: string;
-  role?: string; // Add role to differentiate between manager and cluster_head
-  selectedStoreId?: string | null;
-  isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null;
-  // For resolving a production incharge/ops employee's storeId (which actually holds
-  // their production house's id) back to this store - see entityAccess.ts.
-  stores?: Store[];
+export function timesheetLine(row: Pick<TimesheetRow, 'date' | 'startTime' | 'endTime' | 'totalHours'>, lang: Parameters<typeof formatDay>[1], hoursLabel: (h: string) => string) {
+  const parts = [formatDay(row.date, lang, { weekday: true, short: true })];
+  if (row.startTime || row.endTime) parts.push(`${row.startTime || '–'}–${row.endTime || '–'}`);
+  if (typeof row.totalHours === 'number' && row.totalHours > 0) parts.push(hoursLabel(row.totalHours.toFixed(1).replace(/\.0$/, '')));
+  return parts.join(' · ');
 }
 
-export function ApproveTimesheets({ managerId, role, selectedStoreId, isIncharge = false, inchargeDesignation = null, stores = [] }: ApproveTimesheetsProps) {
-  const [employees, setEmployees] = useState<any[]>([]);
-  const [selectedEmployee, setSelectedEmployee] = useState<string>('');
-  const [timesheets, setTimesheets] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const isClusterHead = role === 'cluster_head';
+export function ApproveTimesheets({ team }: { team: TeamAttendance }) {
+  const { t, lang } = useT();
+  const [busy, setBusy] = React.useState<string | null>(null);
+  const rows = [...team.pendingTimesheets].sort((a, b) => b.date.localeCompare(a.date) || team.nameOf(a.employeeId).localeCompare(team.nameOf(b.employeeId)));
 
-  console.log('ApproveTimesheets: managerId prop =', managerId);
-  console.log('ApproveTimesheets: role prop =', role);
-  console.log('ApproveTimesheets: isIncharge =', isIncharge);
-  console.log('ApproveTimesheets: inchargeDesignation =', inchargeDesignation);
-  
-  // Filter employees by store and incharge permissions
-  const filteredEmployees = useMemo(() => {
-    let filtered = employees;
-    
-    // Apply store filter (also matches this store's linked production house - see
-    // entityAccess.ts's employeeBelongsToStore for why that case matters)
-    if (selectedStoreId) {
-      filtered = filtered.filter(emp => employeeBelongsToStore(emp, selectedStoreId, stores));
-    }
-
-    // Apply incharge permissions - only show employees under the incharge
-    if (isIncharge && managerId) {
-      filtered = filtered.filter(emp => emp.inchargeId === managerId);
-    }
-
-    return filtered;
-  }, [employees, selectedStoreId, stores, isIncharge, managerId]);
-
-  useEffect(() => {
-    loadEmployees();
-  }, []);
-
-  // Update selected employee when filtered list changes
-  useEffect(() => {
-    if (filteredEmployees.length > 0 && !filteredEmployees.find(e => e.employeeId === selectedEmployee)) {
-      setSelectedEmployee(filteredEmployees[0].employeeId);
-    } else if (filteredEmployees.length === 0) {
-      setSelectedEmployee('');
-    }
-  }, [filteredEmployees]);
-
-  useEffect(() => {
-    if (selectedEmployee) {
-      loadTimesheets();
-    }
-  }, [selectedEmployee]);
-
-  const loadEmployees = async () => {
+  const approve = async (row: TimesheetRow) => {
+    setBusy(row.id);
     try {
-      console.log('ApproveTimesheets: Loading employees/managers for role:', role, 'isIncharge:', isIncharge);
-      let data;
-      
-      if (role === 'cluster_head') {
-        // Cluster heads manage managers
-        console.log('ApproveTimesheets: Calling getManagersByClusterHead with clusterHeadId:', managerId);
-        data = await api.getManagersByClusterHead(managerId);
-        console.log('ApproveTimesheets: Received managers:', data);
-        
-        // Log each manager's details for debugging
-        if (data.length > 0) {
-          console.log('📋 MANAGERS RETURNED:');
-          data.forEach((mgr: any) => {
-            console.log(`  - ${mgr.employeeId} (${mgr.name}) - clusterHeadId: ${mgr.clusterHeadId}, role: ${mgr.role}`);
-          });
-        }
-      } else if (isIncharge) {
-        // Incharges manage employees under them (filtered by inchargeId)
-        console.log('ApproveTimesheets: Calling getEmployeesByIncharge with inchargeId:', managerId);
-        data = await api.getEmployeesByIncharge(managerId);
-        console.log('ApproveTimesheets: Received employees under incharge:', data);
-      } else {
-        // Managers manage employees
-        console.log('ApproveTimesheets: Calling getEmployeesByManager with managerId:', managerId);
-        data = await api.getEmployeesByManager(managerId);
-        console.log('ApproveTimesheets: Received employees:', data);
-      }
-      
-      setEmployees(data);
-      if (data.length > 0) {
-        setSelectedEmployee(data[0].employeeId);
-      } else {
-        console.log('ApproveTimesheets: No employees/managers found');
-      }
-    } catch (error) {
-      console.error('Error loading employees:', error);
-    }
-  };
-
-  const loadTimesheets = async () => {
-    try {
-      setLoading(true);
-      const data = await api.getTimesheets(selectedEmployee);
-      setTimesheets(data.filter((t: any) => t.status === 'pending'));
-    } catch (error) {
-      console.error('Error loading timesheets:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleApprove = async (timesheetId: string) => {
-    try {
-      setLoading(true);
-      await api.approveTimesheet(timesheetId, managerId);
-      await loadTimesheets();
-      alert('Timesheet approved successfully');
+      await team.approveTimesheet(row);
+      toast.success(t('team.att.approvedOne', { name: team.nameOf(row.employeeId) }));
     } catch (error) {
       console.error('Error approving timesheet:', error);
-      alert('Error approving timesheet');
+      toast.error(t('team.att.approveFailed'));
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
   };
 
-  const handleReject = async (timesheetId: string) => {
-    const reason = prompt('Enter rejection reason:');
+  const reject = async (row: TimesheetRow) => {
+    const reason = await promptText({
+      title: t('team.att.rejectTimesheet'),
+      body: `${team.nameOf(row.employeeId)} · ${timesheetLine(row, lang, (h) => t('team.att.hours', { h }))}`,
+      label: t('team.att.rejectReason'),
+      required: true,
+      confirmLabel: t('team.att.reject'),
+      tone: 'danger',
+    });
     if (!reason) return;
-
+    setBusy(row.id);
     try {
-      setLoading(true);
-      await api.rejectTimesheet(timesheetId, managerId, reason);
-      await loadTimesheets();
-      alert('Timesheet rejected');
+      await team.rejectTimesheet(row, reason);
+      toast.success(t('team.att.rejectedOne'));
     } catch (error) {
       console.error('Error rejecting timesheet:', error);
-      alert('Error rejecting timesheet');
+      toast.error(t('team.att.rejectFailed'));
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
   };
 
-  const pendingCount = timesheets.length;
-  const selectedEmployeeData = employees.find(e => e.employeeId === selectedEmployee);
-  
-  // Dynamic text based on role
-  const entityType = role === 'cluster_head' ? 'Operations Manager' : 'Employee';
-  const entityTypePlural = role === 'cluster_head' ? 'Operations Managers' : 'Employees';
+  const approveAll = async () => {
+    const ok = await confirm({ title: t('team.att.approveAllTitle', { n: rows.length }), body: t('team.att.approveAllBody'), confirmLabel: t('team.att.approveAll') });
+    if (!ok) return;
+    setBusy('all');
+    let done = 0;
+    for (const row of rows) {
+      try {
+        await team.approveTimesheet(row);
+        done += 1;
+      } catch (error) {
+        console.error('Error approving timesheet:', error);
+      }
+    }
+    setBusy(null);
+    if (done === rows.length) toast.success(t('team.att.approvedAll', { n: done }));
+    else toast.error(t('team.att.approvedSome', { n: done, total: rows.length }));
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
-            <Clock className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Approve {entityType} Timesheets</h1>
-            <p className="text-sm sm:text-base text-gray-500">
-              {role === 'cluster_head'
-                ? 'Review and approve manager timesheet entries. Contract workers are paid per day worked and do not require attendance approval.'
-                : 'Review and approve employee timesheet entries'
-              }
-            </p>
-          </div>
-        </div>
-
-        {/* Error/Warning if no managerId */}
-        {!managerId && (
-          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-red-600" />
-              <div>
-                <p className="text-red-900 font-medium">Manager ID Not Found</p>
-                <p className="text-sm text-red-700">
-                  Your account doesn't have an employee ID set. Please contact the administrator or log out and log back in.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* No employees message */}
-        {managerId && employees.length === 0 && (
-          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-blue-600" />
-              <div>
-                <p className="text-blue-900 font-medium">No {entityTypePlural} Found</p>
-                <p className="text-sm text-blue-700">
-                  {role === 'cluster_head' 
-                    ? `No managers are assigned to you (${managerId}). To fix this:`
-                    : `You don't have any employees assigned to you yet.`
-                  }
-                </p>
-                {role === 'cluster_head' && (
-                  <ul className="text-xs text-blue-700 mt-2 ml-4 space-y-1">
-                    <li>• Go to <strong>Employee Management</strong> → <strong>Hierarchy Management</strong> tab</li>
-                    <li>• Click <strong>Edit</strong> on each manager (e.g., BM004)</li>
-                    <li>• Make sure <strong>Cluster Head ID</strong> is set to your ID: <strong>{managerId}</strong></li>
-                    <li>• Click <strong>Save Changes</strong></li>
-                  </ul>
-                )}
-                <p className="text-xs text-blue-600 mt-2">Your ID: {managerId}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Route Debugger - Only show when there are no employees */}
-        {managerId && employees.length === 0 && (
-          <RouteDebugger managerId={managerId} />
-        )}
-
-        {/* Pending Count Badge */}
-        {pendingCount > 0 && (
-          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-yellow-600" />
-              <div>
-                <p className="text-yellow-900 font-medium">
-                  {pendingCount} timesheet{pendingCount > 1 ? 's' : ''} pending approval
-                </p>
-                <p className="text-sm text-yellow-700">Review and take action on pending requests</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Employee Selector */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
-          <label className="block text-sm text-gray-700 mb-2">Select {entityType}</label>
-          <select
-            value={selectedEmployee}
-            onChange={(e) => setSelectedEmployee(e.target.value)}
-            className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-          >
-            <option value="">-- Select {entityType} --</option>
-            {filteredEmployees.map(emp => (
-              <option key={emp.employeeId} value={emp.employeeId}>
-                {emp.name} ({emp.employeeId})
-              </option>
-            ))}
-          </select>
-          
-          {/* Debug Info for Cluster Heads */}
-          {role === 'cluster_head' && employees.length > 0 && (
-            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-xs text-blue-900 font-medium mb-2">
-                🔍 Debug: {employees.length} manager{employees.length > 1 ? 's' : ''} with clusterHeadId = {managerId}
-              </p>
-              <div className="space-y-1">
-                {employees.map((emp: any) => (
-                  <div key={emp.employeeId} className="text-xs text-blue-800 flex items-center gap-2">
-                    <span className="px-2 py-0.5 bg-blue-100 rounded">{emp.employeeId}</span>
-                    <span>{emp.name}</span>
-                    <span className="text-blue-600">({emp.role})</span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-blue-700 mt-2">
-                💡 If you see unexpected managers here, go to <strong>Employee Management → Hierarchy</strong> and check their Cluster Head ID
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Employee Info Card */}
-        {selectedEmployeeData && (
-          <div className="bg-gradient-to-r from-indigo-500 to-violet-500 rounded-2xl shadow-lg p-6 mb-6 text-white">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-                <User className="w-8 h-8" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold mb-1">{selectedEmployeeData.name}</h2>
-                <p className="text-sm opacity-90">Employee ID: {selectedEmployeeData.employeeId}</p>
-                <p className="text-sm opacity-90">Email: {selectedEmployeeData.email}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Timesheets Table */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-indigo-100 to-violet-100 border-b border-gray-200">
-            <h3 className="text-lg font-bold text-gray-900">Pending Timesheets</h3>
-          </div>
-
-          {loading ? (
-            <div className="p-12 text-center text-gray-500">Loading...</div>
-          ) : timesheets.length === 0 ? (
-            <div className="p-12 text-center">
-              <Clock className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">No pending timesheets for this employee</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {timesheets.map((timesheet, index) => (
-                <div key={index} className="p-4">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {new Date(timesheet.date).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric'
-                        })}
-                        <span className="text-gray-400 font-normal"> · {new Date(timesheet.date).toLocaleDateString('en-US', { weekday: 'short' })}</span>
-                      </p>
-                      <p className="text-xs text-gray-500 mt-0.5">{timesheet.startTime} - {timesheet.endTime}</p>
-                    </div>
-                    <span className={`text-sm font-medium flex-shrink-0 ${timesheet.totalHours >= 8 ? 'text-green-700' : timesheet.totalHours >= 4 ? 'text-yellow-700' : 'text-red-700'}`}>
-                      {timesheet.totalHours.toFixed(2)} hrs
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleApprove(timesheet.id)}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
-                    >
-                      <CheckCircle className="w-4 h-4" />
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => handleReject(timesheet.id)}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
-                    >
-                      <XCircle className="w-4 h-4" />
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <ListGroup
+      title={t('team.att.timesheets')}
+      meta={rows.length ? String(rows.length) : undefined}
+      action={rows.length > 1 ? <Button variant="secondary" size="sm" leadingIcon={<Check />} loading={busy === 'all'} disabled={!!busy && busy !== 'all'} onClick={approveAll}>{t('team.att.approveAll')}</Button> : undefined}
+      empty={<ListRow density="compact" icon={Clock} muted title={t('team.att.noTimesheets')} />}
+    >
+      {rows.map((row) => (
+        <ListRow
+          key={row.id}
+          leading={<InitialsAvatar name={team.nameOf(row.employeeId)} />}
+          title={team.nameOf(row.employeeId)}
+          subtitle={timesheetLine(row, lang, (h) => t('team.att.hours', { h }))}
+          trailing={
+            <span className="flex gap-1">
+              <IconButton label={t('team.att.rejectFor', { name: team.nameOf(row.employeeId) })} icon={<X />} variant="danger-ghost" disabled={!!busy} onClick={() => reject(row)} />
+              <IconButton label={t('team.att.approveFor', { name: team.nameOf(row.employeeId) })} icon={<Check />} variant="secondary" loading={busy === row.id} disabled={!!busy && busy !== row.id} onClick={() => approve(row)} />
+            </span>
+          }
+        />
+      ))}
+    </ListGroup>
   );
 }

@@ -1,508 +1,169 @@
-import { useState, useEffect, useMemo } from 'react';
-import { CheckCircle, XCircle, Calendar, User, AlertCircle } from 'lucide-react';
-import * as api from '../utils/api';
-import { formatDateTimeIST } from '../utils/timezone';
-import { employeeBelongsToStore } from '../utils/entityAccess';
-import type { Store } from '../utils/api';
+// Leave requests waiting for approval (Team → Attendance → Approvals): one row per day; tapping
+// opens a sheet with the dates, reason and the person's balance, then Approve / Reject. The owner
+// also gets advance leave over 4 days, escalated past the person's own manager.
+import * as React from 'react';
+import { CalendarCheck, CalendarDays } from 'lucide-react';
+import { Button } from './ui/button';
+import { InitialsAvatar } from './ui/avatar';
+import { ListGroup, ListRow } from './ui/list-row';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { Skeleton } from './ui/skeleton';
+import { StatusChip } from './ui/status-chip';
+import { promptText } from './ui/confirm';
+import { toast } from './ui/sonner';
+import { useT } from '../utils/i18n';
+import { teamApi } from './team/teamApi';
+import { DetailList, formatDay } from './team/shared';
+import type { LeaveRow, TeamAttendance } from './team/attendance/useTeamAttendance';
 
-interface ApproveLeavesProps {
-  managerId: string;
-  managerName: string;
-  role?: string; // Add role to differentiate between manager and cluster_head
-  selectedStoreId?: string | null;
-  isIncharge?: boolean;
-  inchargeDesignation?: 'store_incharge' | 'production_incharge' | 'operations_incharge' | 'store_ops' | 'production_ops' | 'operations_manager' | 'rider' | null;
-  // For resolving a production incharge/ops employee's storeId (which actually holds
-  // their production house's id) back to this store - see entityAccess.ts.
-  stores?: Store[];
+export function leaveTypeLabel(row: Pick<LeaveRow, 'leaveType' | 'isAdvanceLeave' | 'advanceDaysRequested'>, t: (k: 'team.att.fullDay' | 'team.att.halfDay' | 'team.att.advance' | 'team.att.advanceDays', v?: Record<string, string | number>) => string) {
+  const parts = [(row.leaveType || 'full') === 'full' ? t('team.att.fullDay') : t('team.att.halfDay')];
+  if (row.isAdvanceLeave) parts.push(row.advanceDaysRequested ? t('team.att.advanceDays', { n: row.advanceDaysRequested }) : t('team.att.advance'));
+  return parts.join(' · ');
 }
 
-export function ApproveLeaves({ managerId, managerName, role, selectedStoreId, isIncharge = false, inchargeDesignation = null, stores = [] }: ApproveLeavesProps) {
-  const [employees, setEmployees] = useState<any[]>([]);
-  const [selectedEmployee, setSelectedEmployee] = useState<string>('');
-  const [leaves, setLeaves] = useState<any[]>([]);
-  // Full leave history (approved + rejected) for the selected employee, so managers
-  // can see past decisions, not just what's still awaiting action.
-  const [leaveHistory, setLeaveHistory] = useState<any[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const isClusterHead = role === 'cluster_head';
-  // Advance leave requests over the escalation threshold skip the normal manager
-  // hierarchy and go straight to the cluster head, even for employees who don't
-  // otherwise report to them - so this queue is fetched separately, system-wide.
-  const [escalatedLeaves, setEscalatedLeaves] = useState<any[]>([]);
-  const [escalatedLoading, setEscalatedLoading] = useState(false);
+export function ApproveLeaves({ team }: { team: TeamAttendance }) {
+  const { t, lang } = useT();
+  const [open, setOpen] = React.useState<LeaveRow | null>(null);
+  const rows = [...team.pendingLeaves].sort((a, b) => a.leaveDate.localeCompare(b.leaveDate));
+  const ownIds = new Set(rows.map((r) => r.id));
+  const escalated = team.escalated.filter((l) => !ownIds.has(l.id));
+  const escalatedIds = new Set(escalated.map((l) => l.id));
+  const others = team.othersPending.filter((l) => !ownIds.has(l.id) && !escalatedIds.has(l.id)).sort((a, b) => a.leaveDate.localeCompare(b.leaveDate));
 
-  console.log('ApproveLeaves: managerId prop =', managerId);
-  console.log('ApproveLeaves: role prop =', role);
-  console.log('ApproveLeaves: isIncharge =', isIncharge);
-  console.log('ApproveLeaves: inchargeDesignation =', inchargeDesignation);
-  
-  // Filter employees by store and incharge permissions
-  const filteredEmployees = useMemo(() => {
-    let filtered = employees;
-    
-    // Apply store filter (also matches this store's linked production house - see
-    // entityAccess.ts's employeeBelongsToStore for why that case matters)
-    if (selectedStoreId) {
-      filtered = filtered.filter(emp => employeeBelongsToStore(emp, selectedStoreId, stores));
-    }
-
-    // Apply incharge permissions - only show employees under the incharge
-    if (isIncharge && managerId) {
-      filtered = filtered.filter(emp => emp.inchargeId === managerId);
-    }
-
-    return filtered;
-  }, [employees, selectedStoreId, stores, isIncharge, managerId]);
-
-  useEffect(() => {
-    loadEmployees();
-    if (isClusterHead) {
-      loadEscalatedLeaves();
-    }
-  }, []);
-
-  const loadEscalatedLeaves = async () => {
-    try {
-      setEscalatedLoading(true);
-      const allLeaves = await api.getAllLeaves();
-      setEscalatedLeaves(allLeaves.filter((l: any) => l.status === 'pending' && l.isAdvanceLeave && l.approverRole === 'cluster_head'));
-    } catch (error) {
-      console.error('Error loading escalated leaves:', error);
-    } finally {
-      setEscalatedLoading(false);
-    }
+  const row = (l: LeaveRow, withWho = false) => {
+    const who = withWho ? team.waitsWith(l.employeeId) : null;
+    return (
+      <ListRow
+        key={l.id}
+        leading={<InitialsAvatar name={team.nameOf(l.employeeId)} />}
+        title={team.nameOf(l.employeeId)}
+        subtitle={[formatDay(l.leaveDate, lang, { weekday: true, short: true }), leaveTypeLabel(l, t), who ? t('team.att.waitsWith', { name: who }) : '', l.reason].filter(Boolean).join(' · ')}
+        onClick={() => setOpen(l)}
+      />
+    );
   };
-
-  // Update selected employee when filtered list changes
-  useEffect(() => {
-    if (filteredEmployees.length > 0 && !filteredEmployees.find(e => e.employeeId === selectedEmployee)) {
-      setSelectedEmployee(filteredEmployees[0].employeeId);
-    } else if (filteredEmployees.length === 0) {
-      setSelectedEmployee('');
-    }
-  }, [filteredEmployees]);
-
-  useEffect(() => {
-    if (selectedEmployee) {
-      loadLeaves();
-    }
-  }, [selectedEmployee]);
-
-  const loadEmployees = async () => {
-    try {
-      console.log('ApproveLeaves: Loading employees/managers for role:', role, 'isIncharge:', isIncharge);
-      let data;
-      
-      if (role === 'cluster_head') {
-        // Cluster heads manage managers
-        console.log('ApproveLeaves: Calling getManagersByClusterHead with clusterHeadId:', managerId);
-        data = await api.getManagersByClusterHead(managerId);
-        console.log('ApproveLeaves: Received managers:', data);
-      } else if (isIncharge) {
-        // Incharges manage employees under them (filtered by inchargeId)
-        console.log('ApproveLeaves: Calling getEmployeesByIncharge with inchargeId:', managerId);
-        data = await api.getEmployeesByIncharge(managerId);
-        console.log('ApproveLeaves: Received employees under incharge:', data);
-      } else {
-        // Managers manage employees
-        console.log('ApproveLeaves: Calling getEmployeesByManager with managerId:', managerId);
-        data = await api.getEmployeesByManager(managerId);
-        console.log('ApproveLeaves: Received employees:', data);
-      }
-      
-      setEmployees(data);
-      if (data.length > 0) {
-        setSelectedEmployee(data[0].employeeId);
-      } else {
-        console.log('ApproveLeaves: No employees/managers found');
-      }
-    } catch (error) {
-      console.error('Error loading employees:', error);
-    }
-  };
-
-  const loadLeaves = async () => {
-    try {
-      setLoading(true);
-      const data = await api.getLeaves(selectedEmployee);
-      setLeaves(data.filter((l: any) => l.status === 'pending'));
-      setLeaveHistory(
-        data
-          .filter((l: any) => l.status === 'approved' || l.status === 'rejected')
-          .sort((a: any, b: any) => new Date(b.leaveDate).getTime() - new Date(a.leaveDate).getTime())
-      );
-    } catch (error) {
-      console.error('Error loading leaves:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleApprove = async (leaveId: string) => {
-    try {
-      setLoading(true);
-      await api.approveLeave(leaveId, managerId, managerName);
-      await loadLeaves();
-      if (isClusterHead) await loadEscalatedLeaves();
-      alert('Leave approved successfully');
-    } catch (error) {
-      console.error('Error approving leave:', error);
-      alert('Error approving leave');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleReject = async (leaveId: string) => {
-    const reason = prompt('Enter rejection reason:');
-    if (!reason) return;
-
-    try {
-      setLoading(true);
-      await api.rejectLeave(leaveId, managerId, managerName, reason);
-      await loadLeaves();
-      if (isClusterHead) await loadEscalatedLeaves();
-      alert('Leave rejected');
-    } catch (error) {
-      console.error('Error rejecting leave:', error);
-      alert('Error rejecting leave');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleApproveEscalated = async (leaveId: string) => {
-    try {
-      setEscalatedLoading(true);
-      await api.approveLeave(leaveId, managerId, managerName);
-      await loadEscalatedLeaves();
-      alert('Leave approved successfully');
-    } catch (error) {
-      console.error('Error approving leave:', error);
-      alert('Error approving leave');
-    } finally {
-      setEscalatedLoading(false);
-    }
-  };
-
-  const handleRejectEscalated = async (leaveId: string) => {
-    const reason = prompt('Enter rejection reason:');
-    if (!reason) return;
-
-    try {
-      setEscalatedLoading(true);
-      await api.rejectLeave(leaveId, managerId, managerName, reason);
-      await loadEscalatedLeaves();
-      alert('Leave rejected');
-    } catch (error) {
-      console.error('Error rejecting leave:', error);
-      alert('Error rejecting leave');
-    } finally {
-      setEscalatedLoading(false);
-    }
-  };
-
-  const pendingCount = leaves.length;
-  const selectedEmployeeData = employees.find(e => e.employeeId === selectedEmployee);
-  
-  // Dynamic text based on role
-  const entityType = role === 'cluster_head' ? 'Operations Manager' : 'Employee';
-  const entityTypePlural = role === 'cluster_head' ? 'Operations Managers' : 'Employees';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-blue-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
-            <Calendar className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Approve {entityType} Leaves</h1>
-            <p className="text-sm sm:text-base text-gray-500">
-              {role === 'cluster_head'
-                ? 'Review and approve manager leave applications. Contract workers do not require leave approval.'
-                : 'Review and approve employee leave applications'
-              }
-            </p>
+    <>
+      <ListGroup title={t('team.att.leaveRequests')} meta={rows.length ? String(rows.length) : undefined} empty={<ListRow density="compact" icon={CalendarDays} muted title={t('team.att.noLeave')} />}>
+        {rows.map((l) => row(l))}
+      </ListGroup>
+      {escalated.length > 0 && (
+        <ListGroup title={t('team.att.escalated')} meta={String(escalated.length)} footer={t('team.att.escalatedHint')}>
+          {escalated.map((l) => row(l))}
+        </ListGroup>
+      )}
+      {others.length > 0 && (
+        <ListGroup title={t('team.att.othersWaiting')} meta={String(others.length)} footer={t('team.att.othersWaitingHint')}>
+          {others.map((l) => row(l, true))}
+        </ListGroup>
+      )}
+      <LeaveDecisionSheet leave={open} team={team} onClose={() => setOpen(null)} />
+    </>
+  );
+}
+
+function LeaveDecisionSheet({ leave, team, onClose }: { leave: LeaveRow | null; team: TeamAttendance; onClose: () => void }) {
+  const { t, lang } = useT();
+  const [balance, setBalance] = React.useState<{ balance: number; pendingDays: number } | null | 'error'>(null);
+  const [busy, setBusy] = React.useState<'approve' | 'reject' | null>(null);
+
+  React.useEffect(() => {
+    if (!leave) return;
+    let cancelled = false;
+    setBalance(null);
+    teamApi
+      .getLeaveBalance(leave.employeeId)
+      .then((b: { balance: number; pendingDays: number }) => !cancelled && setBalance(b))
+      .catch(() => !cancelled && setBalance('error'));
+    return () => {
+      cancelled = true;
+    };
+  }, [leave]);
+
+  if (!leave) return null;
+  const name = team.nameOf(leave.employeeId);
+
+  const approve = async () => {
+    setBusy('approve');
+    try {
+      await team.approveLeave(leave);
+      toast.success(t('team.att.leaveApproved', { name }));
+      onClose();
+    } catch (error) {
+      console.error('Error approving leave:', error);
+      toast.error(t('team.att.approveFailed'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const reject = async () => {
+    const reason = await promptText({ title: t('team.att.rejectLeave'), body: `${name} · ${formatDay(leave.leaveDate, lang, { weekday: true })}`, label: t('team.att.rejectReason'), required: true, confirmLabel: t('team.att.reject'), tone: 'danger' });
+    if (!reason) return;
+    setBusy('reject');
+    try {
+      await team.rejectLeave(leave, reason);
+      toast.success(t('team.att.rejectedOne'));
+      onClose();
+    } catch (error) {
+      console.error('Error rejecting leave:', error);
+      toast.error(t('team.att.rejectFailed'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <ResponsiveModal
+      open={!!leave}
+      onOpenChange={(o) => !o && onClose()}
+      title={t('team.att.leaveRequest')}
+      description={name}
+      footer={
+        <>
+          <Button variant="secondary" size="lg" loading={busy === 'reject'} disabled={!!busy} onClick={reject}>
+            {t('team.att.reject')}
+          </Button>
+          <Button size="lg" className="flex-1" loading={busy === 'approve'} disabled={!!busy} onClick={approve}>
+            {t('team.att.approve')}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4" data-ai-private>
+        <div className="flex items-center gap-3">
+          <InitialsAvatar name={name} size={56} />
+          <div className="flex min-w-0 flex-col">
+            <span className="text-subtitle font-semibold text-text">{formatDay(leave.leaveDate, lang, { weekday: true })}</span>
+            <span className="text-body-sm text-text-2">{leaveTypeLabel(leave, t)}</span>
           </div>
         </div>
-
-        {/* Escalated Advance Leave Requests - cluster head only, spans all employees
-            regardless of the manager-hierarchy selector below */}
-        {isClusterHead && (
-          <div className="mb-6 bg-purple-50 border-2 border-purple-200 rounded-2xl overflow-hidden">
-            <div className="px-6 py-4 bg-purple-100 border-b border-purple-200">
-              <h3 className="text-lg font-bold text-purple-900">Escalated Advance Leave Requests</h3>
-              <p className="text-sm text-purple-700">Advance leave requests over 4 days, escalated past the employee's manager for your direct approval</p>
-            </div>
-            {escalatedLoading ? (
-              <div className="p-6 text-center text-gray-500 text-sm">Loading...</div>
-            ) : escalatedLeaves.length === 0 ? (
-              <div className="p-6 text-center text-gray-500 text-sm">No escalated advance leave requests</div>
-            ) : (
-              <div className="divide-y divide-purple-100">
-                {escalatedLeaves.map((leave, index) => (
-                  <div key={index} className="p-4">
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          {leave.employeeId} · {new Date(leave.leaveDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', weekday: 'short', timeZone: 'UTC' })}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
-                        {leave.advanceDaysRequested && (
-                          <p className="text-xs text-purple-700 mt-0.5">{leave.advanceDaysRequested} day(s) requested in this application</p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleApproveEscalated(leave.id)}
-                        disabled={escalatedLoading}
-                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleRejectEscalated(leave.id)}
-                        disabled={escalatedLoading}
-                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
-                      >
-                        <XCircle className="w-4 h-4" />
-                        Reject
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Pending Count Badge */}
-        {pendingCount > 0 && (
-          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-yellow-600" />
-              <div>
-                <p className="text-yellow-900 font-medium">
-                  {pendingCount} leave application{pendingCount > 1 ? 's' : ''} pending approval
-                </p>
-                <p className="text-sm text-yellow-700">Review and take action on pending requests</p>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* No employees message */}
-        {managerId && employees.length === 0 && (
-          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-blue-600" />
-              <div>
-                <p className="text-blue-900 font-medium">No {entityTypePlural} Found</p>
-                <p className="text-sm text-blue-700">
-                  {role === 'cluster_head' 
-                    ? `No managers are assigned to you (${managerId}). To fix this:`
-                    : `You don't have any employees assigned to you yet.`
-                  }
-                </p>
-                {role === 'cluster_head' && (
-                  <ul className="text-xs text-blue-700 mt-2 ml-4 space-y-1">
-                    <li>• Go to <strong>Employee Management</strong> → <strong>Hierarchy Management</strong> tab</li>
-                    <li>• Click <strong>Edit</strong> on each manager (e.g., BM004)</li>
-                    <li>• Make sure <strong>Cluster Head ID</strong> is set to your ID: <strong>{managerId}</strong></li>
-                    <li>• Click <strong>Save Changes</strong></li>
-                  </ul>
-                )}
-                <p className="text-xs text-blue-600 mt-2">Your ID: {managerId}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Employee Selector */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
-          <label className="block text-sm text-gray-700 mb-2">Select {entityType}</label>
-          <select
-            value={selectedEmployee}
-            onChange={(e) => setSelectedEmployee(e.target.value)}
-            className="w-full md:w-1/3 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-          >
-            <option value="">-- Select {entityType} --</option>
-            {filteredEmployees.map(emp => (
-              <option key={emp.employeeId} value={emp.employeeId}>
-                {emp.name} ({emp.employeeId})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Employee Info Card */}
-        {selectedEmployeeData && (
-          <div className="bg-gradient-to-r from-indigo-500 to-violet-500 rounded-2xl shadow-lg p-6 mb-6 text-white">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-                <User className="w-8 h-8" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold mb-1">{selectedEmployeeData.name}</h2>
-                <p className="text-sm opacity-90">Employee ID: {selectedEmployeeData.employeeId}</p>
-                <p className="text-sm opacity-90">Email: {selectedEmployeeData.email}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Leaves Table */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 bg-gradient-to-r from-indigo-100 to-violet-100 border-b border-gray-200">
-            <h3 className="text-lg font-bold text-gray-900">Pending Leave Applications</h3>
-          </div>
-
-          {loading ? (
-            <div className="p-12 text-center text-gray-500">Loading...</div>
-          ) : leaves.length === 0 ? (
-            <div className="p-12 text-center">
-              <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">No pending leave applications for this employee</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {leaves.map((leave, index) => (
-                <div key={index} className="p-4">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {new Date(leave.leaveDate).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric',
-                          weekday: 'short',
-                          timeZone: 'UTC'
-                        })}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
-                    </div>
-                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        (leave.leaveType || 'full') === 'full'
-                          ? 'bg-orange-100 text-orange-800'
-                          : 'bg-blue-100 text-blue-800'
-                      }`}>
-                        {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
-                      </span>
-                      {leave.isAdvanceLeave && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                          Advance{leave.advanceDaysRequested ? ` (${leave.advanceDaysRequested}d)` : ''}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-400 mb-2">
-                    Applied {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleApprove(leave.id)}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
-                    >
-                      <CheckCircle className="w-4 h-4" />
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => handleReject(leave.id)}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm disabled:opacity-50"
-                    >
-                      <XCircle className="w-4 h-4" />
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Leave History - approved + rejected applications for this employee, collapsed
-            by default since the pending queue above is what usually needs attention. */}
-        {selectedEmployeeData && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mt-6">
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="w-full flex items-center justify-between px-6 py-4 bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200 text-left"
-            >
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">Leave History</h3>
-                <p className="text-xs text-gray-500 mt-0.5">{leaveHistory.length} past application{leaveHistory.length === 1 ? '' : 's'} · approved &amp; rejected</p>
-              </div>
-              <span className="text-sm text-orange-600">{showHistory ? 'Hide' : 'Show'}</span>
-            </button>
-
-            {showHistory && (
-              loading ? (
-                <div className="p-12 text-center text-gray-500">Loading...</div>
-              ) : leaveHistory.length === 0 ? (
-                <div className="p-12 text-center">
-                  <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-500">No past leave decisions for this employee yet</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-gray-100">
-                  {leaveHistory.map((leave, index) => (
-                    <div key={index} className="p-4">
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">
-                            {new Date(leave.leaveDate).toLocaleDateString('en-US', {
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                              weekday: 'short',
-                              timeZone: 'UTC'
-                            })}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-0.5">{leave.reason}</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            leave.status === 'approved'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {leave.status === 'approved' ? 'Approved' : 'Rejected'}
-                          </span>
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            (leave.leaveType || 'full') === 'full'
-                              ? 'bg-orange-100 text-orange-800'
-                              : 'bg-blue-100 text-blue-800'
-                          }`}>
-                            {(leave.leaveType || 'full') === 'full' ? 'Full Day' : 'Half Day'}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-xs text-gray-400 mb-1">
-                        Applied {leave.appliedAt ? new Date(leave.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
-                        {leave.status === 'approved' && leave.approvedBy ? ` · Approved by ${leave.approvedBy}` : ''}
-                        {leave.status === 'rejected' && leave.rejectedBy ? ` · Rejected by ${leave.rejectedBy}` : ''}
-                        {(leave.status === 'approved' ? leave.approvedAt : leave.rejectedAt) ? ` · ${formatDateTimeIST(leave.status === 'approved' ? leave.approvedAt : leave.rejectedAt)} IST` : ''}
-                      </p>
-                      {leave.status === 'rejected' && leave.rejectionReason && (
-                        <p className="text-xs text-red-600">Reason: {leave.rejectionReason}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )
-            )}
-          </div>
-        )}
+        <DetailList
+          rows={[
+            { label: t('team.att.reason'), value: leave.reason || '–' },
+            { label: t('team.att.asked'), value: leave.appliedAt ? formatDay(leave.appliedAt.slice(0, 10), lang) : '–' },
+            {
+              label: t('team.att.goesTo'),
+              value: leave.approverRole === 'cluster_head' ? t('team.att.toOwner') : t('team.att.toManager'),
+              hidden: !leave.isAdvanceLeave || !leave.approverRole,
+            },
+            {
+              label: t('team.att.balance'),
+              value:
+                balance === null ? (
+                  <Skeleton className="ml-auto h-4 w-16" />
+                ) : balance === 'error' ? (
+                  '–'
+                ) : (
+                  <span className="num">{t('team.att.balanceValue', { n: balance.balance, pending: balance.pendingDays })}</span>
+                ),
+            },
+          ]}
+        />
+        {leave.isAdvanceLeave && <StatusChip tone="warning" icon={CalendarCheck}>{t('team.att.advanceNote')}</StatusChip>}
       </div>
-    </div>
+    </ResponsiveModal>
   );
 }

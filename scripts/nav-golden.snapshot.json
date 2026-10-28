@@ -1,0 +1,828 @@
+{
+  "owner@2026-10-31": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": true
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "inventory",
+      "sales",
+      "employees",
+      "assets",
+      "export",
+      "backup",
+      "team-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(cluster_head)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "backup": "BackupRestore",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "team-kpis": "TeamKpis"
+    }
+  },
+  "ops-manager@2026-10-31": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "team-kpis",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "team-kpis": "TeamKpis",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "ops-incharge-manager-login@2026-10-31": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "team-kpis",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "team-kpis": "TeamKpis",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-incharge-employee-login@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "analytics",
+      "inventory",
+      "sales",
+      "riders",
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance",
+      "export",
+      "assets"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "payroll": "PayrollManagement(incharge)",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "attendance": "AttendancePortal(isIncharge=true)",
+      "assets": "AssetsManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=false)",
+      "stock-outs": "StockOutLog(own-store,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-incharge-employee-login-no-store@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "analytics",
+      "inventory",
+      "sales",
+      "riders",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance",
+      "export",
+      "assets"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "payroll": "PayrollManagement(incharge)",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "attendance": "AttendancePortal(isIncharge=true)",
+      "assets": "AssetsManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-incharge-manager-login@2026-10-31": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "stock-outs",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=false)",
+      "stock-outs": "StockOutLog(own-store,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "production-incharge-employee-login@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "analytics",
+      "inventory",
+      "sales",
+      "riders",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance",
+      "export",
+      "assets"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "payroll": "PayrollManagement(incharge)",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "attendance": "AttendancePortal(isIncharge=true)",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "production-incharge-manager-login@2026-10-31": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "ops-incharge-employee-login@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "stock-outs": "StockOutLog(own-store,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-crew@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "stock-outs": "StockOutLog(own-store,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-crew-no-designation@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "stock-outs": "StockOutLog(own-store,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "crew-no-store@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "kitchen-crew@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "rider@2026-10-31": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "rider-profile",
+      "payroll"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "riders": "RiderTrips(rider,canDispatch=false)",
+      "rider-profile": "RiderProfile"
+    }
+  },
+  "auditor@2026-10-31": {
+    "shell": "audit",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "audit:analytics",
+      "audit:inventory",
+      "audit:sales",
+      "audit:production",
+      "audit:payroll"
+    ],
+    "views": {
+      "audit:analytics": "Analytics",
+      "audit:inventory": "InventoryView",
+      "audit:sales": "SalesTable",
+      "audit:production": "ProductionManagement(read-only)",
+      "audit:payroll": "PayrollManagement(audit)"
+    }
+  },
+  "owner@2026-11-01": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": true
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "inventory",
+      "sales",
+      "employees",
+      "assets",
+      "export",
+      "backup",
+      "team-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(cluster_head)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "backup": "BackupRestore",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "team-kpis": "TeamKpis"
+    }
+  },
+  "ops-manager@2026-11-01": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "team-kpis",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "team-kpis": "TeamKpis",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "ops-incharge-manager-login@2026-11-01": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "team-kpis",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "team-kpis": "TeamKpis",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-incharge-employee-login@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "analytics",
+      "inventory",
+      "sales",
+      "riders",
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance",
+      "export",
+      "assets"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "payroll": "PayrollManagement(incharge)",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "attendance": "AttendancePortal(isIncharge=true)",
+      "assets": "AssetsManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=false)",
+      "stock-outs": "StockOutLog(own-store,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-incharge-employee-login-no-store@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "analytics",
+      "inventory",
+      "sales",
+      "riders",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance",
+      "export",
+      "assets"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "payroll": "PayrollManagement(incharge)",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "attendance": "AttendancePortal(isIncharge=true)",
+      "assets": "AssetsManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-incharge-manager-login@2026-11-01": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "stock-outs",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=false)",
+      "stock-outs": "StockOutLog(own-store,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "production-incharge-employee-login@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "analytics",
+      "inventory",
+      "sales",
+      "riders",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance",
+      "export",
+      "assets"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesManagement",
+      "payroll": "PayrollManagement(incharge)",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "attendance": "AttendancePortal(isIncharge=true)",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=true)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "production-incharge-manager-login@2026-11-01": {
+    "shell": "manager",
+    "chrome": {
+      "askBunny": true,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "workplace",
+      "analytics",
+      "sales",
+      "inventory",
+      "employees",
+      "export",
+      "assets",
+      "my-kpis"
+    ],
+    "views": {
+      "inventory": "InventoryManagement",
+      "sales": "SalesView",
+      "analytics": "Analytics",
+      "export": "ExportData(manager)",
+      "employees": "EmployeeManagement",
+      "assets": "AssetsManagement",
+      "production": "ProductionManagement",
+      "advanced-inventory": "AdvancedInventoryManagement",
+      "inventory-items": "InventoryItemsManagement",
+      "riders": "RiderTrips(staff,canDispatch=true)",
+      "stock-outs": "StockOutLog(all-stores,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "ops-incharge-employee-login@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "receive-stock",
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "receive-stock": "IncomingDeliveries",
+      "stock-outs": "StockOutLog(own-store,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-crew@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "receive-stock",
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "receive-stock": "IncomingDeliveries",
+      "stock-outs": "StockOutLog(own-store,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "store-crew-no-designation@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "receive-stock",
+      "stock-outs",
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "receive-stock": "IncomingDeliveries",
+      "stock-outs": "StockOutLog(own-store,canDelete=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "crew-no-store@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "kitchen-crew@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "workplace",
+      "my-kpis",
+      "payroll",
+      "attendance"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "attendance": "AttendancePortal(isIncharge=false)",
+      "workplace": "WorkplaceChecks",
+      "my-kpis": "MyKpis"
+    }
+  },
+  "rider@2026-11-01": {
+    "shell": "staff",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "riders",
+      "rider-profile",
+      "payroll"
+    ],
+    "views": {
+      "payroll": "EmployeeDashboard",
+      "riders": "RiderTrips(rider,canDispatch=false)",
+      "rider-profile": "RiderProfile"
+    }
+  },
+  "auditor@2026-11-01": {
+    "shell": "audit",
+    "chrome": {
+      "askBunny": false,
+      "storeSwitcher": false
+    },
+    "menu": [
+      "audit:analytics",
+      "audit:inventory",
+      "audit:sales",
+      "audit:production",
+      "audit:payroll"
+    ],
+    "views": {
+      "audit:analytics": "Analytics",
+      "audit:inventory": "InventoryView",
+      "audit:sales": "SalesTable",
+      "audit:production": "ProductionManagement(read-only)",
+      "audit:payroll": "PayrollManagement(audit)"
+    }
+  }
+}

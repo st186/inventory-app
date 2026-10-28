@@ -1,1311 +1,457 @@
-import { useState, useEffect } from 'react';
-import { Download, FileText, Table, FileSpreadsheet, Calendar, X, AlertTriangle, FileDown } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
+import { BookOpen, Briefcase, CalendarRange, ChevronDown, FileSpreadsheet, Landmark, Layers, ReceiptText, ShieldCheck, Smartphone, TrendingUp, Users, Wallet } from 'lucide-react';
+import { toast } from 'sonner@2.0.3';
 import * as api from '../utils/api';
-import { OverheadItem } from '../App';
-import { OVERHEAD_CATEGORY_META } from '../utils/inventoryData';
-import { getSupabaseClient } from '../utils/supabase/client';
-import { ItemCatalogCleanup } from './ItemCatalogCleanup';
 import { BusinessAuditReport } from './BusinessAuditReport';
 import { InventoryContextType } from '../App';
+import { getTodayIST, addDays } from '../utils/timezone';
+import { saveFile } from '../utils/saveFile';
+import {
+  type ReportPeriod, monthPeriod, quarterPeriod, financialYearPeriod, customPeriod, previousPeriod,
+  quarterOf, fyStartYearOf, fyLabel, prettyDate,
+} from '../utils/reportPeriods';
+import { pnlCosts, type PnlBreakdown, type PnlScope } from '../utils/pnl';
+import { freshAccessToken, loadReportData, makeContext, resolveEntities, type ReportContext } from '../utils/reports/reportData';
+import { workbookBlob, csvBlob, htmlBlob, XLSX_MIME, CSV_MIME, HTML_MIME, inr, pctText, type SheetSpec } from '../utils/reports/sheets';
+import { pnlFor, salesDayBook, purchasesRegister, expensesRegister, payrollRegister, paytmLedgerSheet } from '../utils/reports/ledgers';
+import { buildQuickExport, buildAuditorWorkbook, readmeSheet } from '../utils/reports/packs';
+import { buildCeoPack, ordersByDate, type OrderCounts } from '../utils/reports/ceoPack';
+import { buildTaxPack } from '../utils/reports/taxPack';
+import { useT, type I18nKey } from '../utils/i18n';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Field } from './ui/field';
+import { NativeSelect } from './ui/select';
+import { ChoiceChips, SelectChip } from './ui/chip';
+import { SegmentedControl } from './ui/segmented-control';
+import { ListGroup, ListRow } from './ui/list-row';
+import { StatTile, StatGrid } from './ui/stat-tile';
+import { Callout } from './ui/callout';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SkeletonStatTiles } from './ui/skeleton';
+import { SetupPage } from './setup/SetupPage';
 
 interface ExportDataProps {
   userRole: 'manager' | 'cluster_head';
   selectedStoreId?: string | null;
   currentUserId?: string;
   // Optional so existing call sites keep working without threading it through
-  // immediately - the Business Audit Report tab simply won't render without it.
+  // immediately - the Business Audit Report simply won't render without it.
   context?: InventoryContextType;
+  /** The view to open on (the shell's More > Check the numbers opens the audit report). */
+  initialView?: 'export' | 'audit';
 }
 
-type DateRange = 'today' | 'weekly' | 'monthly' | 'custom';
-type ExportFormat = 'csv' | 'pdf' | 'excel';
+type PeriodKind = 'month' | 'quarter' | 'fy' | 'custom';
+type ReportId = 'all' | 'sales' | 'expenses' | 'payroll' | 'paytm' | 'auditor' | 'ceo' | 'tax';
+type Format = 'xlsx' | 'csv' | 'pdf';
+type Job = 'look' | `${ReportId}-${Format}`;
 
-export function ExportData({ userRole, selectedStoreId, currentUserId, context }: ExportDataProps) {
-  const [mainView, setMainView] = useState<'export' | 'audit'>('export');
-  const [dateRange, setDateRange] = useState<DateRange>('today');
-  const [customStartDate, setCustomStartDate] = useState('');
-  const [customEndDate, setCustomEndDate] = useState('');
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
-  const [loading, setLoading] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewData, setPreviewData] = useState<any>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+// One row per report: what's in it and the formats it comes in (the same files as before; the
+// single registers are the matching tabs of the auditor workbook on their own).
+const REPORTS: { id: ReportId; icon: LucideIcon; title: I18nKey; body: I18nKey; formats: Format[]; ownerOnly?: boolean }[] = [
+  { id: 'all', icon: Layers, title: 'reports.r.all', body: 'reports.r.allBody', formats: ['xlsx', 'csv', 'pdf'] },
+  { id: 'sales', icon: ReceiptText, title: 'reports.r.sales', body: 'reports.r.salesBody', formats: ['xlsx', 'csv'] },
+  { id: 'expenses', icon: Wallet, title: 'reports.r.expenses', body: 'reports.r.expensesBody', formats: ['xlsx', 'csv'] },
+  { id: 'payroll', icon: Users, title: 'reports.r.payroll', body: 'reports.r.payrollBody', formats: ['xlsx', 'csv'] },
+  { id: 'paytm', icon: Smartphone, title: 'reports.r.paytm', body: 'reports.r.paytmBody', formats: ['xlsx', 'csv'] },
+  { id: 'auditor', icon: ShieldCheck, title: 'reports.r.auditor', body: 'reports.r.auditorBody', formats: ['xlsx'] },
+  { id: 'ceo', icon: Briefcase, title: 'reports.r.ceo', body: 'reports.r.ceoBody', formats: ['xlsx', 'pdf'], ownerOnly: true },
+  { id: 'tax', icon: Landmark, title: 'reports.r.tax', body: 'reports.r.taxBody', formats: ['xlsx', 'pdf'], ownerOnly: true },
+];
 
-  // Miscellaneous recategorization (Cluster Head only)
-  const [miscItems, setMiscItems] = useState<OverheadItem[] | null>(null);
-  const [miscLoading, setMiscLoading] = useState(false);
-  const [miscSaving, setMiscSaving] = useState<string | null>(null);
-  const [miscNewCategory, setMiscNewCategory] = useState<Record<string, string>>({});
-  const [showItemCleanup, setShowItemCleanup] = useState(false);
+const SCOPES: PnlScope[] = ['combined', 'store', 'production'];
+const scopeKey = (s: PnlScope) => `reports.scope.${s}` as I18nKey;
+const formatKey = (f: Format) => `reports.fmt.${f}` as I18nKey;
 
-  const supabaseClient = getSupabaseClient();
+export function ExportData({ userRole, selectedStoreId, currentUserId, context, initialView = 'export' }: ExportDataProps) {
+  const { t, lang } = useT();
+  const today = getTodayIST();
+  const thisFy = fyStartYearOf(today);
+  const [kind, setKind] = useState<PeriodKind>('month');
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [quarterKey, setQuarterKey] = useState(() => { const q = quarterOf(today); return `${q.fyStartYear}-${q.quarter}`; });
+  const [fy, setFy] = useState(thisFy);
+  const [customStart, setCustomStart] = useState(addDays(today, -6));
+  const [customEnd, setCustomEnd] = useState(today);
+  // An incharge's storeId can be their production house's id - start them on that side.
+  const knownStores = context?.stores || [];
+  const startsOnHouse = !!selectedStoreId && knownStores.length > 0 && !knownStores.some((s) => s.id === selectedStoreId);
+  const [scope, setScope] = useState<PnlScope>(startsOnHouse ? 'production' : 'combined');
+  const [busy, setBusy] = useState<Job | null>(null);
+  const [look, setLook] = useState<{ current: PnlBreakdown; previous: PnlBreakdown; period: ReportPeriod; prevLabel: string } | null>(null);
+  // Sheets: the period picker, one report's download, the profit check, the audit report.
+  const [periodOpen, setPeriodOpen] = useState(false);
+  const [dl, setDl] = useState<{ id: ReportId; format: Format } | null>(null);
+  const [dlOpen, setDlOpen] = useState(false);
+  const [dlView, setDlView] = useState<'main' | 'period'>('main');
+  const [lookOpen, setLookOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
 
-  useEffect(() => {
-    const getToken = async () => {
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      if (session?.access_token) {
-        setAccessToken(session.access_token);
-      }
-    };
-    getToken();
-  }, []);
+  const isOwner = userRole === 'cluster_head';
+  const generatedBy = context?.user?.name || currentUserId || 'Bunny Momos staff';
 
-  const loadMiscItems = async () => {
-    if (!accessToken) return;
-    setMiscLoading(true);
+  const period: ReportPeriod | null = useMemo(() => {
+    if (kind === 'month') return month ? monthPeriod(month, today) : null;
+    if (kind === 'quarter') {
+      const [y, q] = quarterKey.split('-').map(Number);
+      return quarterPeriod(y, q as 1 | 2 | 3 | 4, today);
+    }
+    if (kind === 'fy') return financialYearPeriod(fy, today);
+    return customStart && customEnd ? customPeriod(customStart, customEnd, today) : null;
+  }, [kind, month, quarterKey, fy, customStart, customEnd, today]);
+
+  const quarterOptions = useMemo(() => {
+    const out: { key: string; label: string }[] = [];
+    let { fyStartYear, quarter } = quarterOf(today);
+    for (let i = 0; i < 8; i++) {
+      out.push({ key: `${fyStartYear}-${quarter}`, label: quarterPeriod(fyStartYear, quarter, today).label });
+      if (quarter === 1) { quarter = 4; fyStartYear -= 1; } else quarter = (quarter - 1) as 1 | 2 | 3 | 4;
+    }
+    return out;
+  }, [today]);
+
+  const storeNames = useMemo(() => {
+    const stores = context?.stores || [];
+    const ids = resolveEntities(selectedStoreId, stores);
+    const store = ids.storeId ? stores.find((s) => s.id === ids.storeId)?.name : null;
+    const house = ids.productionHouseId ? context?.productionHouses?.find((h) => h.id === ids.productionHouseId)?.name : null;
+    return { store: store || t('reports.allStores'), house: house || t('reports.allHouses') };
+  }, [context?.stores, context?.productionHouses, selectedStoreId, t]);
+
+  // Every download reads the token and the data fresh - a token held since the page opened
+  // expires after an hour, and a report should never be built from an old snapshot.
+  const run = async (job: Job, work: (ctx: ReportContext, token: string) => Promise<void>, overridePeriod?: ReportPeriod, forceWholeBusiness = false) => {
+    const p = overridePeriod || period;
+    if (!p) {
+      toast.error(t('reports.pickDates'));
+      return;
+    }
+    setBusy(job);
     try {
-      const all = await api.fetchOverheads(accessToken);
-      setMiscItems(all.filter((item) => item.category === 'miscellaneous'));
-    } catch (error: any) {
-      alert(`❌ Failed to load miscellaneous items: ${error.message}`);
-    } finally {
-      setMiscLoading(false);
-    }
-  };
-
-  const saveMiscRecategorization = async (item: OverheadItem) => {
-    const newCategory = miscNewCategory[item.id];
-    if (!newCategory || !accessToken) return;
-    setMiscSaving(item.id);
-    try {
-      const { id, ...rest } = item;
-      await api.updateOverhead(accessToken, id, { ...rest, category: newCategory as OverheadItem['category'] });
-      setMiscItems((prev) => (prev ? prev.filter((i) => i.id !== item.id) : prev));
-    } catch (error: any) {
-      alert(`❌ Failed to update item: ${error.message}`);
-    } finally {
-      setMiscSaving(null);
-    }
-  };
-
-  // Local date string (not toISOString, which converts to UTC and can shift the date
-  // by a day for timezones ahead of UTC - e.g. IST midnight becomes "yesterday" in UTC).
-  const getLocalDateString = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  const getDateRangeValues = () => {
-    const today = new Date();
-    let startDate: string;
-    let endDate: string;
-
-    switch (dateRange) {
-      case 'today':
-        startDate = getLocalDateString(today);
-        endDate = startDate;
-        break;
-      case 'weekly':
-        const weekStart = new Date(today);
-        weekStart.setDate(today.getDate() - 7);
-        startDate = getLocalDateString(weekStart);
-        endDate = getLocalDateString(today);
-        break;
-      case 'monthly':
-        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-        const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        startDate = getLocalDateString(monthStart);
-        endDate = getLocalDateString(monthEnd);
-        break;
-      case 'custom':
-        startDate = customStartDate;
-        endDate = customEndDate;
-        break;
-    }
-
-    return { startDate, endDate };
-  };
-
-  const fetchDataForExport = async () => {
-    const { startDate, endDate } = getDateRangeValues();
-
-    if (!startDate || !endDate) {
-      alert('Please select a valid date range');
-      return null;
-    }
-
-    if (!accessToken) {
-      alert('Not authenticated. Please log in again.');
-      return null;
-    }
-
-    try {
-      setLoading(true);
-
-      const [
-        inventory, overheads, sales, employees, payouts, production,
-        onlineSales, onlinePayouts, salaryAdvances, onlineLoans, stores, itemSales
-      ] = await Promise.all([
-        api.fetchInventory(accessToken),
-        api.fetchOverheads(accessToken),
-        api.fetchSalesData(accessToken),
-        api.getEmployees(),
-        api.getPayouts(),
-        api.fetchProductionData(),
-        api.getOnlineSalesData(accessToken),
-        api.getOnlinePayoutData(accessToken),
-        api.getSalaryAdvances(),
-        selectedStoreId ? api.getOnlineLoans(accessToken, selectedStoreId) : api.getAllOnlineLoans(accessToken),
-        api.getStores(),
-        api.getSalesData(accessToken).then(r => r.data).catch(() => [])
-      ]);
-
-      // Filter data by date range and store
-      const filterByDate = (items: any[], dateField: string = 'date') => {
-        return items.filter((item: any) => {
-          const itemDate = item[dateField];
-          const matchesDate = itemDate >= startDate && itemDate <= endDate;
-
-          // If selectedStoreId is provided, ONLY show exact matches
-          // Do NOT include legacy data without storeId when viewing a specific store
-          if (selectedStoreId) {
-            const itemStoreId = item.storeId;
-            const matchesStore = itemStoreId === selectedStoreId;
-            return matchesDate && matchesStore;
-          }
-
-          return matchesDate;
-        });
-      };
-
-      const filteredInventory = filterByDate(inventory);
-      const filteredOverheads = filterByDate(overheads);
-      const filteredSales = filterByDate(sales);
-      const filteredPayouts = filterByDate(payouts);
-      const filteredProduction = filterByDate(production);
-      const filteredOnlineSales = filterByDate(onlineSales);
-      const filteredOnlinePayouts = filterByDate(onlinePayouts);
-      const filteredSalaryAdvances = filterByDate(salaryAdvances, 'requestDate');
-      const filteredOnlineLoans = filterByDate(onlineLoans, 'loanDate');
-      const filteredItemSales = filterByDate(itemSales);
-
-      // Calculate totals based on the actual data structure.
-      // NOTE: online sales are tracked in their own table (SalesManagement's daily record's
-      // `onlineSales` field is always 0 now), so they must be added in separately here -
-      // omitting this previously understated Total Sales by the entire online portion.
-      const totalInventorySpend = filteredInventory.reduce((sum: number, item: any) => sum + (item.totalCost || 0), 0);
-      const totalOverheadSpend = filteredOverheads.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
-      // Store vs Production House split (items saved before this split lack entityType — treat as store)
-      const isProductionExpense = (item: any) => item.entityType === 'production_house';
-      const totalStoreInventorySpend = filteredInventory.filter((i: any) => !isProductionExpense(i)).reduce((sum: number, item: any) => sum + (item.totalCost || 0), 0);
-      const totalProductionInventorySpend = filteredInventory.filter(isProductionExpense).reduce((sum: number, item: any) => sum + (item.totalCost || 0), 0);
-      const totalStoreOverheadSpend = filteredOverheads.filter((o: any) => !isProductionExpense(o)).reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
-      const totalProductionOverheadSpend = filteredOverheads.filter(isProductionExpense).reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
-      const totalOfflineSales = filteredSales.reduce((sum: number, item: any) => sum + (item.offlineSales || 0), 0);
-      const totalOnlineSalesLogged = filteredOnlineSales.reduce((sum: number, item: any) => sum + (item.swiggySales || 0) + (item.zomatoSales || 0), 0);
-      const totalSales = totalOfflineSales + totalOnlineSalesLogged;
-      const totalPayouts = filteredPayouts.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
-      const totalAggregatorPayout = filteredOnlinePayouts.reduce((sum: number, item: any) => sum + (item.swiggyPayout || 0) + (item.zomatoPayout || 0), 0);
-      const netAggregatorCommission = totalOnlineSalesLogged - totalAggregatorPayout;
-      const totalSalaryAdvances = filteredSalaryAdvances.reduce((sum: number, item: any) => sum + (item.amount || 0), 0);
-      const activeLoanBalance = filteredOnlineLoans.reduce((sum: number, item: any) => sum + Math.max(0, (item.loanAmount || 0) - (item.repaidAmount || 0)), 0);
-
-      const netProfit = totalSales - totalInventorySpend - totalOverheadSpend - totalPayouts;
-
-      // Store-wise breakdown, only meaningful when viewing all stores at once
-      const storeMap = new Map(stores.map((s: any) => [s.id, s.name]));
-      let storeBreakdown: Array<{ storeId: string; storeName: string; sales: number; inventorySpend: number; overheadSpend: number; profit: number }> = [];
-      if (!selectedStoreId) {
-        const storeIds = new Set<string>([
-          ...filteredSales.map((s: any) => s.storeId),
-          ...filteredInventory.map((i: any) => i.storeId),
-          ...filteredOverheads.map((o: any) => o.storeId),
-        ].filter(Boolean));
-        storeBreakdown = Array.from(storeIds).map((storeId) => {
-          const sSales = filteredSales.filter((s: any) => s.storeId === storeId).reduce((sum: number, s: any) => sum + (s.offlineSales || 0), 0)
-            + filteredOnlineSales.filter((s: any) => s.storeId === storeId).reduce((sum: number, s: any) => sum + (s.swiggySales || 0) + (s.zomatoSales || 0), 0);
-          const sInventory = filteredInventory.filter((i: any) => i.storeId === storeId).reduce((sum: number, i: any) => sum + (i.totalCost || 0), 0);
-          const sOverhead = filteredOverheads.filter((o: any) => o.storeId === storeId).reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
-          return {
-            storeId,
-            storeName: storeMap.get(storeId) || storeId,
-            sales: sSales,
-            inventorySpend: sInventory,
-            overheadSpend: sOverhead,
-            profit: sSales - sInventory - sOverhead
-          };
-        }).sort((a, b) => b.sales - a.sales);
-      }
-
-      // Item-level sales (units sold per momo type) - shows what's actually moving, not just ₹ totals
-      const itemTotals: Record<string, number> = {};
-      filteredItemSales.forEach((record: any) => {
-        Object.entries(record.data || {}).forEach(([label, qty]) => {
-          itemTotals[label] = (itemTotals[label] || 0) + (Number(qty) || 0);
-        });
-      });
-
-      // Previous period of equal length, for trend comparison
-      const periodMs = new Date(endDate).getTime() - new Date(startDate).getTime();
-      const prevEnd = new Date(new Date(startDate).getTime() - 24 * 60 * 60 * 1000);
-      const prevStart = new Date(prevEnd.getTime() - periodMs);
-      const prevStartStr = prevStart.toISOString().split('T')[0];
-      const prevEndStr = prevEnd.toISOString().split('T')[0];
-      const inPrevRange = (d: string) => d >= prevStartStr && d <= prevEndStr;
-      const matchesStore = (storeId?: string) => !selectedStoreId || storeId === selectedStoreId;
-
-      const prevSales = sales.filter((s: any) => inPrevRange(s.date) && matchesStore(s.storeId)).reduce((sum: number, s: any) => sum + (s.offlineSales || 0), 0)
-        + onlineSales.filter((s: any) => inPrevRange(s.date) && matchesStore(s.storeId)).reduce((sum: number, s: any) => sum + (s.swiggySales || 0) + (s.zomatoSales || 0), 0);
-      const prevInventorySpend = inventory.filter((i: any) => inPrevRange(i.date) && matchesStore(i.storeId)).reduce((sum: number, i: any) => sum + (i.totalCost || 0), 0);
-      const prevOverheadSpend = overheads.filter((o: any) => inPrevRange(o.date) && matchesStore(o.storeId)).reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
-      const prevPayouts = payouts.filter((p: any) => inPrevRange(p.date) && matchesStore(p.storeId)).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-      const prevProfit = prevSales - prevInventorySpend - prevOverheadSpend - prevPayouts;
-      const pctChange = (current: number, prev: number) => prev === 0 ? (current === 0 ? 0 : 100) : ((current - prev) / Math.abs(prev)) * 100;
-
-      return {
-        startDate,
-        endDate,
-        storeId: selectedStoreId,
-        inventory: filteredInventory,
-        overheads: filteredOverheads,
-        sales: filteredSales,
-        employees,
-        payouts: filteredPayouts,
-        production: filteredProduction,
-        onlineSales: filteredOnlineSales,
-        onlinePayouts: filteredOnlinePayouts,
-        salaryAdvances: filteredSalaryAdvances,
-        onlineLoans: filteredOnlineLoans,
-        storeBreakdown,
-        itemTotals,
-        summary: {
-          totalInventorySpend,
-          totalOverheadSpend,
-          totalStoreInventorySpend,
-          totalProductionInventorySpend,
-          totalStoreOverheadSpend,
-          totalProductionOverheadSpend,
-          totalOfflineSales,
-          totalOnlineSalesLogged,
-          totalSales,
-          totalPayouts,
-          totalAggregatorPayout,
-          netAggregatorCommission,
-          totalSalaryAdvances,
-          activeLoanBalance,
-          netProfit,
-          profitMargin: totalSales > 0 ? (netProfit / totalSales) * 100 : 0,
-          trend: {
-            salesChangePct: pctChange(totalSales, prevSales),
-            profitChangePct: pctChange(netProfit, prevProfit),
-            prevPeriod: `${prevStartStr} to ${prevEndStr}`
-          }
-        }
-      };
-    } catch (error) {
-      console.error('Error fetching export data:', error);
-      alert('Failed to fetch data for export');
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePreview = async () => {
-    const data = await fetchDataForExport();
-    if (data) {
-      setPreviewData(data);
-      setShowPreview(true);
-    }
-  };
-
-  const generateCSV = (data: any) => {
-    let csv = `Data Export Report\n`;
-    csv += `Period: ${data.startDate} to ${data.endDate}\n`;
-    if (data.storeId) {
-      csv += `Store ID: ${data.storeId}\n`;
-    }
-    csv += `Generated on: ${new Date().toLocaleString()}\n\n`;
-
-    // Summary Section
-    const s = data.summary;
-    csv += `SUMMARY\n`;
-    csv += `Total Offline Sales,₹${s.totalOfflineSales.toLocaleString()}\n`;
-    csv += `Total Online Sales (Swiggy + Zomato),₹${s.totalOnlineSalesLogged.toLocaleString()}\n`;
-    csv += `Total Sales,₹${s.totalSales.toLocaleString()}\n`;
-    csv += `Total Inventory Spend,₹${s.totalInventorySpend.toLocaleString()}\n`;
-    csv += `  - Store Inventory Spend,₹${s.totalStoreInventorySpend.toLocaleString()}\n`;
-    csv += `  - Production House Inventory Spend,₹${s.totalProductionInventorySpend.toLocaleString()}\n`;
-    csv += `Total Overhead Spend,₹${s.totalOverheadSpend.toLocaleString()}\n`;
-    csv += `  - Store Overhead Spend,₹${s.totalStoreOverheadSpend.toLocaleString()}\n`;
-    csv += `  - Production House Overhead Spend,₹${s.totalProductionOverheadSpend.toLocaleString()}\n`;
-    csv += `Total Employee Payouts,₹${s.totalPayouts.toLocaleString()}\n`;
-    csv += `Net Profit/Loss,₹${s.netProfit.toLocaleString()}\n`;
-    csv += `Profit Margin,${s.profitMargin.toFixed(1)}%\n`;
-    csv += `Aggregator Payout (Swiggy + Zomato),₹${s.totalAggregatorPayout.toLocaleString()}\n`;
-    csv += `Net Aggregator Commission (Sales - Payout),₹${s.netAggregatorCommission.toLocaleString()}\n`;
-    csv += `Salary Advances Requested,₹${s.totalSalaryAdvances.toLocaleString()}\n`;
-    csv += `Outstanding Loan Balance,₹${s.activeLoanBalance.toLocaleString()}\n`;
-    csv += `vs Previous Period (${s.trend.prevPeriod}),Sales ${s.trend.salesChangePct >= 0 ? '+' : ''}${s.trend.salesChangePct.toFixed(1)}% • Profit ${s.trend.profitChangePct >= 0 ? '+' : ''}${s.trend.profitChangePct.toFixed(1)}%\n\n`;
-
-    // Store-wise breakdown (only populated when viewing all stores)
-    if (data.storeBreakdown && data.storeBreakdown.length > 0) {
-      csv += `\nSTORE-WISE BREAKDOWN\n`;
-      csv += `Store,Sales,Inventory Spend,Overhead Spend,Profit\n`;
-      data.storeBreakdown.forEach((row: any) => {
-        csv += `"${row.storeName}",₹${row.sales.toLocaleString()},₹${row.inventorySpend.toLocaleString()},₹${row.overheadSpend.toLocaleString()},₹${row.profit.toLocaleString()}\n`;
-      });
-    }
-
-    // Item-level sales (units sold per momo type)
-    if (data.itemTotals && Object.keys(data.itemTotals).length > 0) {
-      csv += `\nITEM-WISE UNITS SOLD\n`;
-      csv += `Momo Type,Units Sold\n`;
-      Object.entries(data.itemTotals)
-        .sort((a: any, b: any) => b[1] - a[1])
-        .forEach(([label, qty]: any) => {
-          csv += `"${label}",${qty}\n`;
-        });
-    }
-
-    // Inventory Section
-    csv += `\nINVENTORY ITEMS\n`;
-    csv += `Date,Category,Item Name,Quantity,Unit,Price per Unit,Total Cost\n`;
-    data.inventory.forEach((item: any) => {
-      csv += `${item.date},"${item.category}","${item.itemName}",${item.quantity},"${item.unit}",₹${item.price || 0},₹${item.totalCost}\n`;
-    });
-
-    // Production Section
-    if (data.production && data.production.length > 0) {
-      csv += `\nPRODUCTION DATA\n`;
-      csv += `Date,Chicken Momos,Chicken Cheese,Veg Momos,Cheese Corn,Paneer,Veg Kurkure,Chicken Kurkure,Wastage (kg)\n`;
-      data.production.forEach((item: any) => {
-        csv += `${item.date},${item.chickenMomos?.final || 0},${item.chickenCheeseMomos?.final || 0},${item.vegMomos?.final || 0},${item.cheeseCornMomos?.final || 0},${item.paneerMomos?.final || 0},${item.vegKurkureMomos?.final || 0},${item.chickenKurkureMomos?.final || 0},${item.wastage?.total || 0}\n`;
-      });
-    }
-
-    // Overheads Section
-    csv += `\nOVERHEAD EXPENSES\n`;
-    csv += `Date,Category,Description,Amount\n`;
-    data.overheads.forEach((item: any) => {
-      csv += `${item.date},"${item.category}","${item.description || '-'}",₹${item.amount}\n`;
-    });
-
-    // Sales Section
-    csv += `\nSALES DATA (offline cash/Paytm reconciliation)\n`;
-    csv += `Date,Offline Sales (Paytm),Offline Sales (Cash),Employee Salaries,Cash in Hand,Cash Offset,Status\n`;
-    data.sales.forEach((item: any) => {
-      csv += `${item.date},₹${item.paytmAmount || 0},₹${item.cashAmount || 0},₹${item.employeeSalary || 0},₹${item.actualCashInHand || 0},₹${item.cashOffset || 0},"${item.approvalRequired ? 'Pending Approval' : 'Approved'}"\n`;
-    });
-
-    // Online Sales Section
-    if (data.onlineSales && data.onlineSales.length > 0) {
-      csv += `\nONLINE SALES (Swiggy + Zomato, logged by operations manager)\n`;
-      csv += `Date,Swiggy Sales,Zomato Sales,Total\n`;
-      data.onlineSales.forEach((item: any) => {
-        csv += `${item.date},₹${item.swiggySales || 0},₹${item.zomatoSales || 0},₹${(item.swiggySales || 0) + (item.zomatoSales || 0)}\n`;
-      });
-    }
-
-    // Aggregator Payout Reconciliation Section
-    if (data.onlinePayouts && data.onlinePayouts.length > 0) {
-      csv += `\nAGGREGATOR PAYOUT RECONCILIATION\n`;
-      csv += `Date,Swiggy Payout,Zomato Payout,Total Payout\n`;
-      data.onlinePayouts.forEach((item: any) => {
-        csv += `${item.date},₹${item.swiggyPayout || 0},₹${item.zomatoPayout || 0},₹${(item.swiggyPayout || 0) + (item.zomatoPayout || 0)}\n`;
-      });
-    }
-
-    // Payouts Section
-    csv += `\nEMPLOYEE PAYOUTS\n`;
-    csv += `Date,Employee Name,Employee ID,Amount\n`;
-    data.payouts.forEach((item: any) => {
-      const employee = data.employees.find((e: any) => e.id === item.employeeId);
-      csv += `${item.date},"${item.employeeName}","${employee?.employeeId || '-'}",₹${item.amount}\n`;
-    });
-
-    // Salary Advances Section
-    if (data.salaryAdvances && data.salaryAdvances.length > 0) {
-      csv += `\nSALARY ADVANCES\n`;
-      csv += `Date,Employee Name,Amount,Status,Monthly Deduction\n`;
-      data.salaryAdvances.forEach((item: any) => {
-        csv += `${item.requestDate},"${item.employeeName}",₹${item.amount},"${item.status}",₹${item.monthlyDeduction}\n`;
-      });
-    }
-
-    // Online Loans Section
-    if (data.onlineLoans && data.onlineLoans.length > 0) {
-      csv += `\nONLINE LOANS\n`;
-      csv += `Date,Store,Lender,Loan Amount,Repaid,Outstanding,Status\n`;
-      data.onlineLoans.forEach((item: any) => {
-        const outstanding = Math.max(0, (item.loanAmount || 0) - (item.repaidAmount || 0));
-        csv += `${item.loanDate},"${item.storeName || '-'}","${item.investorName || '-'}",₹${item.loanAmount},₹${item.repaidAmount || 0},₹${outstanding},"${item.status}"\n`;
-      });
-    }
-
-    // Employees Section
-    csv += `\nEMPLOYEE MASTER LIST\n`;
-    csv += `Employee ID,Name,Type,Role,Phone,Daily Rate\n`;
-    data.employees.forEach((emp: any) => {
-      csv += `"${emp.employeeId}","${emp.name}","${emp.type}","${emp.role || '-'}","${emp.phone}",₹${emp.dailyRate || '-'}\n`;
-    });
-
-    return csv;
-  };
-
-  const generateExcel = (data: any) => {
-    // For Excel, we'll generate a similar CSV but with better formatting
-    // In a real app, you'd use a library like xlsx or exceljs
-    let content = generateCSV(data);
-    return content;
-  };
-
-  const generatePDF = (data: any) => {
-    // For PDF generation, we'll create HTML content
-    // In a real app, you'd use jsPDF or pdfmake
-    let html = `
-      <html>
-        <head>
-          <title>Data Export Report</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            h1 { color: #333; border-bottom: 2px solid #4F46E5; padding-bottom: 10px; }
-            h2 { color: #4F46E5; margin-top: 30px; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            th { background-color: #4F46E5; color: white; }
-            .summary { background-color: #f0f9ff; padding: 15px; border-radius: 8px; margin: 20px 0; }
-            .summary-item { display: flex; justify-content: space-between; padding: 5px 0; }
-          </style>
-        </head>
-        <body>
-          <h1>Data Export Report</h1>
-          <p><strong>Period:</strong> ${data.startDate} to ${data.endDate}</p>
-          ${data.storeId ? `<p><strong>Store ID:</strong> ${data.storeId}</p>` : ''}
-          <p><strong>Generated on:</strong> ${new Date().toLocaleString()}</p>
-          
-          <div class="summary">
-            <h2>Summary</h2>
-            <div class="summary-item"><span>Total Offline Sales:</span><span>₹${data.summary.totalOfflineSales.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Total Online Sales (Swiggy + Zomato):</span><span>₹${data.summary.totalOnlineSalesLogged.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Total Sales:</span><span>₹${data.summary.totalSales.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Total Inventory Spend:</span><span>₹${data.summary.totalInventorySpend.toLocaleString()}</span></div>
-            <div class="summary-item"><span>&nbsp;&nbsp;- Store:</span><span>₹${data.summary.totalStoreInventorySpend.toLocaleString()}</span></div>
-            <div class="summary-item"><span>&nbsp;&nbsp;- Production House:</span><span>₹${data.summary.totalProductionInventorySpend.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Total Overhead Spend:</span><span>₹${data.summary.totalOverheadSpend.toLocaleString()}</span></div>
-            <div class="summary-item"><span>&nbsp;&nbsp;- Store:</span><span>₹${data.summary.totalStoreOverheadSpend.toLocaleString()}</span></div>
-            <div class="summary-item"><span>&nbsp;&nbsp;- Production House:</span><span>₹${data.summary.totalProductionOverheadSpend.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Total Employee Payouts:</span><span>₹${data.summary.totalPayouts.toLocaleString()}</span></div>
-            <div class="summary-item"><strong>Net Profit/Loss:</strong><strong>₹${data.summary.netProfit.toLocaleString()}</strong></div>
-            <div class="summary-item"><span>Profit Margin:</span><span>${data.summary.profitMargin.toFixed(1)}%</span></div>
-            <div class="summary-item"><span>Net Aggregator Commission (Sales - Payout):</span><span>₹${data.summary.netAggregatorCommission.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Salary Advances Requested:</span><span>₹${data.summary.totalSalaryAdvances.toLocaleString()}</span></div>
-            <div class="summary-item"><span>Outstanding Loan Balance:</span><span>₹${data.summary.activeLoanBalance.toLocaleString()}</span></div>
-            <div class="summary-item"><span>vs Previous Period (${data.summary.trend.prevPeriod}):</span><span>Sales ${data.summary.trend.salesChangePct >= 0 ? '+' : ''}${data.summary.trend.salesChangePct.toFixed(1)}% • Profit ${data.summary.trend.profitChangePct >= 0 ? '+' : ''}${data.summary.trend.profitChangePct.toFixed(1)}%</span></div>
-          </div>
-
-          ${data.storeBreakdown && data.storeBreakdown.length > 0 ? `
-          <h2>Store-wise Breakdown</h2>
-          <table>
-            <thead>
-              <tr><th>Store</th><th>Sales</th><th>Inventory Spend</th><th>Overhead Spend</th><th>Profit</th></tr>
-            </thead>
-            <tbody>
-              ${data.storeBreakdown.map((row: any) => `
-                <tr>
-                  <td>${row.storeName}</td>
-                  <td>₹${row.sales.toLocaleString()}</td>
-                  <td>₹${row.inventorySpend.toLocaleString()}</td>
-                  <td>₹${row.overheadSpend.toLocaleString()}</td>
-                  <td>₹${row.profit.toLocaleString()}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ` : ''}
-
-          ${data.itemTotals && Object.keys(data.itemTotals).length > 0 ? `
-          <h2>Item-wise Units Sold</h2>
-          <table>
-            <thead>
-              <tr><th>Momo Type</th><th>Units Sold</th></tr>
-            </thead>
-            <tbody>
-              ${Object.entries(data.itemTotals).sort((a: any, b: any) => b[1] - a[1]).map(([label, qty]: any) => `
-                <tr><td>${label}</td><td>${qty}</td></tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ` : ''}
-
-          <h2>Inventory Items</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Category</th><th>Item Name</th><th>Quantity</th><th>Unit</th><th>Price/Unit</th><th>Total Cost</th></tr>
-            </thead>
-            <tbody>
-              ${data.inventory.map((item: any) => `
-                <tr>
-                  <td>${item.date}</td>
-                  <td>${item.category}</td>
-                  <td>${item.itemName}</td>
-                  <td>${item.quantity}</td>
-                  <td>${item.unit}</td>
-                  <td>₹${item.price || 0}</td>
-                  <td>₹${item.totalCost}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          ${data.production && data.production.length > 0 ? `
-          <h2>Production Data</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Chicken Momos</th><th>Chicken Cheese</th><th>Veg Momos</th><th>Cheese Corn</th><th>Paneer</th><th>Veg Kurkure</th><th>Chicken Kurkure</th><th>Wastage (kg)</th></tr>
-            </thead>
-            <tbody>
-              ${data.production.map((item: any) => `
-                <tr>
-                  <td>${item.date}</td>
-                  <td>${item.chickenMomos?.final || 0}</td>
-                  <td>${item.chickenCheeseMomos?.final || 0}</td>
-                  <td>${item.vegMomos?.final || 0}</td>
-                  <td>${item.cheeseCornMomos?.final || 0}</td>
-                  <td>${item.paneerMomos?.final || 0}</td>
-                  <td>${item.vegKurkureMomos?.final || 0}</td>
-                  <td>${item.chickenKurkureMomos?.final || 0}</td>
-                  <td>${item.wastage?.total || 0}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ` : ''}
-
-          <h2>Overhead Expenses</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th></tr>
-            </thead>
-            <tbody>
-              ${data.overheads.map((item: any) => `
-                <tr>
-                  <td>${item.date}</td>
-                  <td>${item.category}</td>
-                  <td>${item.description || '-'}</td>
-                  <td>₹${item.amount}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          <h2>Sales Data (offline cash/Paytm reconciliation)</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Offline (Paytm)</th><th>Offline (Cash)</th><th>Salaries</th><th>Cash in Hand</th><th>Cash Offset</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-              ${data.sales.map((item: any) => `
-                <tr>
-                  <td>${item.date}</td>
-                  <td>₹${item.paytmAmount || 0}</td>
-                  <td>₹${item.cashAmount || 0}</td>
-                  <td>₹${item.employeeSalary || 0}</td>
-                  <td>₹${item.actualCashInHand || 0}</td>
-                  <td>₹${item.cashOffset || 0}</td>
-                  <td>${item.approvalRequired ? 'Pending' : 'Approved'}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          ${data.onlineSales && data.onlineSales.length > 0 ? `
-          <h2>Online Sales (Swiggy + Zomato)</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Swiggy</th><th>Zomato</th><th>Total</th></tr>
-            </thead>
-            <tbody>
-              ${data.onlineSales.map((item: any) => `
-                <tr>
-                  <td>${item.date}</td>
-                  <td>₹${item.swiggySales || 0}</td>
-                  <td>₹${item.zomatoSales || 0}</td>
-                  <td>₹${(item.swiggySales || 0) + (item.zomatoSales || 0)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ` : ''}
-
-          ${data.onlinePayouts && data.onlinePayouts.length > 0 ? `
-          <h2>Aggregator Payout Reconciliation</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Swiggy Payout</th><th>Zomato Payout</th><th>Total</th></tr>
-            </thead>
-            <tbody>
-              ${data.onlinePayouts.map((item: any) => `
-                <tr>
-                  <td>${item.date}</td>
-                  <td>₹${item.swiggyPayout || 0}</td>
-                  <td>₹${item.zomatoPayout || 0}</td>
-                  <td>₹${(item.swiggyPayout || 0) + (item.zomatoPayout || 0)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ` : ''}
-
-          <h2>Employee Payouts</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Employee Name</th><th>Employee ID</th><th>Amount</th></tr>
-            </thead>
-            <tbody>
-              ${data.payouts.map((item: any) => {
-                const employee = data.employees.find((e: any) => e.id === item.employeeId);
-                return `
-                  <tr>
-                    <td>${item.date}</td>
-                    <td>${item.employeeName}</td>
-                    <td>${employee?.employeeId || '-'}</td>
-                    <td>₹${item.amount}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-
-          ${data.salaryAdvances && data.salaryAdvances.length > 0 ? `
-          <h2>Salary Advances</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Employee Name</th><th>Amount</th><th>Status</th><th>Monthly Deduction</th></tr>
-            </thead>
-            <tbody>
-              ${data.salaryAdvances.map((item: any) => `
-                <tr>
-                  <td>${item.requestDate}</td>
-                  <td>${item.employeeName}</td>
-                  <td>₹${item.amount}</td>
-                  <td>${item.status}</td>
-                  <td>₹${item.monthlyDeduction}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ` : ''}
-
-          ${data.onlineLoans && data.onlineLoans.length > 0 ? `
-          <h2>Online Loans</h2>
-          <table>
-            <thead>
-              <tr><th>Date</th><th>Store</th><th>Lender</th><th>Loan Amount</th><th>Repaid</th><th>Outstanding</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-              ${data.onlineLoans.map((item: any) => `
-                <tr>
-                  <td>${item.loanDate}</td>
-                  <td>${item.storeName || '-'}</td>
-                  <td>${item.investorName || '-'}</td>
-                  <td>₹${item.loanAmount}</td>
-                  <td>₹${item.repaidAmount || 0}</td>
-                  <td>₹${Math.max(0, (item.loanAmount || 0) - (item.repaidAmount || 0))}</td>
-                  <td>${item.status}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          ` : ''}
-
-          <h2>Employee Master List</h2>
-          <table>
-            <thead>
-              <tr><th>Employee ID</th><th>Name</th><th>Type</th><th>Role</th><th>Phone</th><th>Daily Rate</th></tr>
-            </thead>
-            <tbody>
-              ${data.employees.map((emp: any) => `
-                <tr>
-                  <td>${emp.employeeId}</td>
-                  <td>${emp.name}</td>
-                  <td>${emp.type}</td>
-                  <td>${emp.role || '-'}</td>
-                  <td>${emp.phone}</td>
-                  <td>${emp.dailyRate ? '₹' + emp.dailyRate : '-'}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </body>
-      </html>
-    `;
-    return html;
-  };
-
-  const handleExport = async () => {
-    const data = await fetchDataForExport();
-    if (!data) return;
-
-    let content: string;
-    let mimeType: string;
-    let fileName: string;
-    const dateStr = `${data.startDate}_to_${data.endDate}`;
-
-    switch (exportFormat) {
-      case 'csv':
-        content = generateCSV(data);
-        mimeType = 'text/csv';
-        fileName = `export_${dateStr}.csv`;
-        break;
-      case 'excel':
-        content = generateExcel(data);
-        mimeType = 'application/vnd.ms-excel';
-        fileName = `export_${dateStr}.xls`;
-        break;
-      case 'pdf':
-        content = generatePDF(data);
-        mimeType = 'text/html';
-        fileName = `export_${dateStr}.html`;
-        break;
-      default:
+      const token = await freshAccessToken();
+      if (!token) {
+        toast.error(t('reports.loginExpired'));
         return;
+      }
+      const data = await loadReportData(token, { from: p.start, to: p.dataEnd });
+      const storeId = forceWholeBusiness ? null : resolveEntities(selectedStoreId, data.stores).storeId;
+      await work(makeContext(p, forceWholeBusiness ? 'combined' : scope, storeId, data, generatedBy), token);
+    } catch (error: any) {
+      console.error('Export failed:', error);
+      toast.error(t('reports.failed', { error: error?.message || 'unknown error' }));
+    } finally {
+      setBusy(null);
     }
-
-    // Create and download file
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    alert(`Data exported successfully as ${fileName}`);
   };
 
-  return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-8">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-blue-500 flex items-center justify-center shadow-lg shadow-sky-500/30 flex-shrink-0">
-            <FileDown className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">Export Data</h1>
-            <p className="text-sm sm:text-base text-gray-500">Download comprehensive reports in multiple formats</p>
-            {selectedStoreId && (
-              <div className="mt-2 inline-block bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">
-                Store: {selectedStoreId}
-              </div>
-            )}
-          </div>
-        </div>
+  const fileName = (what: string, p: ReportPeriod, ext: string, withScope = true) =>
+    `BunnyMomos_${what}_${p.fileLabel}${withScope ? `_${scope}` : ''}.${ext}`;
 
-        {/* View toggle - the raw Data Export (CSV/Excel/PDF of every record) vs. the
-            Business Audit Report (judgment: cash control health, revenue completeness) -
-            deliberately kept separate rather than merged into one page. */}
-        {context && (
-          <div className="flex bg-gray-100 rounded-xl p-1 mb-6">
-            {(['export', 'audit'] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setMainView(v)}
-                className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  mainView === v ? 'bg-slate-800 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                {v === 'export' ? 'Data Export' : 'Business Audit Report'}
-              </button>
-            ))}
-          </div>
+  const save = async (name: string, blob: Blob, mime: string) => {
+    await saveFile(name, blob, mime);
+    toast.success(t('reports.savedFile', { name }));
+  };
+
+  const saveWorkbook = async (name: string, sheets: SheetSpec[]) => save(name, await workbookBlob(sheets), XLSX_MIME);
+
+  const checkNumbers = () => run('look', async (ctx) => {
+    const prev = previousPeriod(ctx.period, ctx.today);
+    setLook({
+      current: pnlFor(ctx, ctx.period.start, ctx.period.dataEnd),
+      previous: pnlFor(ctx, prev.start, prev.dataEnd),
+      period: ctx.period,
+      prevLabel: prev.label,
+    });
+  });
+
+  const allRecords = (format: 'xlsx' | 'csv' | 'html') => run(format === 'xlsx' ? 'all-xlsx' : format === 'csv' ? 'all-csv' : 'all-pdf', async (ctx) => {
+    const out = buildQuickExport(ctx);
+    if (format === 'xlsx') await saveWorkbook(fileName('AllRecords', ctx.period, 'xlsx'), out.sheets);
+    else if (format === 'csv') await save(fileName('AllRecords', ctx.period, 'csv'), csvBlob(out.sheets), CSV_MIME);
+    else await save(fileName('Report', ctx.period, 'html'), htmlBlob(out.html), HTML_MIME);
+  });
+
+  const auditor = () => run('auditor-xlsx', async (ctx) => {
+    await saveWorkbook(fileName('AuditorWorkbook', ctx.period, 'xlsx'), buildAuditorWorkbook(ctx));
+  });
+
+  // One register on its own: the auditor workbook's tab, with its README in front.
+  const register = (id: 'sales' | 'expenses' | 'payroll' | 'paytm', format: 'xlsx' | 'csv') => run(`${id}-${format}`, async (ctx) => {
+    const spec = {
+      sales: { file: 'SalesRegister', name: 'Sales register', sheets: () => [salesDayBook(ctx)], tabs: [['Sales day book', 'One row per store per day: POS sales, cash and Paytm counted, till short/over, approval']] },
+      expenses: { file: 'ExpensesRegister', name: 'Expenses and purchases', sheets: () => [purchasesRegister(ctx), expensesRegister(ctx)], tabs: [['Purchases register', 'Every inventory purchase with a price check'], ['Expenses register', 'Running expenses and fixed costs, with the P&L line each lands on']] },
+      payroll: { file: 'PayrollRegister', name: 'Payroll register', sheets: () => [payrollRegister(ctx)], tabs: [['Payroll register', 'Salary payouts by employee code: month covered, date paid, gross, advance deducted, net, paid from']] },
+      paytm: { file: 'PaytmLedger', name: 'Paytm ledger', sheets: () => [paytmLedgerSheet(ctx)], tabs: [['Paytm ledger', 'Every movement of the Paytm/UPI balance with the running balance']] },
+    }[id];
+    const sheets: SheetSpec[] = [readmeSheet(ctx, spec.name, spec.tabs as [string, string][]), ...spec.sheets()];
+    if (format === 'xlsx') await saveWorkbook(fileName(spec.file, ctx.period, 'xlsx'), sheets);
+    else await save(fileName(spec.file, ctx.period, 'csv'), csvBlob(sheets), CSV_MIME);
+  });
+
+  const ceo = (format: 'xlsx' | 'html') => run(format === 'xlsx' ? 'ceo-xlsx' : 'ceo-pdf', async (ctx, token) => {
+    // Order counts come from the billing system's order detail; without them the pack still works.
+    let orders: Map<string, OrderCounts> | null = null;
+    if (ctx.scope !== 'production') {
+      const records = await api.getOrderItemDetail(token, { storeId: ctx.storeId || undefined, startDate: ctx.period.start, endDate: ctx.period.dataEnd }).catch(() => []);
+      orders = records.length ? ordersByDate(records) : null;
+    }
+    const out = buildCeoPack(ctx, orders);
+    if (format === 'xlsx') await saveWorkbook(fileName('CEO_Investor', ctx.period, 'xlsx'), out.sheets);
+    else await save(fileName('CEO_Investor', ctx.period, 'html'), htmlBlob(out.html), HTML_MIME);
+  });
+
+  // The tax pack is always a whole financial year: the one picked, or the one the period ends in.
+  const taxYear = period ? (period.kind === 'fy' ? period : financialYearPeriod(period.fyStartYear, today)) : null;
+  const tax = (format: 'xlsx' | 'html') => taxYear && run(format === 'xlsx' ? 'tax-xlsx' : 'tax-pdf', async (ctx) => {
+    const out = buildTaxPack(ctx);
+    if (format === 'xlsx') await saveWorkbook(fileName('Tax_CA', ctx.period, 'xlsx', false), out.sheets);
+    else await save(fileName('Tax_CA_summary', ctx.period, 'html', false), htmlBlob(out.html), HTML_MIME);
+  }, taxYear, true);
+
+  const download = (id: ReportId, format: Format) => {
+    const html = format === 'pdf' ? 'html' : format === 'csv' ? 'csv' : 'xlsx';
+    switch (id) {
+      case 'all': return allRecords(html);
+      case 'auditor': return auditor();
+      case 'ceo': return ceo(html === 'html' ? 'html' : 'xlsx');
+      case 'tax': return tax(html === 'html' ? 'html' : 'xlsx');
+      default: return register(id, format === 'csv' ? 'csv' : 'xlsx');
+    }
+  };
+
+  const pct = (now: number, before: number) =>
+    Math.abs(before) < 0.005 ? '' : `${now >= before ? '+' : ''}${(((now - before) / Math.abs(before)) * 100).toFixed(1)}%`;
+
+  // Changing the period or what it covers drops the last profit check.
+  const changed = <T,>(set: (v: T) => void) => (v: T) => { set(v); setLook(null); };
+
+  const periodLabel = period ? period.label : t('reports.pickDates');
+  const reports = REPORTS.filter((r) => !r.ownerOnly || isOwner);
+  const dlReport = dl ? REPORTS.find((r) => r.id === dl.id)! : null;
+
+  const periodPicker = (
+    <div className="flex flex-col gap-5" lang={lang}>
+      <div className="flex flex-col gap-3">
+        <span className="text-body-sm font-medium text-text">{t('reports.period')}</span>
+        <SegmentedControl
+          aria-label={t('reports.period')}
+          value={kind}
+          onValueChange={changed(setKind)}
+          options={(['month', 'quarter', 'fy', 'custom'] as PeriodKind[]).map((k) => ({ value: k, label: t(`reports.kind.${k}` as I18nKey) }))}
+        />
+        {kind === 'month' && (
+          <Field label={t('reports.month')} hideLabel>
+            <Input type="month" value={month} max={today.slice(0, 7)} onChange={(e) => changed(setMonth)(e.target.value)} />
+          </Field>
         )}
-
-        {mainView === 'audit' && context ? (
-          <BusinessAuditReport context={context} selectedStoreId={selectedStoreId} />
-        ) : (
-        <>
-        {/* Export Configuration Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-6">
-          {/* Date Range Selection */}
-          <div className="mb-6">
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-orange-600" />
-              Select Date Range
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <button
-                onClick={() => setDateRange('today')}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  dateRange === 'today'
-                    ? 'border-orange-500 bg-orange-50 text-orange-700'
-                    : 'border-gray-200 hover:border-orange-300'
-                }`}
-              >
-                <div className="font-medium">Today</div>
-                <div className="text-xs text-gray-500 mt-1">Current day</div>
-              </button>
-              <button
-                onClick={() => setDateRange('weekly')}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  dateRange === 'weekly'
-                    ? 'border-orange-500 bg-orange-50 text-orange-700'
-                    : 'border-gray-200 hover:border-orange-300'
-                }`}
-              >
-                <div className="font-medium">Last 7 Days</div>
-                <div className="text-xs text-gray-500 mt-1">Weekly data</div>
-              </button>
-              <button
-                onClick={() => setDateRange('monthly')}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  dateRange === 'monthly'
-                    ? 'border-orange-500 bg-orange-50 text-orange-700'
-                    : 'border-gray-200 hover:border-orange-300'
-                }`}
-              >
-                <div className="font-medium">This Month</div>
-                <div className="text-xs text-gray-500 mt-1">Monthly data</div>
-              </button>
-              <button
-                onClick={() => setDateRange('custom')}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  dateRange === 'custom'
-                    ? 'border-orange-500 bg-orange-50 text-orange-700'
-                    : 'border-gray-200 hover:border-orange-300'
-                }`}
-              >
-                <div className="font-medium">Custom</div>
-                <div className="text-xs text-gray-500 mt-1">Select range</div>
-              </button>
+        {kind === 'quarter' && (
+          <Field label={t('reports.quarter')} hideLabel>
+            <NativeSelect value={quarterKey} onChange={(e) => changed(setQuarterKey)(e.target.value)}>
+              {quarterOptions.map((q) => <option key={q.key} value={q.key}>{q.label}</option>)}
+            </NativeSelect>
+          </Field>
+        )}
+        {kind === 'fy' && (
+          <Field label={t('reports.fy')} hideLabel>
+            <NativeSelect value={fy} onChange={(e) => changed(setFy)(Number(e.target.value))}>
+              {[0, 1, 2, 3].map((i) => <option key={i} value={thisFy - i}>{fyLabel(thisFy - i)} (Apr {thisFy - i} - Mar {thisFy - i + 1})</option>)}
+            </NativeSelect>
+          </Field>
+        )}
+        {kind === 'custom' && (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {([['reports.today', 0], ['reports.last7', 6], ['reports.last30', 29]] as [I18nKey, number][]).map(([label, back]) => (
+                <Button key={label} variant="secondary" size="sm" onClick={() => { setCustomStart(addDays(today, -back)); setCustomEnd(today); setLook(null); }}>
+                  {t(label)}
+                </Button>
+              ))}
             </div>
-
-            {dateRange === 'custom' && (
-              <div className="mt-4 p-4 bg-orange-50 rounded-lg">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-2">Start Date</label>
-                    <input
-                      type="date"
-                      value={customStartDate}
-                      onChange={(e) => setCustomStartDate(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-700 mb-2">End Date</label>
-                    <input
-                      type="date"
-                      value={customEndDate}
-                      onChange={(e) => setCustomEndDate(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Export Format Selection */}
-          <div className="mb-6">
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-4 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-blue-600" />
-              Select Export Format
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <button
-                onClick={() => setExportFormat('csv')}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  exportFormat === 'csv'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-blue-300'
-                }`}
-              >
-                <Table className="w-8 h-8 mx-auto mb-2" />
-                <div className="font-medium">CSV</div>
-                <div className="text-xs text-gray-500 mt-1">Excel compatible</div>
-              </button>
-              <button
-                onClick={() => setExportFormat('excel')}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  exportFormat === 'excel'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-blue-300'
-                }`}
-              >
-                <FileSpreadsheet className="w-8 h-8 mx-auto mb-2" />
-                <div className="font-medium">Excel</div>
-                <div className="text-xs text-gray-500 mt-1">XLS format</div>
-              </button>
-              <button
-                onClick={() => setExportFormat('pdf')}
-                className={`p-4 rounded-lg border-2 transition-all ${
-                  exportFormat === 'pdf'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-blue-300'
-                }`}
-              >
-                <FileText className="w-8 h-8 mx-auto mb-2" />
-                <div className="font-medium">PDF/HTML</div>
-                <div className="text-xs text-gray-500 mt-1">Print ready</div>
-              </button>
-            </div>
-          </div>
-
-          {/* Export Information */}
-          <div className="bg-gradient-to-br from-[#E8D5F2] to-[#D4B5F0] rounded-lg p-4 mb-6">
-            <h3 className="font-medium text-gray-900 mb-2">Export Will Include:</h3>
-            <ul className="space-y-1 text-sm text-gray-700">
-              <li>✓ Complete Inventory Items with quantities and costs</li>
-              <li>✓ Production Data with all momo types and wastage</li>
-              <li>✓ All Overhead Expenses categorized</li>
-              <li>✓ Offline Sales Data with payment breakdowns</li>
-              <li>✓ Online Sales (Swiggy + Zomato) and aggregator payout reconciliation</li>
-              <li>✓ Item-wise units sold, ranked by volume</li>
-              <li>✓ Store-wise breakdown (when viewing all stores)</li>
-              <li>✓ Salary Advances and Online Loans</li>
-              <li>✓ Employee Payouts with detailed records</li>
-              <li>✓ Employee Master List</li>
-              <li>✓ Financial Summary with profit margin and trend vs. previous period</li>
-            </ul>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3">
-            <button
-              onClick={handlePreview}
-              disabled={loading}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 border-2 border-orange-600 text-orange-700 rounded-lg hover:bg-orange-50 transition-colors disabled:opacity-50"
-            >
-              <FileText className="w-5 h-5" />
-              Preview Data
-            </button>
-            <button
-              onClick={handleExport}
-              disabled={loading}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-blue-600 text-white rounded-lg hover:from-orange-700 hover:to-blue-700 transition-colors disabled:opacity-50"
-            >
-              <Download className="w-5 h-5" />
-              {loading ? 'Generating...' : 'Export Data'}
-            </button>
-          </div>
-        </div>
-
-        {/* Info Card */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span className="text-white text-sm">ℹ️</span>
-            </div>
-            <div>
-              <h4 className="font-medium text-blue-900 mb-1">Export Tips</h4>
-              <ul className="text-sm text-blue-800 space-y-1">
-                <li>• CSV files can be opened in Excel, Google Sheets, or any spreadsheet application</li>
-                <li>• PDF/HTML exports are best for printing or sharing reports</li>
-                <li>• Custom date ranges allow you to export specific time periods</li>
-                <li>• All monetary values are in Indian Rupees (₹)</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        {/* Item Catalog Cleanup - Cluster Heads Only */}
-        {userRole === 'cluster_head' && (
-          <div className="mt-6 bg-blue-50 border-2 border-blue-200 rounded-lg p-6">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                <span className="text-white text-lg">🧹</span>
-              </div>
-              <div className="flex-1">
-                <h4 className="font-medium text-blue-900 mb-2">Item Catalog Cleanup</h4>
-                <p className="text-sm text-blue-800 mb-4">
-                  Review duplicate/misspelled inventory items and add emoji + Bengali names — nothing changes until you approve each row.
-                </p>
-                <button
-                  onClick={() => setShowItemCleanup(true)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Open Item Catalog Cleanup
-                </button>
-              </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t('reports.from')}>
+                <Input type="date" value={customStart} max={customEnd || today} onChange={(e) => changed(setCustomStart)(e.target.value)} />
+              </Field>
+              <Field label={t('reports.to')}>
+                <Input type="date" value={customEnd} min={customStart} max={today} onChange={(e) => changed(setCustomEnd)(e.target.value)} />
+              </Field>
             </div>
           </div>
         )}
-
-        {/* Recategorize Miscellaneous Expenses - Cluster Heads Only */}
-        {userRole === 'cluster_head' && (
-          <div className="mt-6 bg-amber-50 border-2 border-amber-200 rounded-lg p-6">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 bg-amber-500 rounded-full flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-5 h-5 text-white" />
-              </div>
-              <div className="flex-1">
-                <h4 className="font-medium text-amber-900 mb-2">Recategorize Miscellaneous Expenses</h4>
-                <p className="text-sm text-amber-800 mb-4">
-                  "Miscellaneous" is no longer offered when logging a new expense — assign these old entries to a proper category.
-                </p>
-                {miscItems === null ? (
-                  <button
-                    onClick={loadMiscItems}
-                    disabled={miscLoading || !accessToken}
-                    className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
-                  >
-                    {miscLoading ? 'Loading...' : 'Load Miscellaneous Items'}
-                  </button>
-                ) : miscItems.length === 0 ? (
-                  <p className="text-sm text-green-800">✅ No miscellaneous items left to recategorize.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {miscItems.map((item) => (
-                      <div key={item.id} className="bg-white rounded-lg border border-amber-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">{item.description || 'No description'}</p>
-                          <p className="text-xs text-gray-500">{item.date} • ₹{item.amount.toFixed(2)}</p>
-                        </div>
-                        <select
-                          value={miscNewCategory[item.id] || ''}
-                          onChange={(e) => setMiscNewCategory((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                        >
-                          <option value="">Choose new category...</option>
-                          {Object.entries(OVERHEAD_CATEGORY_META)
-                            .filter(([value]) => value !== 'miscellaneous')
-                            .map(([value, meta]) => (
-                              <option key={value} value={value}>{meta.label}</option>
-                            ))}
-                        </select>
-                        <button
-                          onClick={() => saveMiscRecategorization(item)}
-                          disabled={!miscNewCategory[item.id] || miscSaving === item.id}
-                          className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 text-sm whitespace-nowrap"
-                        >
-                          {miscSaving === item.id ? 'Saving...' : 'Save'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Production Launch Cleanup - Cluster Heads Only */}
-        {userRole === 'cluster_head' && (
-          <div className="mt-6 bg-red-50 border-2 border-red-200 rounded-lg p-6">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
-                <span className="text-white text-lg">⚠️</span>
-              </div>
-              <div className="flex-1">
-                <h4 className="font-medium text-red-900 mb-2">Production Data Cleanup</h4>
-                <p className="text-sm text-red-800 mb-4">
-                  Remove ALL transactional data (inventory logs, sales, stock requests, production data, notifications, etc.) to prepare for production launch.
-                  <strong className="block mt-2">⚠️ This will DELETE:</strong>
-                </p>
-                <ul className="text-sm text-red-800 space-y-1 ml-4 mb-3">
-                  <li>❌ All inventory purchase logs</li>
-                  <li>❌ All sales records</li>
-                  <li>❌ All production logs & requests</li>
-                  <li>❌ All stock requests & recalibrations</li>
-                  <li>❌ All overhead & fixed costs</li>
-                  <li>❌ All notifications</li>
-                </ul>
-                <p className="text-sm text-green-800 mb-4">
-                  <strong className="block mt-2">✅ This will PRESERVE:</strong>
-                </p>
-                <ul className="text-sm text-green-800 space-y-1 ml-4 mb-4">
-                  <li>✓ Inventory Items (product metadata)</li>
-                  <li>✓ Employee Master Data</li>
-                  <li>✓ Employee Payouts, Timesheets & Leaves</li>
-                  <li>✓ Stores & Production Houses</li>
-                </ul>
-                <button
-                  onClick={async () => {
-                    if (!confirm('⚠️ CRITICAL WARNING: This will PERMANENTLY remove ALL transactional data:\n\n❌ Inventory logs, Sales, Production data, Stock requests, Overheads, Fixed costs, Notifications\n\n✅ PRESERVED: Inventory items metadata, Employee master data, Payouts, Timesheets, Leaves, Stores, Production houses\n\nThis action CANNOT be undone!\n\nAre you absolutely sure you want to proceed?')) {
-                      return;
-                    }
-                    
-                    try {
-                      setLoading(true);
-                      const result = await api.cleanupProductionData();
-                      alert(`✅ ${result.message}\n\n📊 Total Deleted: ${result.totalDeleted} records\n\n🗑️ Breakdown:\n- Inventory Logs: ${result.stats.inventory}\n- Sales: ${result.stats.sales}\n- Item Sales: ${result.stats.itemSales}\n- Overheads: ${result.stats.overheads}\n- Fixed Costs: ${result.stats.fixedCosts}\n- Stock Requests: ${result.stats.stockRequests}\n- Stock Recalibrations: ${result.stats.stockRecalibrations}\n- Production Data: ${result.stats.productionData}\n- Production Requests: ${result.stats.productionRequests}\n- Notifications: ${result.stats.notifications}`);
-                      
-                      // Reload the page to refresh all data
-                      window.location.reload();
-                    } catch (error: any) {
-                      console.error('Error during cleanup:', error);
-                      alert(`❌ Failed to cleanup production data: ${error.message}`);
-                    } finally {
-                      setLoading(false);
-                    }
-                  }}
-                  disabled={loading}
-                  className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                >
-                  <span>🗑️</span>
-                  {loading ? 'Cleaning up...' : 'Cleanup Production Data'}
-                </button>
-                <p className="text-xs text-red-700 mt-3">
-                  ⚠️ This action cannot be undone. Make sure you have exported all necessary data first.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-        </>
+        {period && (
+          <p className="text-body-sm text-text-2">
+            <span className="font-medium text-text">{period.label}</span>
+            {period.partial && <span className="text-warning"> · {t('reports.stillRunning', { date: prettyDate(period.dataEnd) })}</span>}
+          </p>
         )}
       </div>
-
-      {/* Preview Modal */}
-      {showPreview && previewData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
-              <h2 className="text-xl font-bold text-gray-900 tracking-tight">Data Preview</h2>
-              <button
-                onClick={() => setShowPreview(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-            </div>
-            <div className="p-6">
-              {/* Summary */}
-              <div className="bg-gradient-to-br from-blue-50 to-orange-50 rounded-lg p-6 mb-6">
-                <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-4">Summary</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div>
-                    <div className="text-sm text-gray-600">Inventory</div>
-                    <div className="text-xl text-gray-900">₹{previewData.summary.totalInventorySpend.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-600">Overheads</div>
-                    <div className="text-xl text-gray-900">₹{previewData.summary.totalOverheadSpend.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-600">Total Sales (offline + online)</div>
-                    <div className="text-xl text-green-600">₹{previewData.summary.totalSales.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-600">Payouts</div>
-                    <div className="text-xl text-gray-900">₹{previewData.summary.totalPayouts.toLocaleString()}</div>
-                  </div>
-                </div>
-                <div className="mt-4 pt-4 border-t border-orange-200">
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium text-gray-900">Net Profit/Loss:</span>
-                    <span className={`text-xl font-bold ${previewData.summary.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      ₹{previewData.summary.netProfit.toLocaleString()} ({previewData.summary.profitMargin.toFixed(1)}% margin)
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center mt-2 text-sm">
-                    <span className="text-gray-600">vs previous period ({previewData.summary.trend.prevPeriod}):</span>
-                    <span className={previewData.summary.trend.salesChangePct >= 0 ? 'text-green-600' : 'text-red-600'}>
-                      Sales {previewData.summary.trend.salesChangePct >= 0 ? '+' : ''}{previewData.summary.trend.salesChangePct.toFixed(1)}% • Profit {previewData.summary.trend.profitChangePct >= 0 ? '+' : ''}{previewData.summary.trend.profitChangePct.toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Store vs Production House Expense Split */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="text-sm font-medium text-blue-900 mb-2">Store Expenses</div>
-                  <div className="flex justify-between text-sm text-blue-800">
-                    <span>Inventory</span>
-                    <span>₹{previewData.summary.totalStoreInventorySpend.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-sm text-blue-800">
-                    <span>Overhead</span>
-                    <span>₹{previewData.summary.totalStoreOverheadSpend.toLocaleString()}</span>
-                  </div>
-                </div>
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <div className="text-sm font-medium text-green-900 mb-2">Production House Expenses</div>
-                  <div className="flex justify-between text-sm text-green-800">
-                    <span>Inventory</span>
-                    <span>₹{previewData.summary.totalProductionInventorySpend.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-sm text-green-800">
-                    <span>Overhead</span>
-                    <span>₹{previewData.summary.totalProductionOverheadSpend.toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Counts */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Inventory Items</div>
-                  <div className="text-2xl text-gray-900">{previewData.inventory.length}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Production Logs</div>
-                  <div className="text-2xl text-gray-900">{previewData.production?.length || 0}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Overhead Entries</div>
-                  <div className="text-2xl text-gray-900">{previewData.overheads.length}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Sales Records</div>
-                  <div className="text-2xl text-gray-900">{previewData.sales.length}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Online Sales Entries</div>
-                  <div className="text-2xl text-gray-900">{previewData.onlineSales?.length || 0}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Aggregator Payouts</div>
-                  <div className="text-2xl text-gray-900">{previewData.onlinePayouts?.length || 0}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Payout Records</div>
-                  <div className="text-2xl text-gray-900">{previewData.payouts.length}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-sm text-gray-600">Salary Advances</div>
-                  <div className="text-2xl text-gray-900">{previewData.salaryAdvances?.length || 0}</div>
-                </div>
-              </div>
-
-              {previewData.storeBreakdown && previewData.storeBreakdown.length > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-3">Store-wise Breakdown</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm border-collapse">
-                      <thead>
-                        <tr className="bg-gray-100 text-left">
-                          <th className="p-2">Store</th>
-                          <th className="p-2">Sales</th>
-                          <th className="p-2">Inventory</th>
-                          <th className="p-2">Overhead</th>
-                          <th className="p-2">Profit</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {previewData.storeBreakdown.map((row: any) => (
-                          <tr key={row.storeId} className="border-t border-gray-100">
-                            <td className="p-2">{row.storeName}</td>
-                            <td className="p-2">₹{row.sales.toLocaleString()}</td>
-                            <td className="p-2">₹{row.inventorySpend.toLocaleString()}</td>
-                            <td className="p-2">₹{row.overheadSpend.toLocaleString()}</td>
-                            <td className={`p-2 ${row.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>₹{row.profit.toLocaleString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              <div className="text-sm text-gray-600 text-center">
-                <p>Period: {previewData.startDate} to {previewData.endDate}</p>
-                {previewData.storeId && <p>Store ID: {previewData.storeId}</p>}
-                <p className="mt-2">Click "Export Data" to download the complete report</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showItemCleanup && <ItemCatalogCleanup onClose={() => setShowItemCleanup(false)} />}
+      <div className="flex flex-col gap-3">
+        <span className="text-body-sm font-medium text-text">{t('reports.covers')}</span>
+        <SegmentedControl aria-label={t('reports.covers')} value={scope} onValueChange={changed(setScope)} options={SCOPES.map((s) => ({ value: s, label: t(s === 'combined' ? 'reports.scope.combinedShort' : scopeKey(s)) }))} />
+        <p className="text-caption text-text-3">{storeNames.store} · {storeNames.house}</p>
+      </div>
     </div>
   );
+
+  if (initialView === 'audit' && context) {
+    return (
+      <SetupPage wide>
+        <BusinessAuditReport context={context} selectedStoreId={selectedStoreId} />
+      </SetupPage>
+    );
+  }
+
+  const openDownload = (id: ReportId) => {
+    const r = REPORTS.find((x) => x.id === id)!;
+    setDl({ id, format: r.formats[0] });
+    setDlView('main');
+    setDlOpen(true);
+  };
+
+  const lookTiles: { label: string; now: number; before: number; isProfit?: boolean }[] = look ? [
+    { label: t('reports.sales'), now: look.current.revenue, before: look.previous.revenue },
+    { label: t('reports.costs'), now: pnlCosts(look.current), before: pnlCosts(look.previous) },
+    { label: t('reports.netProfit'), now: look.current.netProfit, before: look.previous.netProfit, isProfit: true },
+  ] : [];
+
+  return (
+    <SetupPage>
+      {/* What the downloads cover */}
+      <div className="flex flex-wrap items-center gap-2" lang={lang}>
+        <SelectChip leadingIcon={<CalendarRange />} trailingIcon={<ChevronDown />} onClick={() => setPeriodOpen(true)} aria-label={`${t('reports.period')}: ${periodLabel}`}>
+          {periodLabel}
+        </SelectChip>
+        <SelectChip trailingIcon={<ChevronDown />} onClick={() => setPeriodOpen(true)} aria-label={`${t('reports.covers')}: ${t(scopeKey(scope))}`}>
+          {t(scopeKey(scope))}
+        </SelectChip>
+      </div>
+
+      <ListGroup overline={t('reports.downloads')}>
+        {reports.map((r) => (
+          <ListRow
+            key={r.id}
+            icon={r.icon}
+            title={r.id === 'tax' && taxYear ? t('reports.r.taxFy', { fy: fyLabel(taxYear.fyStartYear) }) : t(r.title)}
+            subtitle={r.formats.map((f) => t(formatKey(f))).join(' · ')}
+            chevron
+            onClick={() => openDownload(r.id)}
+          />
+        ))}
+      </ListGroup>
+
+      <ListGroup overline={t('reports.checks')}>
+        <ListRow icon={TrendingUp} title={t('reports.profitCheck')} subtitle={t('reports.profitCheckBody')} onClick={() => { setLookOpen(true); if (!look) checkNumbers(); }} />
+        {context && <ListRow icon={BookOpen} title={t('reports.audit')} subtitle={t('reports.auditBody')} onClick={() => setAuditOpen(true)} />}
+      </ListGroup>
+
+      <Callout tone="neutral" icon={FileSpreadsheet}>
+        <span className="flex flex-col gap-1">
+          <span>{t('reports.note1')}</span>
+          <span>{t('reports.note2')}</span>
+          <span>{t('reports.note3')}</span>
+        </span>
+      </Callout>
+
+      {/* Period and coverage */}
+      <ResponsiveModal
+        open={periodOpen}
+        onOpenChange={setPeriodOpen}
+        title={t('reports.periodTitle')}
+        footer={<Button size="lg" className="flex-1" onClick={() => setPeriodOpen(false)}>{t('common.done')}</Button>}
+      >
+        {periodPicker}
+      </ResponsiveModal>
+
+      {/* One report */}
+      <ResponsiveModal
+        open={dlOpen}
+        onOpenChange={setDlOpen}
+        onClosed={() => setDl(null)}
+        title={dlView === 'period' ? t('reports.periodTitle') : dlReport ? (dlReport.id === 'tax' && taxYear ? t('reports.r.taxFy', { fy: fyLabel(taxYear.fyStartYear) }) : t(dlReport.title)) : ''}
+        onBack={dlView === 'period' ? () => setDlView('main') : undefined}
+        footer={dl ? (
+          dlView === 'period' ? (
+            <Button size="lg" className="flex-1" onClick={() => setDlView('main')}>{t('common.done')}</Button>
+          ) : (
+            <Button size="lg" className="flex-1" loading={busy === `${dl.id}-${dl.format}`} disabled={!!busy || !period} onClick={() => download(dl.id, dl.format)}>
+              {busy === `${dl.id}-${dl.format}` ? t('reports.preparing') : t('reports.download')}
+            </Button>
+          )
+        ) : undefined}
+      >
+        {dl && dlReport && (dlView === 'period' ? periodPicker : (
+          <div className="flex flex-col gap-5" lang={lang}>
+            <p className="text-body-sm text-text-2">{t(dlReport.body)}</p>
+            <ListGroup>
+              {dl.id === 'tax' ? (
+                <ListRow icon={CalendarRange} title={taxYear ? fyLabel(taxYear.fyStartYear) : periodLabel} subtitle={t('reports.wholeBusiness')} onClick={() => setDlView('period')} />
+              ) : (
+                <ListRow
+                  icon={CalendarRange}
+                  title={periodLabel}
+                  subtitle={`${t(scopeKey(scope))} · ${storeNames.store} · ${storeNames.house}`}
+                  onClick={() => setDlView('period')}
+                />
+              )}
+            </ListGroup>
+            {dlReport.formats.length > 1 && (
+              <div className="flex flex-col gap-2">
+                <span className="text-body-sm font-medium text-text">{t('reports.format')}</span>
+                <ChoiceChips
+                  aria-label={t('reports.format')}
+                  value={dl.format}
+                  onValueChange={(f) => setDl({ ...dl, format: f })}
+                  options={dlReport.formats.map((f) => ({ value: f, label: t(formatKey(f)) }))}
+                />
+              </div>
+            )}
+          </div>
+        ))}
+      </ResponsiveModal>
+
+      {/* Profit for this period */}
+      <ResponsiveModal
+        open={lookOpen}
+        onOpenChange={setLookOpen}
+        title={t('reports.profitCheck')}
+        description={period ? `${period.label} · ${t(scopeKey(scope))}` : undefined}
+        footer={<Button variant="secondary" size="lg" className="flex-1" loading={busy === 'look'} disabled={!!busy || !period} onClick={checkNumbers}>{t('reports.check')}</Button>}
+      >
+        {busy === 'look' || !look ? (
+          <SkeletonStatTiles count={4} />
+        ) : (
+          <div className="flex flex-col gap-3" lang={lang}>
+            <StatGrid>
+              {lookTiles.map((k) => (
+                <StatTile
+                  key={k.label}
+                  label={k.label}
+                  value={inr(k.now)}
+                  tone={k.isProfit && k.now < 0 ? 'danger' : 'default'}
+                  caption={<span className="num">{[pct(k.now, k.before), t('reports.vsPrev', { amount: inr(k.before) })].filter(Boolean).join(' ')}</span>}
+                />
+              ))}
+              <StatTile
+                label={t('reports.netMargin')}
+                value={look.current.revenue > 0 ? pctText(look.current.netProfit / look.current.revenue) : '-'}
+                caption={t('reports.comparedWith', { label: look.prevLabel })}
+              />
+            </StatGrid>
+            {look.current.estimatedDays > 0 && (
+              <Callout tone="warning">{t('reports.estimated', { n: look.current.estimatedDays })}</Callout>
+            )}
+          </div>
+        )}
+      </ResponsiveModal>
+
+      {/* Check the numbers (audit) */}
+      {context && (
+        <ResponsiveModal open={auditOpen} onOpenChange={setAuditOpen} title={t('reports.audit')} size="detail">
+          {auditOpen && <BusinessAuditReport context={context} selectedStoreId={selectedStoreId} />}
+        </ResponsiveModal>
+      )}
+    </SetupPage>
+  );
 }
+

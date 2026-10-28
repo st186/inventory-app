@@ -24,6 +24,7 @@ interface StoredFcmToken {
   userId: string;
   token: string;
   createdAt: string;
+  nativeBuild?: number; // the Android app's versionCode, sent by app 1.17.0 on
 }
 
 // Store push subscription
@@ -61,7 +62,7 @@ export async function getAllSubscriptions(): Promise<StoredSubscription[]> {
 // Store a native (Android/FCM) push token. Kept separate from web-push subscriptions
 // (different key prefix) so a user signed in on both the web app and the native app
 // gets notified on both at once, instead of one overwriting the other.
-export async function storeFcmToken(userId: string, token: string): Promise<void> {
+export async function storeFcmToken(userId: string, token: string, nativeBuild?: number): Promise<void> {
   // A token identifies one phone's app install, and that phone belongs to whoever is signed in on
   // it NOW. If it was registered for another account earlier (someone signed out without the
   // server hearing about it, or one phone is used for two logins), release it from them first -
@@ -83,6 +84,7 @@ export async function storeFcmToken(userId: string, token: string): Promise<void
     userId,
     token,
     createdAt: new Date().toISOString(),
+    ...(nativeBuild && Number.isFinite(nativeBuild) ? { nativeBuild } : {}),
   };
   await kv.set(key, data);
   console.log(`Stored FCM token for user: ${userId}`);
@@ -257,7 +259,8 @@ async function sendFcmNotification(
             token,
             data: dataStrings,
             android: {
-              priority: 'high',
+              // Reminders and updates can wait for the phone's next wake-up (notificationRules.ts).
+              priority: payload.data?.category === 'update' || payload.data?.category === 'reminder' ? 'normal' : 'high',
             },
           },
         }),
@@ -285,6 +288,18 @@ async function sendFcmNotification(
     recordFcm(userId, { hasToken: true, ok: false, error: error instanceof Error ? error.message : String(error) });
     return false;
   }
+}
+
+// Takes notifications off the phone's tray once they were dealt with elsewhere or read in the
+// app ('all' after Mark all read). Only to Android builds that understand it: an older one would
+// show it as an empty notification (QuickActionMessagingService.java).
+const DISMISS_MIN_BUILD = 59;
+export async function sendFcmDismiss(userId: string, notificationIds: string[] | 'all'): Promise<boolean> {
+  const stored = await getFcmToken(userId);
+  if (!stored || (Number(stored.nativeBuild) || 0) < DISMISS_MIN_BUILD) return false;
+  const ids = notificationIds === 'all' ? '*' : notificationIds.filter(Boolean).join(',');
+  if (!ids) return false;
+  return sendFcmNotification(userId, stored.token, { title: '', message: '', data: { type: 'notification_resolved', notificationIds: ids, category: 'update' } });
 }
 
 // Send push notification to a user, across every channel they're subscribed on
@@ -348,6 +363,7 @@ async function sendWebPushNotification(
 
     await webpush.sendNotification(storedSub.subscription, notificationPayload, {
       TTL: 86400, // 24 hours
+      urgency: payload.data?.category === 'urgent' ? 'high' : payload.data?.category === 'update' ? 'low' : 'normal',
     });
 
     console.log(`Push notification sent successfully to user: ${userId}`);

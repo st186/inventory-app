@@ -1,18 +1,19 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
+import { ChevronUp, ArrowDownLeft, ArrowUpRight, Smartphone } from 'lucide-react';
 import { computePaytmLedger, type PaytmBalanceInput } from '../utils/paytmBalance';
 import { getTodayIST } from '../utils/timezone';
-import { DatePicker } from './DatePicker';
+import { Card } from './ui/card';
+import { EmptyState } from './ui/empty-state';
+import { ListGroup, ListRow } from './ui/list-row';
+import { formatINR } from './ui/money';
+import type { RangePreset } from './ui/date-utils';
+import { MiniFigures, PeriodChip } from './insights/parts/common';
 
 type LedgerInput = Omit<PaytmBalanceInput, 'selectedDate' | 'todaysPaytmReceived' | 'todaysUsedOnlineMoney'>;
 
 type RangeKey = 'thisWeek' | 'thisMonth' | 'lastMonth' | 'custom';
-const RANGE_LABELS: Record<RangeKey, string> = {
-  thisWeek: 'This Week',
-  thisMonth: 'This Month',
-  lastMonth: 'Last Month',
-  custom: 'Custom',
-};
+// The shared period chip, mapped onto this statement's own range keys (same date maths as before).
+const LEDGER_PERIODS: Partial<Record<RangePreset, RangeKey>> = { thisWeek: 'thisWeek', thisMonth: 'thisMonth', lastMonth: 'lastMonth', custom: 'custom' };
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -67,83 +68,55 @@ export function PaytmLedger({ input, defaultOpen = false }: { input: LedgerInput
   // it), but newest-first reads easier - reverse only for display.
   const inWindowNewestFirst = [...inWindow].reverse();
 
+  if (!open) {
+    return (
+      <ListGroup className="mt-6">
+        <ListRow icon={Smartphone} title="Paytm statement" subtitle={`${inWindow.length} entries · every credit and debit with the running balance`} onClick={() => setOpen(true)} chevron="down" aria-expanded={false} />
+      </ListGroup>
+    );
+  }
+
   return (
-    <div className="mt-4 pt-4 border-t border-gray-100">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between text-left">
-        <span className="text-xs font-medium text-gray-600">
-          Paytm statement ({inWindow.length} entries)
-        </span>
-        {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+    <section className="mt-6 flex flex-col gap-3" aria-labelledby="paytm-statement-title">
+      <div className="flex items-center justify-between gap-3">
+        <h3 id="paytm-statement-title" className="text-subtitle font-semibold text-text">
+          Paytm statement <span className="text-label font-normal text-text-3">{inWindow.length} entries</span>
+        </h3>
+        <PeriodChip value={rangeKey} options={LEDGER_PERIODS} custom={custom} onChange={(k, c) => { setRangeKey(k); if (c) setCustom(c); }} />
+      </div>
+      <Card className="gap-3">
+        <MiniFigures
+          items={[
+            { label: 'In', value: `+${formatINR(totalIn)}`, tone: 'success' },
+            { label: 'Out', value: `−${formatINR(totalOut)}`, tone: 'danger' },
+            { label: 'Closing', value: formatINR(ledger.closingBalance) },
+          ]}
+        />
+      </Card>
+      <ListGroup>
+        <ListRow density="compact" muted title={ledger.anchorLabel} trailing={<span className="num text-body-md font-semibold text-text">{formatINR(ledger.anchorBalance)}</span>} />
+        {inWindow.length === 0 && <EmptyState compact icon={Smartphone} title="No Paytm movement in this period" />}
+        {inWindowNewestFirst.map((l, i) => (
+          <ListRow
+            key={i}
+            icon={l.credit > 0 ? ArrowDownLeft : ArrowUpRight}
+            iconTone={l.credit > 0 ? 'success' : 'danger'}
+            title={<span className="text-body-sm">{l.label}</span>}
+            subtitle={l.date}
+            trailing={
+              <span className="flex flex-col items-end">
+                <span className={`num text-body-md font-semibold ${l.credit > 0 ? 'text-success' : 'text-danger'}`}>
+                  {l.credit > 0 ? '+' : '−'}{formatINR(l.credit > 0 ? l.credit : l.debit)}
+                </span>
+                <span className="num text-caption text-text-3">{formatINR(l.balance)}</span>
+              </span>
+            }
+          />
+        ))}
+      </ListGroup>
+      <button type="button" onClick={() => setOpen(false)} className="inline-flex min-h-11 w-fit items-center gap-1 text-body-sm font-medium text-text-2 hover:text-text">
+        <ChevronUp className="size-4" aria-hidden="true" /> Hide the statement
       </button>
-
-      {open && (
-        <div className="mt-2 space-y-3">
-          <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(RANGE_LABELS) as RangeKey[]).map((k) => (
-              <button
-                key={k}
-                onClick={() => setRangeKey(k)}
-                className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
-                  rangeKey === k ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {RANGE_LABELS[k]}
-              </button>
-            ))}
-          </div>
-
-          {rangeKey === 'custom' && (
-            <div className="grid grid-cols-2 gap-2">
-              <DatePicker label="From" value={custom.from} onChange={(d) => setCustom({ ...custom, from: d })} />
-              <DatePicker label="To" value={custom.to} onChange={(d) => setCustom({ ...custom, to: d })} />
-            </div>
-          )}
-
-          <div className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-2">
-            <span className="text-gray-500">{ledger.anchorLabel}</span>
-            <span className="font-semibold text-gray-900 tabular-nums">₹{ledger.anchorBalance.toLocaleString()}</span>
-          </div>
-
-          {inWindow.length === 0 ? (
-            <p className="text-sm text-gray-500">No Paytm movement in this range.</p>
-          ) : (
-            <div className="rounded-xl border border-gray-100 overflow-hidden">
-              {inWindowNewestFirst.map((l, i) => (
-                <div key={i} className="flex items-start gap-2 px-3 py-2 border-b border-gray-50 last:border-b-0">
-                  <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${l.credit > 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
-                    {l.credit > 0 ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-gray-800 leading-snug">{l.label}</p>
-                    <p className="text-[10px] text-gray-400">{l.date}</p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className={`text-xs font-semibold tabular-nums ${l.credit > 0 ? 'text-green-700' : 'text-red-700'}`}>
-                      {l.credit > 0 ? '+' : '−'}₹{(l.credit > 0 ? l.credit : l.debit).toLocaleString()}
-                    </p>
-                    <p className="text-[10px] text-gray-400 tabular-nums">₹{l.balance.toLocaleString()}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-lg bg-green-50 py-2">
-              <p className="text-[10px] text-green-700">In</p>
-              <p className="text-xs font-bold text-green-800 tabular-nums">+₹{totalIn.toLocaleString()}</p>
-            </div>
-            <div className="rounded-lg bg-red-50 py-2">
-              <p className="text-[10px] text-red-700">Out</p>
-              <p className="text-xs font-bold text-red-800 tabular-nums">−₹{totalOut.toLocaleString()}</p>
-            </div>
-            <div className="rounded-lg bg-gray-100 py-2">
-              <p className="text-[10px] text-gray-600">Closing</p>
-              <p className="text-xs font-bold text-gray-900 tabular-nums">₹{ledger.closingBalance.toLocaleString()}</p>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </section>
   );
 }

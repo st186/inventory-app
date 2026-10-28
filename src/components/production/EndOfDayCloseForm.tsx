@@ -1,7 +1,16 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, Lock } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Lock } from 'lucide-react';
+import { Button } from '../ui/button';
+import { Callout } from '../ui/callout';
+import { EmptyState } from '../ui/empty-state';
+import { Field } from '../ui/field';
+import { Input } from '../ui/input';
+import { useT } from '../../utils/i18n';
 import { ALL_POOL_IDS, getPoolLabel } from '../../constants/momoTypes';
-import type { ProductionLedgerPoolState } from '../../utils/api';
+import type { LedgerDayContext, LeftoverReport, ProductionLedgerPoolState } from '../../utils/api';
+import { toast } from '../ui/sonner';
+import { looksLikeGrams } from './ledgerKg';
+import { LeftoverReasons, LeftoverReportView, emptyLeftoverDraft, leftoverPayload, leftoverProblem, type LeftoverDraft } from './LeftoverReasons';
 
 type Props = {
   pools: Record<string, ProductionLedgerPoolState>;
@@ -12,12 +21,18 @@ type Props = {
   closed?: boolean;
   disabled?: boolean;
   submitting?: boolean;
-  onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>) => void | Promise<void>;
+  // Staff check-ins and machines for the leftover reasons, and the reasons already saved.
+  dayContext?: LedgerDayContext | null;
+  savedReport?: LeftoverReport | null;
+  onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport) => void | Promise<void>;
 };
+const LEFTOVER_REASON_MIN_KG = 0.5; // the server says the same (minKg)
 
 // The directly-reported leftover snapshot per pool - counted/weighed at day's end, not
 // computed from a yield formula (confirmed requirement).
-export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, onSubmit }: Props) {
+export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, onSubmit }: Props) {
+  const { t, lang } = useT();
+  const [leftover, setLeftover] = useState<LeftoverDraft>(emptyLeftoverDraft);
   const [closingInputs, setClosingInputs] = useState<Record<string, string>>({});
   const [openingOverrideInputs, setOpeningOverrideInputs] = useState<Record<string, string>>({});
   // Wastage is never assumed - the starting-stock-minus-closing gap is only ever offered as
@@ -49,7 +64,21 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
     setWastageInputs(seededWastage);
   }, [pools]);
 
+  const grams = [closingInputs, wastageInputs, openingOverrideInputs].some((inputs) => Object.values(inputs).some(looksLikeGrams));
+
+  // Stuffing or coating left at the close: more than a little needs a reason (owner, 28 Oct 2026).
+  const leftoverKg = relevantPoolIds
+    .filter((id) => /^(stuffing|coating):/.test(id))
+    .reduce((sum, id) => sum + Math.max(0, parseFloat(closingInputs[id] ?? '') || 0), 0);
+  const needsReason = !closed && leftoverKg >= (dayContext?.minKg ?? LEFTOVER_REASON_MIN_KG);
+
   const handleSubmit = () => {
+    if (grams) return;
+    const problem = needsReason ? leftoverProblem(leftover, t, dayContext || null) : null;
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
     const closingActuals: Record<string, number> = {};
     for (const id of ALL_POOL_IDS) {
       const raw = closingInputs[id];
@@ -68,133 +97,69 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
       const raw = wastageInputs[id];
       if (raw !== undefined && raw !== '') wastageOverrides[id] = parseFloat(raw) || 0;
     }
-    onSubmit(closingActuals, manualOpeningOverride, wastageOverrides);
+    onSubmit(closingActuals, manualOpeningOverride, wastageOverrides, needsReason ? leftoverPayload(leftover, dayContext || null) : undefined);
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-      <h2 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight mb-1 flex items-center gap-2">
-        {closed && <Lock className="w-5 h-5 text-gray-400" />}
-        Leftover Snapshot (End of Day)
-      </h2>
-      <p className="text-sm text-gray-500 mb-4">
-        Count/weigh what's actually left of each pool right now - this becomes tomorrow's opening balance.
-      </p>
-
-      {isFirstEverDay && !closed && (
-        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex gap-2">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>No carry-forward history yet for this production house - if any of the pools below already had stock before today's tracking started, enter it under "Pre-existing" (one-time only, on the very first day).</span>
-        </div>
-      )}
+    <section className="flex flex-col gap-3" lang={lang}>
+      {isFirstEverDay && !closed && <Callout tone="warning" icon={AlertTriangle} title={t('stock.prod.firstDay')} />}
 
       {relevantPoolIds.length === 0 ? (
-        <div className="text-center text-gray-500 py-8 text-sm">Nothing prepared or carried over yet today - log a batch above first.</div>
+        <EmptyState compact title={t('stock.prod.nothingYet')} />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500 border-b border-gray-200">
-                <th className="py-2 pr-2 font-medium">Pool</th>
-                {isFirstEverDay && !closed && <th className="py-2 px-2 font-medium">Pre-existing (kg)</th>}
-                <th className="py-2 px-2 font-medium">Prepared (kg)</th>
-                <th className="py-2 px-2 font-medium">Starting Stock (kg)</th>
-                <th className="py-2 px-2 font-medium">Closing Count (kg)</th>
-                <th className="py-2 pl-2 font-medium">Wastage (kg)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {relevantPoolIds.map((id) => {
-                const pool = pools[id] || { opening: 0, prepared: 0, closingActual: null, wastage: null };
-                const closingRaw = closingInputs[id] ?? '';
-                const closingValue = parseFloat(closingRaw);
-                const effectiveOpening = isFirstEverDay && !closed
-                  ? (parseFloat(openingOverrideInputs[id] ?? '') || 0)
-                  : pool.opening;
-                // Starting Stock is always computed - opening (whatever it is) plus today's
-                // prepared - never a field to type into. On day 1, "opening" here already
-                // reflects the Pre-existing input as it's typed, so this updates live too.
-                const startingStock = effectiveOpening + pool.prepared;
-                const suggestedWastage = closingRaw !== '' && !isNaN(closingValue)
-                  ? startingStock - closingValue
-                  : null;
-                const wastageRaw = wastageInputs[id] ?? '';
-                return (
-                  <tr key={id} className="border-b border-gray-100 last:border-0">
-                    <td className="py-2 pr-2 text-gray-700">{getPoolLabel(id)}</td>
-                    {isFirstEverDay && !closed && (
-                      <td className="py-2 px-2">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={openingOverrideInputs[id] ?? ''}
-                          onChange={(e) => setOpeningOverrideInputs((prev) => ({ ...prev, [id]: e.target.value }))}
-                          disabled={disabled}
-                          placeholder="0.00"
-                          className="w-24 px-2 py-1.5 border border-gray-300 rounded-lg disabled:bg-gray-100"
-                        />
-                      </td>
-                    )}
-                    <td className="py-2 px-2 tabular-nums text-gray-900">{pool.prepared.toFixed(2)}</td>
-                    <td className="py-2 px-2 tabular-nums text-gray-900 font-semibold">{startingStock.toFixed(2)}</td>
-                    <td className="py-2 px-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={closingRaw}
-                        onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: e.target.value }))}
-                        disabled={disabled || closed}
-                        placeholder="0.00"
-                        className="w-24 px-2 py-1.5 border border-gray-300 rounded-lg disabled:bg-gray-100"
-                      />
-                    </td>
-                    <td className="py-2 pl-2">
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={wastageRaw}
-                          onChange={(e) => setWastageInputs((prev) => ({ ...prev, [id]: e.target.value }))}
-                          disabled={disabled || closed}
-                          placeholder="Not entered"
-                          className="w-24 px-2 py-1.5 border border-gray-300 rounded-lg disabled:bg-gray-100"
-                        />
-                        {suggestedWastage !== null && wastageRaw === '' && !closed && (
-                          <button
-                            type="button"
-                            onClick={() => setWastageInputs((prev) => ({ ...prev, [id]: suggestedWastage.toFixed(2) }))}
-                            disabled={disabled}
-                            className="text-[11px] text-orange-600 hover:text-orange-700 underline whitespace-nowrap"
-                            title="Starting Stock minus Closing Count - not assumed, just a starting point"
-                          >
-                            use {suggestedWastage.toFixed(2)}?
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+          {relevantPoolIds.map((id) => {
+            const pool = pools[id] || { opening: 0, prepared: 0, closingActual: null, wastage: null };
+            const closingRaw = closingInputs[id] ?? '';
+            const closingValue = parseFloat(closingRaw);
+            const effectiveOpening = isFirstEverDay && !closed
+              ? (parseFloat(openingOverrideInputs[id] ?? '') || 0)
+              : pool.opening;
+            // Starting stock is always worked out: opening (whatever it is) plus today's prepared.
+            const startingStock = effectiveOpening + pool.prepared;
+            const suggestedWastage = closingRaw !== '' && !isNaN(closingValue) ? startingStock - closingValue : null;
+            const wastageRaw = wastageInputs[id] ?? '';
+            return (
+              <div key={id} className="flex flex-col gap-3 px-4 py-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-body-md font-medium text-text">{getPoolLabel(id)}</span>
+                  <span className="num text-label text-text-3">
+                    {t('stock.prod.preparedKg', { n: pool.prepared.toFixed(2) })} · <span className="font-semibold text-text">{t('stock.prod.startingKg', { n: startingStock.toFixed(2) })}</span>
+                  </span>
+                </div>
+                <div className={`grid gap-3 ${isFirstEverDay && !closed ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                  {isFirstEverDay && !closed && (
+                    <Field label={t('stock.prod.alreadyThere')} error={looksLikeGrams(openingOverrideInputs[id]) ? t('stock.prod.looksLikeGrams') : undefined}>
+                      <Input type="text" inputMode="decimal" className="num" value={openingOverrideInputs[id] ?? ''} onChange={(e) => setOpeningOverrideInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled} placeholder="0.00" />
+                    </Field>
+                  )}
+                  <Field label={t('stock.prod.closingCount')} error={looksLikeGrams(closingRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
+                    <Input type="text" inputMode="decimal" className="num" value={closingRaw} onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled || closed} placeholder="0.00" />
+                  </Field>
+                  <Field label={t('stock.prod.wastageKg')} error={looksLikeGrams(wastageRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
+                    <Input type="text" inputMode="decimal" className="num" value={wastageRaw} onChange={(e) => setWastageInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.-]/g, '') }))} disabled={disabled || closed} placeholder="-" />
+                  </Field>
+                </div>
+                {suggestedWastage !== null && wastageRaw === '' && !closed && (
+                  <Button variant="link" size="sm" className="self-start" disabled={disabled} onClick={() => setWastageInputs((prev) => ({ ...prev, [id]: suggestedWastage.toFixed(2) }))}>
+                    {t('stock.prod.useSuggestion', { n: suggestedWastage.toFixed(2) })}
+                  </Button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
+      {needsReason && <LeftoverReasons leftoverKg={leftoverKg} ctx={dayContext || null} value={leftover} onChange={setLeftover} disabled={disabled || submitting} />}
+      {closed && savedReport?.reasons?.length ? <LeftoverReportView report={savedReport} /> : null}
+
       {!closed && relevantPoolIds.length > 0 && (
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={disabled || submitting}
-          className="mt-4 px-6 py-3 bg-gradient-to-r from-teal-500 to-teal-600 text-white rounded-lg hover:from-teal-600 hover:to-teal-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm"
-        >
-          {submitting ? 'Closing Day…' : 'Close Production Day'}
-        </button>
+        <Button variant="secondary" className="self-start" leadingIcon={<Lock />} loading={submitting} disabled={disabled || grams} onClick={handleSubmit}>
+          {t('stock.prod.closeDay')}
+        </Button>
       )}
-      {closed && (
-        <div className="mt-4 px-4 py-3 bg-green-50 border border-green-300 text-green-700 rounded-xl text-sm">
-          ✓ Day closed - these leftover counts are now tomorrow's opening balance.
-        </div>
-      )}
-    </div>
+      {closed && <Callout tone="success" icon={CheckCircle2} title={t('stock.prod.dayClosed')} />}
+    </section>
   );
 }

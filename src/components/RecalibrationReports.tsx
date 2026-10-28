@@ -1,9 +1,21 @@
 import { useState, useEffect } from 'react';
-import { Calendar, TrendingDown, AlertTriangle, CheckCircle, XCircle, Eye, Download, Filter, RefreshCw } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, History, TrendingDown, XCircle } from 'lucide-react';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { promptText } from './ui/confirm';
+import { EmptyState } from './ui/empty-state';
+import { Field } from './ui/field';
+import { Input } from './ui/input';
+import { ListGroup, ListRow } from './ui/list-row';
+import { ResponsiveModal } from './ui/responsive-modal';
+import { SegmentedControl } from './ui/segmented-control';
+import { SkeletonListRows } from './ui/skeleton';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { StatusChip } from './ui/status-chip';
+import { currentAuthUserId } from '../utils/accessToken';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
-import { toast } from 'sonner@2.0.3';
-import { DatePicker } from './DatePicker';
+import { toast } from './ui/sonner';
 
 type RecalibrationReportsProps = {
   context: InventoryContextType;
@@ -149,7 +161,8 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
   async function handleApprove(recalibrationId: string) {
     try {
       await api.approveRecalibration(context.user?.accessToken || '', recalibrationId);
-      toast.success('Recalibration approved successfully');
+      toast.success('Stock count approved');
+      setShowDetailModal(false);
       fetchPendingRecalibrations();
     } catch (error) {
       console.error('Error approving recalibration:', error);
@@ -158,12 +171,13 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
   }
 
   async function handleReject(recalibrationId: string) {
-    const reason = prompt('Please enter reason for rejection:');
+    const reason = await promptText({ title: 'Reject this stock count?', label: 'Reason', required: true, confirmLabel: 'Reject count', tone: 'danger' });
     if (!reason) return;
 
     try {
       await api.rejectRecalibration(context.user?.accessToken || '', recalibrationId, reason);
-      toast.success('Recalibration rejected');
+      toast.success('Stock count rejected');
+      setShowDetailModal(false);
       fetchPendingRecalibrations();
     } catch (error) {
       console.error('Error rejecting recalibration:', error);
@@ -184,387 +198,152 @@ export function RecalibrationReports({ context, selectedStoreId, onOpenRecalibra
     });
   };
 
+  const myId = currentAuthUserId();
+  const typeLabel = (r: any) => (r.locationType === 'production_house' ? 'Production house' : 'Store');
+  const statusChip = (status?: string) =>
+    status === 'approved' ? <StatusChip status="approval.approved" /> : status === 'rejected' ? <StatusChip status="approval.rejected" /> : <StatusChip status="approval.pending" />;
+  const counts = (r: any) => ({
+    wastage: r.items?.filter((i: any) => i.adjustmentType === 'wastage').length || 0,
+    errors: r.items?.filter((i: any) => i.adjustmentType === 'counting_error').length || 0,
+    total: r.items?.length || 0,
+  });
+  const selected = selectedRecalibration;
+  const ownCount = !!selected && !!myId && selected.performedBy === myId;
+  const canActOnSelected = view === 'pending' && canApproveRecalibrations && !!selected && (!selected.status || selected.status === 'pending');
+
   return (
-    <div className="space-y-6">
-      {/* Header with Create Button */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="relative overflow-hidden bg-gradient-to-r from-orange-600 via-rose-500 to-orange-600 rounded-2xl p-6 shadow-xl flex-1">
-          <div className="absolute inset-0 bg-white/10" />
-          <div className="relative flex items-center gap-4">
-            <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center border-2 border-white/30 flex-shrink-0">
-              <Calendar className="w-7 h-7 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl sm:text-3xl text-white font-bold tracking-tight">Stock Recalibration Reports</h1>
-              <p className="text-sm sm:text-base text-white/80 mt-1">
-                {view === 'pending' && 'Review and approve monthly stock recalibrations'}
-                {view === 'history' && 'View historical recalibration records'}
-                {view === 'wastage' && 'Analyze monthly wastage and counting errors'}
-              </p>
-            </div>
-          </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-col">
+          <h2 className="text-title font-semibold text-text">Stock counts</h2>
+          <p className="text-body-sm text-text-2">
+            {view === 'pending' && 'Monthly stock counts waiting for approval'}
+            {view === 'history' && 'Past stock counts'}
+            {view === 'wastage' && 'Wastage and counting errors in a month'}
+          </p>
         </div>
         {onOpenRecalibration && view === 'history' && locationType !== 'production_house' && (
-          <button
-            onClick={onOpenRecalibration}
-            className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-xl hover:from-emerald-700 hover:to-green-700 transition-all shadow-lg flex items-center gap-2"
-          >
-            <Calendar className="w-5 h-5" />
-            New Recalibration
-          </button>
+          <Button variant="secondary" leadingIcon={<ClipboardCheck />} onClick={onOpenRecalibration}>New stock count</Button>
         )}
       </div>
 
-      {/* View Toggle */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-        {/* Only show Pending Approval tab to Cluster Heads and Operations Managers, NOT Production Incharge */}
-        {canApproveRecalibrations && (
-          <button
-            onClick={() => setView('pending')}
-            className={`flex-1 px-4 py-2 rounded-lg transition-all font-medium ${
-              view === 'pending'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            Pending Approval
-          </button>
-        )}
-        <button
-          onClick={() => setView('history')}
-          className={`flex-1 px-4 py-2 rounded-lg transition-all font-medium ${
-            view === 'history'
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-600 hover:text-gray-900'
-          }`}
-        >
-          History
-        </button>
-        <button
-          onClick={() => setView('wastage')}
-          className={`flex-1 px-4 py-2 rounded-lg transition-all font-medium ${
-            view === 'wastage'
-              ? 'bg-white text-gray-900 shadow-sm'
-              : 'text-gray-600 hover:text-gray-900'
-          }`}
-        >
-          Wastage Report
-        </button>
-      </div>
+      <SegmentedControl
+        aria-label="Stock count reports"
+        size="sm"
+        value={view}
+        onValueChange={(v) => setView(v as 'pending' | 'history' | 'wastage')}
+        options={[
+          ...(canApproveRecalibrations ? [{ value: 'pending' as const, label: 'To approve' }] : []),
+          { value: 'history' as const, label: 'History' },
+          { value: 'wastage' as const, label: 'Wastage' },
+        ]}
+      />
 
-      {/* Wastage Report Month Selector */}
       {view === 'wastage' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200">
-          <label className="block text-sm text-gray-700 mb-2">Select Month</label>
-          <input
-            type="month"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:outline-none"
-          />
-        </div>
+        <Field label="Month">
+          <Input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
+        </Field>
       )}
 
-      {/* Content */}
       {loading ? (
-        <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-200">
-          <RefreshCw className="w-12 h-12 text-orange-600 animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Loading...</p>
-        </div>
+        <SkeletonListRows count={4} />
       ) : (
         <>
-          {/* Pending Approval View */}
           {view === 'pending' && (
-            <div className="space-y-4">
-              {pendingRecalibrations.length === 0 ? (
-                <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-200">
-                  <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-                  <p className="text-gray-600">No pending recalibrations</p>
-                </div>
-              ) : (
-                pendingRecalibrations.map((recal) => (
-                  <div
+            <ListGroup empty={<EmptyState compact icon={CheckCircle2} title="No stock counts waiting" />}>
+              {pendingRecalibrations.map((recal) => {
+                const c = counts(recal);
+                return (
+                  <ListRow
                     key={recal.id}
-                    className="bg-white rounded-2xl p-6 shadow-sm border-2 border-gray-200 hover:border-orange-300 transition-all"
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-1">
-                          {recal.locationName}
-                        </h3>
-                        <p className="text-sm text-gray-500">
-                          {formatDate(recal.date)} • {recal.locationType === 'production_house' ? 'Production House' : 'Store'}
-                        </p>
-                      </div>
-                      <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm">
-                        Pending Approval
-                      </span>
-                    </div>
-
-                    {/* Summary Stats */}
-                    <div className="grid grid-cols-3 gap-4 mb-4">
-                      <div className="bg-red-50 rounded-lg p-3">
-                        <p className="text-xs text-red-600 mb-1">Wastage Items</p>
-                        <p className="text-xl text-red-700">
-                          {recal.items?.filter((i: any) => i.adjustmentType === 'wastage').length || 0}
-                        </p>
-                      </div>
-                      <div className="bg-orange-50 rounded-lg p-3">
-                        <p className="text-xs text-orange-600 mb-1">Counting Errors</p>
-                        <p className="text-xl text-orange-700">
-                          {recal.items?.filter((i: any) => i.adjustmentType === 'counting_error').length || 0}
-                        </p>
-                      </div>
-                      <div className="bg-blue-50 rounded-lg p-3">
-                        <p className="text-xs text-blue-600 mb-1">Total Items</p>
-                        <p className="text-xl text-blue-700">
-                          {recal.items?.length || 0}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => viewDetails(recal)}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-                      >
-                        <Eye className="w-4 h-4" />
-                        View Details
-                      </button>
-                      <button
-                        onClick={() => handleApprove(recal.id)}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleReject(recal.id)}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                      >
-                        <XCircle className="w-4 h-4" />
-                        Reject
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+                    icon={ClipboardCheck}
+                    title={recal.locationName}
+                    subtitle={`${formatDate(recal.date)} · ${typeLabel(recal)} · ${c.total} items · ${c.wastage} wastage · ${c.errors} counting errors${recal.performedByName ? ` · by ${recal.performedByName}` : ''}`}
+                    trailing={statusChip(recal.status)}
+                    onClick={() => viewDetails(recal)}
+                  />
+                );
+              })}
+            </ListGroup>
           )}
 
-          {/* History View */}
           {view === 'history' && (
-            <div className="space-y-4">
-              {historyRecalibrations.length === 0 ? (
-                <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-200">
-                  <Calendar className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-600">No recalibration history found</p>
-                </div>
-              ) : (
-                historyRecalibrations.map((recal) => (
-                  <div
-                    key={recal.id}
-                    className="bg-white rounded-2xl p-6 shadow-sm border-2 border-gray-200"
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-1">
-                          {recal.locationName}
-                        </h3>
-                        <p className="text-sm text-gray-500">
-                          {formatDate(recal.date)}
-                        </p>
-                      </div>
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm ${
-                          recal.status === 'approved'
-                            ? 'bg-green-100 text-green-700'
-                            : recal.status === 'rejected'
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-yellow-100 text-yellow-700'
-                        }`}
-                      >
-                        {recal.status?.charAt(0).toUpperCase() + recal.status?.slice(1) || 'Pending'}
-                      </span>
-                    </div>
-
-                    <button
-                      onClick={() => viewDetails(recal)}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
-                    >
-                      <Eye className="w-4 h-4" />
-                      View Details
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
+            <ListGroup empty={<EmptyState compact icon={History} title="No stock counts yet" />}>
+              {historyRecalibrations.map((recal) => (
+                <ListRow
+                  key={recal.id}
+                  icon={ClipboardCheck}
+                  title={recal.locationName}
+                  subtitle={`${formatDate(recal.date)} · ${typeLabel(recal)}`}
+                  trailing={statusChip(recal.status)}
+                  onClick={() => viewDetails(recal)}
+                />
+              ))}
+            </ListGroup>
           )}
 
-          {/* Wastage Report View */}
           {view === 'wastage' && (
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
-              {!wastageReport || wastageReport.items?.length === 0 ? (
-                <div className="text-center py-12">
-                  <TrendingDown className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-600">No wastage data for selected month</p>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {/* Summary Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 shadow-lg shadow-red-500/20 text-white">
-                      <p className="text-sm opacity-90 mb-1">Total Wastage</p>
-                      <p className="text-2xl font-semibold">{wastageReport.summary?.totalWastage || 0}</p>
-                      <p className="text-xs opacity-75 mt-1">items</p>
-                    </div>
-                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-                      <p className="text-sm opacity-90 mb-1">Counting Errors</p>
-                      <p className="text-2xl font-semibold">{wastageReport.summary?.totalCountingErrors || 0}</p>
-                      <p className="text-xs opacity-75 mt-1">items</p>
-                    </div>
-                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 shadow-lg shadow-orange-500/20 text-white">
-                      <p className="text-sm opacity-90 mb-1">Recalibrations</p>
-                      <p className="text-2xl font-semibold">{wastageReport.summary?.totalRecalibrations || 0}</p>
-                      <p className="text-xs opacity-75 mt-1">this month</p>
-                    </div>
-                    <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 shadow-lg shadow-blue-500/20 text-white">
-                      <p className="text-sm opacity-90 mb-1">Locations</p>
-                      <p className="text-2xl font-semibold">{wastageReport.summary?.uniqueLocations || 0}</p>
-                      <p className="text-xs opacity-75 mt-1">stores/houses</p>
-                    </div>
-                  </div>
-
-                  {/* Detailed Items Table */}
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-900 tracking-tight mb-3">Wastage & Error Details</h3>
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="bg-gray-100">
-                            <th className="text-left p-3 text-sm text-gray-700">Item Name</th>
-                            <th className="text-left p-3 text-sm text-gray-700">Location</th>
-                            <th className="text-center p-3 text-sm text-gray-700">System Qty</th>
-                            <th className="text-center p-3 text-sm text-gray-700">Actual Qty</th>
-                            <th className="text-center p-3 text-sm text-gray-700">Difference</th>
-                            <th className="text-center p-3 text-sm text-gray-700">Type</th>
-                            <th className="text-left p-3 text-sm text-gray-700">Notes</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {wastageReport.items?.map((item: any, index: number) => (
-                            <tr key={index} className="border-b border-gray-200 hover:bg-gray-50">
-                              <td className="p-3 text-sm text-gray-900">{item.itemName}</td>
-                              <td className="p-3 text-sm text-gray-600">{item.locationName}</td>
-                              <td className="p-3 text-sm text-center text-gray-900">
-                                {item.systemQuantity} {item.unit}
-                              </td>
-                              <td className="p-3 text-sm text-center text-gray-900">
-                                {item.actualQuantity} {item.unit}
-                              </td>
-                              <td className={`p-3 text-sm text-center ${
-                                item.difference < 0 ? 'text-red-600' : 'text-green-600'
-                              }`}>
-                                {item.difference > 0 ? '+' : ''}{item.difference}
-                              </td>
-                              <td className="p-3 text-center">
-                                <span className={`px-2 py-1 rounded-full text-xs ${
-                                  item.adjustmentType === 'wastage'
-                                    ? 'bg-red-100 text-red-700'
-                                    : 'bg-orange-100 text-orange-700'
-                                }`}>
-                                  {item.adjustmentType === 'wastage' ? 'Wastage' : 'Counting Error'}
-                                </span>
-                              </td>
-                              <td className="p-3 text-sm text-gray-600">{item.notes || '-'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            !wastageReport || wastageReport.items?.length === 0 ? (
+              <div className="rounded-lg border border-border bg-surface">
+                <EmptyState compact icon={TrendingDown} title="No wastage in this month" />
+              </div>
+            ) : (
+              <div className="flex flex-col gap-5">
+                <StatGrid>
+                  <StatTile label="Wastage" value={<span className="num">{wastageReport.summary?.totalWastage || 0}</span>} caption="items" />
+                  <StatTile label="Counting errors" value={<span className="num">{wastageReport.summary?.totalCountingErrors || 0}</span>} caption="items" />
+                  <StatTile label="Stock counts" value={<span className="num">{wastageReport.summary?.totalRecalibrations || 0}</span>} caption="this month" />
+                  <StatTile label="Places" value={<span className="num">{wastageReport.summary?.uniqueLocations || 0}</span>} caption="stores and houses" />
+                </StatGrid>
+                <ListGroup title="Wastage and counting errors">
+                  {wastageReport.items?.map((item: any, index: number) => (
+                    <ListRow
+                      key={index}
+                      title={item.itemName}
+                      subtitle={`${item.locationName} · expected ${item.systemQuantity} ${item.unit} · counted ${item.actualQuantity} ${item.unit}${item.notes ? ` · ${item.notes}` : ''}`}
+                      chip={<StatusChip tone={item.adjustmentType === 'wastage' ? 'danger' : 'warning'} size="sm">{item.adjustmentType === 'wastage' ? 'Wastage' : 'Counting error'}</StatusChip>}
+                      trailing={<span className={`num text-body-md font-semibold ${item.difference < 0 ? 'text-danger' : 'text-success'}`}>{item.difference > 0 ? '+' : ''}{item.difference}</span>}
+                    />
+                  ))}
+                </ListGroup>
+              </div>
+            )
           )}
         </>
       )}
 
-      {/* Detail Modal */}
-      {showDetailModal && selectedRecalibration && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="bg-gradient-to-r from-orange-600 to-red-600 p-6 text-white">
-              <h3 className="text-xl mb-1">{selectedRecalibration.locationName}</h3>
-              <p className="text-orange-100 text-sm">
-                {formatDate(selectedRecalibration.date)} • {selectedRecalibration.locationType === 'production_house' ? 'Production House' : 'Store'}
-              </p>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-gray-100">
-                      <th className="text-left p-3 text-sm text-gray-700">Item</th>
-                      <th className="text-center p-3 text-sm text-gray-700">System Qty</th>
-                      <th className="text-center p-3 text-sm text-gray-700">Actual Qty</th>
-                      <th className="text-center p-3 text-sm text-gray-700">Difference</th>
-                      <th className="text-center p-3 text-sm text-gray-700">Type</th>
-                      <th className="text-left p-3 text-sm text-gray-700">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRecalibration.items?.map((item: any, index: number) => (
-                      <tr key={index} className="border-b border-gray-200">
-                        <td className="p-3 text-sm text-gray-900">
-                          {item.itemName}
-                          <span className="text-xs text-gray-500 block">{item.category}</span>
-                        </td>
-                        <td className="p-3 text-sm text-center text-gray-900">
-                          {item.systemQuantity} {item.unit}
-                        </td>
-                        <td className="p-3 text-sm text-center text-gray-900">
-                          {item.actualQuantity} {item.unit}
-                        </td>
-                        <td className={`p-3 text-sm text-center ${
-                          item.difference < 0 ? 'text-red-600' : item.difference > 0 ? 'text-green-600' : 'text-gray-600'
-                        }`}>
-                          {item.difference > 0 ? '+' : ''}{item.difference}
-                        </td>
-                        <td className="p-3 text-center">
-                          {item.adjustmentType ? (
-                            <span className={`px-2 py-1 rounded-full text-xs ${
-                              item.adjustmentType === 'wastage'
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-orange-100 text-orange-700'
-                            }`}>
-                              {item.adjustmentType === 'wastage' ? 'Wastage' : 'Counting Error'}
-                            </span>
-                          ) : (
-                            <span className="text-gray-400 text-xs">-</span>
-                          )}
-                        </td>
-                        <td className="p-3 text-sm text-gray-600">{item.notes || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-gray-200">
-              <button
-                onClick={() => setShowDetailModal(false)}
-                className="w-full px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-              >
-                Close
-              </button>
-            </div>
+      <ResponsiveModal
+        open={showDetailModal && !!selected}
+        onOpenChange={(o) => { if (!o) setShowDetailModal(false); }}
+        title={selected?.locationName || ''}
+        description={selected ? `${formatDate(selected.date)} · ${typeLabel(selected)}${selected.performedByName ? ` · counted by ${selected.performedByName}` : ''}` : undefined}
+        size="detail"
+        footer={canActOnSelected && !ownCount ? (
+          <>
+            <Button variant="danger-ghost" size="lg" leadingIcon={<XCircle />} onClick={() => handleReject(selected.id)}>Reject</Button>
+            <Button size="lg" className="flex-1" leadingIcon={<CheckCircle2 />} onClick={() => handleApprove(selected.id)}>Approve</Button>
+          </>
+        ) : undefined}
+      >
+        {selected && (
+          <div className="flex flex-col gap-4">
+            {canActOnSelected && ownCount && (
+              <Callout tone="info" title="You did this count">Someone else approves it: the cluster head or an operations manager.</Callout>
+            )}
+            <ListGroup>
+              {selected.items?.map((item: any, index: number) => (
+                <ListRow
+                  key={index}
+                  title={item.itemName}
+                  subtitle={`Expected ${item.systemQuantity} ${item.unit} · counted ${item.actualQuantity} ${item.unit}${item.notes ? ` · ${item.notes}` : ''}`}
+                  chip={item.adjustmentType ? <StatusChip tone={item.adjustmentType === 'wastage' ? 'danger' : 'warning'} size="sm">{item.adjustmentType === 'wastage' ? 'Wastage' : 'Counting error'}</StatusChip> : undefined}
+                  trailing={<span className={`num text-body-md font-semibold ${item.difference < 0 ? 'text-danger' : item.difference > 0 ? 'text-success' : 'text-text-2'}`}>{item.difference > 0 ? '+' : ''}{item.difference}</span>}
+                />
+              ))}
+            </ListGroup>
           </div>
-        </div>
-      )}
+        )}
+      </ResponsiveModal>
     </div>
   );
 }
