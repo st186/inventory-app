@@ -2585,7 +2585,7 @@ export async function deleteLeave(leaveId: string): Promise<{ success: boolean }
   });
 }
 
-// This leave year's balance (approved leave deducted) and the days still waiting for a
+// The leave balance since the 1 Aug 2026 reset, carried across years (approved leave deducted), and the days still waiting for a
 // decision. The server takes the joining date from the employee's own record.
 export async function getLeaveBalance(employeeId: string): Promise<{ balance: number; pendingDays: number }> {
   const supabase = createBrowserSupabase();

@@ -6707,26 +6707,24 @@ app.delete('/make-server-c2dd9b9d/item-sales', async (c) => {
 // ===== Attendance & Leave Management =====
 
 // Leave policy reset: on Aug 1, 2026 all prior leave balances/usage were wiped and the
-// monthly credit increased from 3 to 4 days/month (still carried forward, resets yearly on Jan 1).
+// monthly credit increased from 3 to 4 days/month.
 const LEAVE_POLICY_RESET_DATE = '2026-08-01';
 const LEAVES_PER_MONTH = 4;
 
-// The leave year (IST): 2026's runs from the 1 Aug 2026 reset (nobody applied for leave in
-// the app before then); from 2027 it is the calendar year, starting fresh every 1 January.
-// Leave usage used to be counted from 1 Aug 2026 with no end, so from 2027 every past
-// year's leave would have kept eating into the new year's credit.
-function leaveYearIST(today = getTodayIST()): { start: string; end: string } {
-  const year = today.slice(0, 4);
-  const yearStart = `${year}-01-01`;
-  return { start: yearStart < LEAVE_POLICY_RESET_DATE ? LEAVE_POLICY_RESET_DATE : yearStart, end: `${year}-12-31` };
+// Leave is counted from the 1 Aug 2026 reset with no end: 4 days are credited on the 1st of
+// every month, there are no fixed weekly offs (staff take their days whenever they need), and
+// unused leave carries forward month to month and into the next year - nothing lapses on 31
+// December (owner, 28 Oct 2026). It used to start fresh every 1 January.
+function leavePeriodIST(): { start: string; end: string } {
+  return { start: LEAVE_POLICY_RESET_DATE, end: '9999-12-31' };
 }
 
 // Helper function to calculate leave balance
 // usedLeaves can be a decimal (e.g., 1.5 for one full day + one half day)
 function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number {
   const today = getTodayIST();
-  const { start } = leaveYearIST(today);
-  // Credit starts at the leave year's start, or the joining date if that is later.
+  const { start } = leavePeriodIST();
+  // Credit starts at the policy reset, or the joining date if that is later.
   const joined = /^\d{4}-\d{2}-\d{2}/.test(joiningDate || '') ? joiningDate.slice(0, 10) : start;
   const creditFrom = joined > start ? joined : start;
 
@@ -6735,9 +6733,9 @@ function calculateLeaveBalance(joiningDate: string, usedLeaves: number): number 
     return -usedLeaves;
   }
 
-  // 4 leaves credited on the 1st of each month from the credit month to this month, carried
-  // forward within the leave year. Both dates are in this year, so the month gap is enough.
-  const monthsToCount = parseInt(today.slice(5, 7), 10) - parseInt(creditFrom.slice(5, 7), 10) + 1;
+  // 4 leaves credited on the 1st of each month from the credit month to this month, across years.
+  const monthsToCount = (parseInt(today.slice(0, 4), 10) - parseInt(creditFrom.slice(0, 4), 10)) * 12
+    + parseInt(today.slice(5, 7), 10) - parseInt(creditFrom.slice(5, 7), 10) + 1;
   const totalCredited = monthsToCount * LEAVES_PER_MONTH;
 
   // Available balance (can be negative if advance leaves are taken)
@@ -6756,12 +6754,12 @@ function leaveDays(leaves: any[]): number {
 async function leaveBalanceFor(employeeId: string, joiningDateHint?: string): Promise<{ balance: number; pendingDays: number; joiningDate: string; leaveYearStart: string }> {
   const employee = (await kv.get(`unified-employee:${employeeId}`)) || (await kv.get(`archived-employee:${employeeId}`));
   const joiningDate = String(employee?.joiningDate || employee?.createdAt || joiningDateHint || getTodayIST()).slice(0, 10);
-  const { start, end } = leaveYearIST();
-  const thisYear = (await getAllByPrefixWithRetry(`leave:${employeeId}:`))
+  const { start, end } = leavePeriodIST();
+  const sinceReset = (await getAllByPrefixWithRetry(`leave:${employeeId}:`))
     .filter((l: any) => l.leaveDate >= start && l.leaveDate <= end);
   return {
-    balance: calculateLeaveBalance(joiningDate, leaveDays(thisYear.filter((l: any) => l.status === 'approved'))),
-    pendingDays: leaveDays(thisYear.filter((l: any) => l.status === 'pending')),
+    balance: calculateLeaveBalance(joiningDate, leaveDays(sinceReset.filter((l: any) => l.status === 'approved'))),
+    pendingDays: leaveDays(sinceReset.filter((l: any) => l.status === 'pending')),
     joiningDate,
     leaveYearStart: start,
   };

@@ -464,7 +464,7 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
   if (!scheduled.length) set('attendance', null, days.length ? 'No working days in this period (all weekly off or approved leave).' : 'No days to count yet.');
   else {
     const extra = [leaveDays && plural(leaveDays, 'day') + ' of approved leave', offDays && plural(offDays, 'weekly off')].filter(Boolean).join(' and ');
-    set('attendance', pct(presentDays.length, scheduled.length), `Came in on ${presentDays.length} of ${scheduled.length} working days${extra ? ` (${extra} not counted)` : ''}.${extraDays ? ` Also worked ${plural(extraDays, 'extra day')}.` : ''}${!settings.weeklyOff.length ? ' Weekly off is not set, so every day counts as a working day.' : ''}`);
+    set('attendance', pct(presentDays.length, scheduled.length), `Came in on ${presentDays.length} of ${scheduled.length} working days${extra ? ` (${extra} not counted)` : ''}.${extraDays ? ` Also worked ${plural(extraDays, 'extra day')}.` : ''}${!settings.weeklyOff.length ? ' There is no fixed weekly off: days off are taken as leave (4 a month), applied for in the app.' : ''}`);
   }
 
   // Punches: only days from the start of the shift clock, and not half-day leave.

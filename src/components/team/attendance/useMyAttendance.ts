@@ -43,7 +43,7 @@ export function useMyAttendance(employeeId: string) {
     setLeaves((await teamApi.getLeaves(employeeId)) as LeaveRow[]);
   }, [employeeId]);
 
-  // The server reads the joining date from the staff record and counts only this leave year.
+  // The server reads the joining date from the staff record and counts all leave since the 1 Aug 2026 reset (it carries into the next year).
   const loadBalance = React.useCallback(async () => {
     try {
       const { balance, pendingDays: pending } = await teamApi.getLeaveBalance(employeeId);
@@ -88,7 +88,7 @@ export function useMyAttendance(employeeId: string) {
     loadLeaves,
     leaveBalance,
     pendingDays,
-    // Projected = balance minus this leave year's days still waiting (can go negative with advance leave).
+    // Projected = balance minus the days still waiting (can go negative with advance leave).
     projectedBalance: leaveBalance === null ? null : leaveBalance - pendingDays,
     loadBalance,
   };
