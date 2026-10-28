@@ -56,6 +56,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   fulfillment_reminder: { view: 'analytics', tab: 'production-requests' },
   data_entry_reminder: { view: 'inventory' },
   expense_flag: { view: 'inventory' },
+  production_flag: { view: 'production' },
   rider_called: { view: 'riders' },
   rider_ready: { view: 'riders' },
   rider_on_the_way: { view: 'riders' },

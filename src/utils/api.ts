@@ -2537,6 +2537,34 @@ export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss',
   await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
 }
 
+// Production checks (server productionReview.ts): anomalies in a day's production entry, from the
+// rules and from Bunny (byAi). The owner and operations managers see all; a production incharge their house.
+export interface ProductionFlag {
+  id: string;
+  productionId: string;
+  kind: 'empty' | 'twin' | 'copy' | 'total' | 'type' | 'perKg' | 'sauce' | 'wastage' | 'late' | string;
+  date: string;
+  house: string;
+  title: string;
+  message: string;
+  byAi?: boolean;
+  status: 'open' | 'fixed' | 'dismissed';
+  createdAt: string;
+  loggedBy?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  entry: { date: string; pieces: number; approvalStatus: string | null } | null;
+}
+
+export async function getProductionFlags(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<ProductionFlag[]> {
+  const data = await fetchWithAuth(`${API_BASE}/production-flags?status=${status}`, await tokenOr(accessToken));
+  return data.flags || [];
+}
+
+export async function dismissProductionFlag(id: string, note?: string, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/production-flags/${encodeURIComponent(id)}/dismiss`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
+}
+
 export async function applyLeave(leave: LeaveApplication): Promise<LeaveApplication> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();

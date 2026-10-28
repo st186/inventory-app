@@ -6,6 +6,7 @@
 //   /polish-preview.html?screen=sync                 the status line under the top bar, every state
 //   /polish-preview.html?screen=production           Insights > Production alone (&period=lastMonth, &house=PH-1)
 //   /polish-preview.html?screen=expenses             Audit > Expenses (InventoryView, read-only; &role=auditor)
+//   /polish-preview.html?screen=checks               the production checks banner and sheet (made-up flags)
 //     &role=owner|store-incharge   &lang=en|bn|hi   &empty=1 (no sales records)
 //
 // Requests to the app's server are answered here from src/gallery/insightsMock.ts; nothing leaves
@@ -49,6 +50,16 @@ const MENU_PRICES = [
   ['1107', 'Chicken Kurkure Momo', 'Chicken Kurkure Momos', 170, 189], ['1108', 'Veg Kurkure Momo', 'Veg Kurkure Momos', 150, 169],
 ].map(([productId, productName, momoCategory, offlinePrice, onlinePrice]) => ({ productId, productName, momoCategory, piecesPerUnit: 6, offlinePrice, onlinePrice, updatedBy: 'demo', updatedAt: today }));
 
+// Made-up production checks for ?screen=checks.
+const PRODUCTION_FLAGS = [
+  { kind: 'twin', title: 'Two entries for one day', message: 'There is already a production entry for this day (1,120 pieces). Keep one: put everything made that day in it and delete the other, or the pieces are counted twice.', pieces: 904, approvalStatus: 'pending' },
+  { kind: 'perKg', title: "Pieces and stuffing don't match", message: 'Chicken: 1,792 pieces from 17.5 kg stuffing over three days is 102 a kg, usually about 52 a kg (more pieces than the stuffing explains: check the count, or stuffing not logged).', pieces: 1022, approvalStatus: 'approved' },
+  { kind: 'ai-1', byAi: true, title: 'Kurkure made with no batter logged', message: 'Chicken kurkure 60 pieces today, but no batter or coating was logged in the last two days; on other kurkure days 1-2 kg was logged.', pieces: 1252, approvalStatus: 'approved' },
+].map((f, i) => {
+  const date = new Date(Date.now() - (i + 1) * 86400000).toISOString().slice(0, 10);
+  return { ...f, id: `demo-${i}:${f.kind}`, productionId: `demo-${i}`, date, house: 'PH-1', status: 'open', createdAt: `${date}T15:00:00.000Z`, loggedBy: 'Production Demo', entry: { date, pieces: f.pieces, approvalStatus: f.approvalStatus } };
+});
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -60,7 +71,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   await new Promise((r) => setTimeout(r, 150));
   // The sync demo's expenses: the signal "drops" while they are sent, so they stay waiting.
   if (path === '/inventory' && init?.method === 'POST') throw new TypeError('Failed to fetch');
+  if (path.startsWith('/production-flags/')) return json({ flag: {} });
   switch (path) {
+    case '/production-flags': return json({ flags: PRODUCTION_FLAGS });
     case '/sales-data': return json({ data: salesRecords });
     case '/momo-plate-config': return json({ config: {} });
     case '/menu-item-prices': return json({ items: MENU_PRICES });
@@ -86,6 +99,7 @@ const SalesData = lazy<ComponentType<any>>(() =>
 const SyncStatusDemo = lazy(() => import('./polishSyncDemo').then((m) => ({ default: m.SyncStatusDemo })));
 const ProductionDemo = lazy(() => import('./polishProductionDemo').then((m) => ({ default: m.ProductionDemo })));
 const InventoryView = lazy(() => import('../components/InventoryView').then((m) => ({ default: m.InventoryView })));
+const ProductionFlagsBanner = lazy(() => import('../components/production/ProductionFlags').then((m) => ({ default: m.ProductionFlagsBanner })));
 
 const owner = mock.context.user!;
 const USERS: Record<string, InventoryContextType['user']> = {
@@ -104,10 +118,10 @@ function Preview() {
   return (
     <LanguageOverride lang={lang}>
       <div className="min-h-dvh bg-bg text-text" lang={lang}>
-        <PageHeader title={screen === 'sync' ? 'Status line' : screen === 'expenses' ? 'Expenses' : lang === 'bn' ? 'বিশ্লেষণ' : lang === 'hi' ? 'विश्लेषण' : 'Insights'} />
+        <PageHeader title={screen === 'sync' ? 'Status line' : screen === 'expenses' ? 'Expenses' : screen === 'checks' ? 'Production' : lang === 'bn' ? 'বিশ্লেষণ' : lang === 'hi' ? 'विश्लेषण' : 'Insights'} />
         <main className="mx-auto w-full max-w-6xl px-4 py-4 lg:px-8">
           <Suspense fallback={null}>
-            {screen === 'expenses' ? <InventoryView context={context} selectedStoreId={storeId} /> : screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
+            {screen === 'checks' ? <ProductionFlagsBanner enabled accessToken="demo" /> : screen === 'expenses' ? <InventoryView context={context} selectedStoreId={storeId} /> : screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
           </Suspense>
         </main>
       </div>

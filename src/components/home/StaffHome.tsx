@@ -26,6 +26,7 @@ import { useHomeData } from './homeData';
 import { useFocusProfile } from './HomeShortcuts';
 import { TeamLeaveRow } from './TeamLeaveRow';
 import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
+import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
@@ -80,8 +81,18 @@ function InchargeHome() {
   // Expense entries the checks flagged for this incharge's store or kitchen.
   const expenseFlags = useExpenseFlags(true, token);
   const [flagsOpen, setFlagsOpen] = useState(false);
+  // Production entries the checks flagged for this incharge's house.
+  const productionFlags = useProductionFlags(isProduction, token);
+  const [productionFlagsOpen, setProductionFlagsOpen] = useState(false);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (productionFlags.flags.length) {
+      list.push({
+        key: 'production-flags', icon: Factory, title: productionFlags.flags.length === 1 ? '1 production entry to check' : `${productionFlags.flags.length} production entries to check`,
+        meta: productionFlags.flags[0].title, status: 'late', count: productionFlags.flags.length, due: 0,
+        onOpen: () => setProductionFlagsOpen(true),
+      });
+    }
     if (expenseFlags.flags.length) {
       list.push({
         key: 'expense-flags', icon: ReceiptText, title: expenseFlags.flags.length === 1 ? '1 expense entry to check' : `${expenseFlags.flags.length} expense entries to check`,
@@ -186,7 +197,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);
@@ -259,6 +270,7 @@ function InchargeHome() {
       </section>
       {profile.sheet}
       <ExpenseFlagsSheet open={flagsOpen} onOpenChange={setFlagsOpen} flags={expenseFlags.flags} onChanged={expenseFlags.reload} />
+      <ProductionFlagsSheet open={productionFlagsOpen} onOpenChange={setProductionFlagsOpen} flags={productionFlags.flags} onChanged={productionFlags.reload} />
     </HomePage>
   );
 }

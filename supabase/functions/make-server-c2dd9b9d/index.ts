@@ -8,6 +8,7 @@ import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
 import { registerExpenseReviewRoutes, reviewExpense, type ExpenseReviewDeps } from './expenseReview.ts';
+import { registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
@@ -2993,6 +2994,8 @@ app.post('/make-server-c2dd9b9d/production', async (c) => {
 
     const key = `production:${authResult.user.id}:${newItem.id}`;
     await kv.set(key, newItem);
+    // Anomaly checks on the numbers (productionReview.ts), after the response.
+    await afterResponse('Production review', () => reviewProduction(expenseReviewDeps, key, newItem, authResult.user.user_metadata?.name || authResult.user.email));
     console.log('Production data saved successfully:', newItem.id);
 
     // Notify cluster heads and operations managers about production submission - both
@@ -3082,6 +3085,7 @@ app.put('/make-server-c2dd9b9d/production/:id', async (c) => {
     };
 
     await kv.set(key, updatedItem);
+    await afterResponse('Production review', () => reviewProduction(expenseReviewDeps, key, updatedItem, authResult.user.user_metadata?.name || authResult.user.email));
 
     return c.json({ success: true, item: updatedItem });
   } catch (error) {
@@ -17240,6 +17244,7 @@ registerKpiRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPr
 registerEventsRoutes(app, eventsDeps);
 // Expense checks: flags on new entries, and the routes to list and decide them (expenseReview.ts).
 registerExpenseReviewRoutes(app, expenseReviewDeps);
+registerProductionReviewRoutes(app, expenseReviewDeps);
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,

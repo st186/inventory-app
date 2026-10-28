@@ -32,6 +32,7 @@ import { BatchPiecesCard } from './production/BatchPiecesCard';
 import { BATCH_TRACKING_FROM, ProductionBatch } from '../utils/batches';
 import { WeeklyGoalCard } from './production/WeeklyGoalCard';
 import { ProductionApprovals } from './production/ProductionApprovals';
+import { ProductionFlagsBanner } from './production/ProductionFlags';
 import { useProductionPlan } from './production/useProductionPlan';
 import { CollapsibleCard, StickyActions, StockPage, bagsText, dayLabel, formatCount, momoName } from './stock/stockShared';
 
@@ -751,6 +752,8 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
       {onBack && !isProductionIncharge && (
         <Button variant="link" size="sm" className="self-start" leadingIcon={<ArrowLeft />} onClick={onBack}>{t('common.back')}</Button>
       )}
+      {/* What the production checks found (owner, operations managers, the production incharge). */}
+      <ProductionFlagsBanner enabled={isClusterHead || isOperationsManager || isProductionIncharge} accessToken={context.user?.accessToken} />
       {canViewApprovals && (
         <div className="flex items-center gap-3">
           <SegmentedControl
