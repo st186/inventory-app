@@ -2,6 +2,7 @@
 import { API_BASE } from '../../utils/api';
 import { currentAccessToken } from '../../utils/accessToken';
 import { regionHeaders } from '../../utils/http';
+import type { VendorKind } from './quantityNorms';
 
 export type PlaceKind = 'store' | 'production';
 export type EntryKind = 'inventory' | 'overhead';
@@ -22,6 +23,8 @@ export interface ShoppingLine {
   id: string; item: string; itemBn?: string; entryType: EntryKind; category: string;
   qty: number; unit: string; placeKind: PlaceKind; placeId: string; placeName?: string; note?: string; alertIds?: string[];
   vendorId?: string | null; vendorName?: string;
+  // Packs (packet, bottle, jar, bag, box, carton, tin) say the size of each: 2 packets × 1 L.
+  packSize?: number | null; packUnit?: string | null;
   got?: { qty: number; at: string } | null; missing?: boolean;
   logged?: { kind: EntryKind; id: string; at: string } | null; skipped?: boolean;
 }
@@ -39,10 +42,15 @@ export interface Lists {
   people?: { id: string; name: string; designation: string | null }[]; places?: PlaceRef[];
 }
 // A line as the editor sends it (the server keeps what was got on lines it already has).
-export type LineDraft = Pick<ShoppingLine, 'item' | 'itemBn' | 'entryType' | 'category' | 'qty' | 'unit' | 'placeKind' | 'placeId' | 'note' | 'alertIds' | 'vendorId'> & { id?: string };
+export type LineDraft = Pick<ShoppingLine, 'item' | 'itemBn' | 'entryType' | 'category' | 'qty' | 'unit' | 'placeKind' | 'placeId' | 'note' | 'alertIds' | 'vendorId' | 'packSize' | 'packUnit'> & { id?: string };
 // A shop that gets its part of a list on WhatsApp, and the items it usually supplies.
-export interface Vendor { id: string; name: string; phone?: string; items: string[]; createdAt: string; updatedAt: string }
-export type VendorDraft = Pick<Vendor, 'name' | 'phone' | 'items'>;
+export interface Vendor { id: string; name: string; kind?: VendorKind; phone?: string; items: string[]; createdAt: string; updatedAt: string }
+export type VendorDraft = Pick<Vendor, 'name' | 'kind' | 'phone' | 'items'>;
+// How an item was last written on a list, to start the next line from.
+export interface ItemSpec { item: string; qty: number; unit: string; packSize?: number | null; packUnit?: string | null; at: string }
+// Bunny's check of a list: a line that is unclear, and the amount to write instead (if it can tell).
+export interface QtyFix { qty: number; unit: string; packSize?: number | null; packUnit?: string | null }
+export interface QtyIssue { key: string; problem: string; fix: QtyFix | null }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -80,7 +88,9 @@ export const markLogged = (id: string, lineId: string, b: { kind?: EntryKind; re
   call<{ list: ShoppingList }>(at(id, 'logged'), post({ lineId, ...b })).then(one);
 export const vendorSent = (id: string, vendorId: string, sig: string) => call<{ list: ShoppingList }>(at(id, 'vendor-sent'), post({ vendorId, sig })).then(one);
 
-export const listVendors = () => call<{ vendors: Vendor[] }>('/supply-vendors').then((r) => r.vendors);
+export const listVendors = () => call<{ vendors: Vendor[]; specs: Record<string, ItemSpec> }>('/supply-vendors');
+export const checkList = (lines: { key: string; item: string; amount: string; vendorKind?: VendorKind | null; before?: string }[]) =>
+  call<{ issues: QtyIssue[] }>('/shopping-lists/check', post({ lines })).then((r) => r.issues);
 export const createVendor = (b: VendorDraft) => call<{ vendor: Vendor }>('/supply-vendors', post(b)).then((r) => r.vendor);
 export const updateVendor = (id: string, b: VendorDraft) =>
   call<{ vendor: Vendor }>(`/supply-vendors/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(b) }).then((r) => r.vendor);

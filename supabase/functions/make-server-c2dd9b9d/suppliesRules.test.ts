@@ -1,7 +1,7 @@
 // Tests for running low and shopping lists. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/suppliesRules.test.ts
 import assert from 'node:assert/strict';
-import { STARTER_VENDORS, alertRecipients, deliverAt, itemKey, learnVendorItems, linesPreview, listProgress, placeOf, vendorForItem } from './suppliesRules.ts';
+import { alertRecipients, deliverAt, itemKey, learnSpecs, learnVendorItems, linesPreview, listProgress, placeOf, qtyLabel, vendorForItem } from './suppliesRules.ts';
 
 let n = 0;
 const test = (name: string, fn: () => void) => { fn(); n++; };
@@ -69,9 +69,18 @@ test('which vendor an item comes from, and learning from a saved list', () => {
   assert.deepEqual(changed.map((c) => [c.id, c.items]).sort(), [['kali', ['Ajinomoto', 'garlic']], ['veg', ['Ginger', 'Onion']]]);
   assert.deepEqual(vendors[0].items, ['Ginger', 'Garlic']); // the originals are not changed
   assert.equal(learnVendorItems(vendors, [{ item: 'Ginger', vendorId: 'veg' }]).length, 0);
-  // Every starter item belongs to one vendor only.
-  const keys = STARTER_VENDORS.flatMap((s) => s.items.map(itemKey));
-  assert.equal(new Set(keys).size, keys.length);
+});
+
+test('pack sizes: labels and remembering how an item was written', () => {
+  assert.equal(qtyLabel({ qty: 2, unit: 'packet', packSize: 1, packUnit: 'L' }), '2 packets × 1 L');
+  assert.equal(qtyLabel({ qty: 400, unit: 'g' }), '400 g');
+  assert.equal(linesPreview([{ item: 'Oil', qty: 2, unit: 'packet', packSize: 1, packUnit: 'L' }]), 'Oil 2 packets × 1 L');
+  const specs = learnSpecs({ oil: { item: 'Oil', qty: 2, unit: 'pcs', at: 'a' } }, [
+    { item: 'oil', qty: 3, unit: 'packet', packSize: 1, packUnit: 'L' }, { item: 'Ginger', qty: 400, unit: 'g', packSize: 5, packUnit: 'kg' }, { item: 'Salt', qty: 0, unit: 'kg' },
+  ], 'b');
+  assert.deepEqual(specs.oil, { item: 'oil', qty: 3, unit: 'packet', packSize: 1, packUnit: 'L', at: 'b' });
+  assert.deepEqual(specs.ginger, { item: 'Ginger', qty: 400, unit: 'g', at: 'b' }); // no pack size on a weight
+  assert.equal(specs.salt, undefined);
 });
 
 console.log(`suppliesRules: ${n} tests passed`);

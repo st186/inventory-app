@@ -1,9 +1,10 @@
 // Vendors on shopping lists (owner, 28 Oct 2026; server supplies.ts).
-//   Part of a list comes from vendors (vegetables, grocery, Kalimata, butter, chicken) who get their
-//   part on WhatsApp. The app writes each vendor's message the way it was always written - the date,
-//   then one item per line - and opens WhatsApp with it; the writer checks it and presses send. The
-//   app keeps when each was sent and says so if the list changes after. The vendor an item comes
-//   from is remembered, so the next list fills it in.
+//   Part of a list comes from vendors (Pappu Shaw for vegetables, Dutta Bhandar and Kalimata for
+//   grocery and masala, Mitunjoy Store for butter, the chicken vendor) who get their part on
+//   WhatsApp. The app writes each vendor a proper order - a header with the date, who it is for and
+//   who collects, then numbered lines with packs and sizes (quantityNorms.ts) - and opens WhatsApp
+//   with it; the writer checks it and presses send. The app keeps when each was sent and says so
+//   if the list changes after. The vendor an item comes from is remembered for the next list.
 import { useCallback, useEffect, useState } from 'react';
 import { Copy, MessageCircle, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,20 +15,26 @@ import { Field } from '../ui/field';
 import { Input } from '../ui/input';
 import { ListGroup, ListRow } from '../ui/list-row';
 import { ResponsiveModal } from '../ui/responsive-modal';
+import { NativeSelect } from '../ui/select';
 import { StatusChip } from '../ui/status-chip';
+import { VENDOR_KINDS, qtyLabel, type VendorKind } from './quantityNorms';
 import { ItemPicker, itemKey, useSupplyCandidates } from './supplyItems';
 import * as api from './suppliesApi';
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
-const ddmmyy = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(2, 4)}`;
-const qtyText = (n: number) => String(Math.round(n * 1000) / 1000);
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// "Thu, 29 Oct 2026"
+const longDate = (d: string) => { const t = new Date(`${d}T00:00:00Z`); return `${DAYS[t.getUTCDay()]}, ${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]} ${t.getUTCFullYear()}`; };
 const phoneText = (p?: string) => { const d = (p || '').replace(/\D/g, '').slice(-10); return d.length === 10 ? `${d.slice(0, 5)} ${d.slice(5)}` : p || ''; };
+export const kindLabel = (k?: VendorKind) => VENDOR_KINDS.find((x) => x.value === k)?.label || 'Other';
 
+/** The vendors, and how each item was last written on a list (to start new lines from). */
 export function useVendors() {
-  const [vendors, setVendors] = useState<api.Vendor[] | null>(null);
-  const reload = useCallback(() => { api.listVendors().then(setVendors).catch(() => setVendors((v) => v || [])); }, []);
+  const [data, setData] = useState<{ vendors: api.Vendor[]; specs: Record<string, api.ItemSpec> } | null>(null);
+  const reload = useCallback(() => { api.listVendors().then(setData).catch(() => setData((d) => d || { vendors: [], specs: {} })); }, []);
   useEffect(() => { reload(); }, [reload]);
-  return { vendors: vendors || [], reload };
+  return { vendors: data?.vendors || [], specs: data?.specs || {}, reload };
 }
 
 export const vendorFor = (vendors: api.Vendor[], item: string) => {
@@ -35,22 +42,36 @@ export const vendorFor = (vendors: api.Vendor[], item: string) => {
   return vendors.find((v) => v.items.some((i) => itemKey(i) === k))?.id || null;
 };
 
-type OrderLine = Pick<api.ShoppingLine, 'item' | 'qty' | 'unit' | 'vendorId'>;
-// One row per item: the same item for two places is added up.
+type OrderLine = Pick<api.ShoppingLine, 'item' | 'qty' | 'unit' | 'vendorId' | 'packSize' | 'packUnit'>;
+// One row per item and pack: the same item for two places is added up.
 function merged(lines: OrderLine[]) {
-  const m = new Map<string, { item: string; qty: number; unit: string }>();
+  const m = new Map<string, OrderLine>();
   for (const l of lines) {
-    const k = `${itemKey(l.item)}|${l.unit}`;
+    const k = `${itemKey(l.item)}|${l.unit}|${l.packSize || ''}|${l.packUnit || ''}`;
     const cur = m.get(k);
-    m.set(k, cur ? { ...cur, qty: cur.qty + (l.qty || 0) } : { item: l.item, qty: l.qty || 0, unit: l.unit });
+    m.set(k, cur ? { ...cur, qty: cur.qty + (l.qty || 0) } : { ...l, qty: l.qty || 0 });
   }
   return [...m.values()];
 }
-// "29.10.26", a blank line, then "Ginger 400 g" - line notes are for the shopper, not the vendor.
-export const vendorMessage = (date: string, lines: OrderLine[]) =>
-  [ddmmyy(date), '', ...merged(lines).map((l) => (l.qty ? `${l.item} ${qtyText(l.qty)} ${l.unit}` : l.item))].join('\n');
+
+/** A vendor's order: header, numbered lines, sign-off (WhatsApp shows *text* in bold). Line notes are for the shopper, not the vendor. */
+export function vendorMessage(o: { date: string; vendorName: string; from?: string; collectedBy?: string; lines: OrderLine[] }) {
+  const rows = merged(o.lines);
+  return [
+    '*Bunny Momos · Purchase order*',
+    `Date: ${longDate(o.date)}`,
+    `To: ${o.vendorName}`,
+    ...(o.collectedBy ? [`Collected by: ${o.collectedBy}`] : []),
+    '',
+    ...rows.map((l, i) => `${i + 1}. ${l.item}${l.qty ? ` – ${qtyLabel(l)}` : ''}`),
+    '',
+    rows.length === 1 ? '1 item. Please keep it ready and confirm.' : `${rows.length} items. Please keep them ready and confirm.`,
+    'Thank you,',
+    `${o.from ? `${o.from} · ` : ''}Bunny Momos`,
+  ].join('\n');
+}
 // What a message asked for, to tell whether the list changed after it was sent.
-export const orderSig = (lines: OrderLine[]) => merged(lines).map((l) => `${itemKey(l.item)} ${l.qty} ${l.unit}`).sort().join(';');
+export const orderSig = (lines: OrderLine[]) => merged(lines).map((l) => `${itemKey(l.item)} ${qtyLabel(l)}`).sort().join(';');
 // No number: WhatsApp opens with the text and asks which chat.
 const whatsappLink = (phone: string | undefined, text: string) => `${phoneLinks(phone)?.whatsapp || 'https://wa.me/'}?text=${encodeURIComponent(text)}`;
 
@@ -61,9 +82,9 @@ export function vendorProgress(list: { lines: { vendorId?: string | null }[]; ve
 }
 
 /** Each vendor's part of a list: the message, Copy, and WhatsApp (which records the send). */
-export function VendorOrders({ date, lines, vendors, sent, onSent, compact }: {
+export function VendorOrders({ date, lines, vendors, sent, onSent, compact, from, collectedBy }: {
   date: string; lines: OrderLine[]; vendors: api.Vendor[]; sent?: api.ShoppingList['vendorOrders'];
-  onSent?: (vendorId: string, sig: string) => void; compact?: boolean;
+  onSent?: (vendorId: string, sig: string) => void; compact?: boolean; from?: string; collectedBy?: string;
 }) {
   const groups = vendors.map((v) => ({ v, ls: lines.filter((l) => l.vendorId === v.id) })).filter((g) => g.ls.length);
   if (!groups.length) return null;
@@ -73,7 +94,7 @@ export function VendorOrders({ date, lines, vendors, sent, onSent, compact }: {
   return (
     <div className="flex flex-col gap-2">
       {groups.map(({ v, ls }) => {
-        const text = vendorMessage(date, ls);
+        const text = vendorMessage({ date, vendorName: v.name, from, collectedBy, lines: ls });
         const sig = orderSig(ls);
         const rec = sent?.[v.id];
         const changed = !!rec && rec.sig !== sig;
@@ -107,18 +128,18 @@ export function VendorOrders({ date, lines, vendors, sent, onSent, compact }: {
 
 // ---------------- Managing vendors ----------------
 
-/** The vendors: name, WhatsApp number and the items each supplies. Content only (the list editor shows it as a step). */
+/** The vendors: name, type, WhatsApp number and the items each supplies. Content only (the list editor shows it as a step). */
 export function VendorManager({ vendors, onChanged }: { vendors: api.Vendor[]; onChanged: () => void }) {
   const [editing, setEditing] = useState<api.Vendor | 'new' | null>(null);
   if (editing) return <VendorForm vendor={editing === 'new' ? null : editing} onDone={() => { setEditing(null); onChanged(); }} onCancel={() => setEditing(null)} />;
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-body-sm text-text-2">Items from a vendor are filled in on the next list. Add the WhatsApp number so the message goes straight to their chat.</p>
+      <p className="text-body-sm text-text-2">Items from a vendor are filled in on the next list. With the WhatsApp number the order goes straight to their chat.</p>
       {vendors.length > 0 && (
         <ListGroup>
           {vendors.map((v) => (
             <ListRow key={v.id} title={v.name} onClick={() => setEditing(v)}
-              subtitle={`${v.phone ? phoneText(v.phone) : 'No WhatsApp number'} · ${v.items.length ? v.items.slice(0, 4).join(', ') + (v.items.length > 4 ? ` +${v.items.length - 4}` : '') : 'no items yet'}`} />
+              subtitle={`${kindLabel(v.kind)} · ${v.phone ? phoneText(v.phone) : 'No WhatsApp number'} · ${v.items.length ? v.items.slice(0, 3).join(', ') + (v.items.length > 3 ? ` +${v.items.length - 3}` : '') : 'no items yet'}`} />
           ))}
         </ListGroup>
       )}
@@ -130,6 +151,7 @@ export function VendorManager({ vendors, onChanged }: { vendors: api.Vendor[]; o
 function VendorForm({ vendor, onDone, onCancel }: { vendor: api.Vendor | null; onDone: () => void; onCancel: () => void }) {
   const candidates = useSupplyCandidates();
   const [name, setName] = useState(vendor?.name || '');
+  const [kind, setKind] = useState<VendorKind>(vendor?.kind || 'grocery');
   const [phone, setPhone] = useState(vendor?.phone || '');
   const [items, setItems] = useState<string[]>(vendor?.items || []);
   const [busy, setBusy] = useState<'save' | 'remove' | null>(null);
@@ -137,7 +159,7 @@ function VendorForm({ vendor, onDone, onCancel }: { vendor: api.Vendor | null; o
   const save = async () => {
     setBusy('save');
     try {
-      const body = { name: name.trim(), phone: phone.trim(), items };
+      const body = { name: name.trim(), kind, phone: phone.trim(), items };
       if (vendor) await api.updateVendor(vendor.id, body); else await api.createVendor(body);
       toast.success('Saved');
       onDone();
@@ -152,10 +174,17 @@ function VendorForm({ vendor, onDone, onCancel }: { vendor: api.Vendor | null; o
   };
   return (
     <div className="flex flex-col gap-4">
-      <Field label="Name"><Input value={name} maxLength={40} placeholder="e.g. Vegetable vendor" onChange={(e) => setName(e.target.value)} /></Field>
-      <Field label="WhatsApp number" optional>
-        <Input type="tel" inputMode="numeric" className="num" value={phone} maxLength={16} placeholder="10 digits" onChange={(e) => setPhone(e.target.value)} />
-      </Field>
+      <Field label="Name"><Input value={name} maxLength={40} placeholder="e.g. Pappu Shaw" onChange={(e) => setName(e.target.value)} /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Sells">
+          <NativeSelect value={kind} onChange={(e) => setKind(e.target.value as VendorKind)}>
+            {VENDOR_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+          </NativeSelect>
+        </Field>
+        <Field label="WhatsApp number" optional>
+          <Input type="tel" inputMode="numeric" className="num" value={phone} maxLength={16} placeholder="10 digits" onChange={(e) => setPhone(e.target.value)} />
+        </Field>
+      </div>
       <section className="flex flex-col gap-2">
         <p className="overline-label">Items from this vendor · {items.length}</p>
         {items.length > 0 && (
@@ -176,9 +205,7 @@ function VendorForm({ vendor, onDone, onCancel }: { vendor: api.Vendor | null; o
         <Button variant="secondary" onClick={onCancel}>Back</Button>
       </div>
       {vendor && (
-        <Button variant="danger-ghost" leadingIcon={<Trash2 />} loading={busy === 'remove'} onClick={remove}>
-          Remove this vendor
-        </Button>
+        <Button variant="danger-ghost" leadingIcon={<Trash2 />} loading={busy === 'remove'} onClick={remove}>Remove this vendor</Button>
       )}
     </div>
   );

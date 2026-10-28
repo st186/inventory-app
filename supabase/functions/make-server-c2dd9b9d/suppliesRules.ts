@@ -21,6 +21,8 @@ export type ShoppingLine = {
   id: string; item: string; itemBn?: string; entryType: EntryKind; category: string;
   qty: number; unit: string; placeKind: PlaceKind; placeId: string; placeName?: string; note?: string; alertIds?: string[];
   vendorId?: string | null; vendorName?: string;
+  // Packs (packet, bottle, jar, bag, box, carton, tin) say the size of each: 2 packets x 1 L.
+  packSize?: number | null; packUnit?: string | null;
   got?: { qty: number; at: string } | null; missing?: boolean;
   logged?: { kind: EntryKind; id: string; at: string } | null; skipped?: boolean;
 };
@@ -36,7 +38,20 @@ export type ShoppingList = {
 };
 
 // A shop that gets its part of the list on WhatsApp, and the items it usually supplies.
-export type Vendor = { id: string; name: string; phone?: string; items: string[]; createdAt: string; updatedAt: string };
+export type VendorKind = 'vegetables' | 'grocery' | 'dairy' | 'meat' | 'other';
+export type Vendor = { id: string; name: string; kind?: VendorKind; phone?: string; items: string[]; createdAt: string; updatedAt: string };
+// How each item was last written on a list (unit, pack size), so the next list starts from it.
+export type ItemSpec = { item: string; qty: number; unit: string; packSize?: number | null; packUnit?: string | null; at: string };
+
+export const PACK_UNITS = new Set(['packet', 'bottle', 'jar', 'bag', 'box', 'carton', 'tin']);
+const MEASURES = new Set(['g', 'kg', 'L', 'mL']);
+const unitWord = (unit: string, n: number) => (n === 1 || MEASURES.has(unit) || unit === 'pcs' ? unit : unit === 'box' ? 'boxes' : `${unit}s`);
+// "2 packets x 1 L", "400 g" (the app's quantityNorms.ts qtyLabel, kept in step).
+export function qtyLabel(l: Pick<ShoppingLine, 'qty' | 'unit' | 'packSize' | 'packUnit'>): string {
+  if (!l.qty) return '';
+  const head = `${l.qty} ${unitWord(l.unit, l.qty)}`;
+  return PACK_UNITS.has(l.unit) && l.packSize && l.packUnit ? `${head} × ${l.packSize} ${l.packUnit}` : head;
+}
 
 // Two names are the same item when they match ignoring case, spaces and punctuation.
 export const itemKey = (s: string) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -106,8 +121,8 @@ export function listProgress(list: Pick<ShoppingList, 'lines'>) {
 }
 
 // "Onion 5 kg, Tomato 3 kg (+9 more)" for a notification.
-export function linesPreview(lines: Pick<ShoppingLine, 'item' | 'qty' | 'unit'>[], max = 4): string {
-  const head = lines.slice(0, max).map((l) => `${l.item}${l.qty ? ` ${l.qty} ${l.unit}` : ''}`).join(', ');
+export function linesPreview(lines: Pick<ShoppingLine, 'item' | 'qty' | 'unit' | 'packSize' | 'packUnit'>[], max = 4): string {
+  const head = lines.slice(0, max).map((l) => `${l.item}${l.qty ? ` ${qtyLabel(l)}` : ''}`).join(', ');
   return lines.length > max ? `${head} (+${lines.length - max} more)` : head;
 }
 
@@ -134,12 +149,16 @@ export function learnVendorItems(vendors: Vendor[], lines: Pick<ShoppingLine, 'i
   return [...changed].map((id) => byId.get(id)!);
 }
 
-// The vendors Aniket orders from (owner, 28 Oct 2026), with the item names as they are logged in
-// the expenses. Set up once; numbers are added in the app.
-export const STARTER_VENDORS: { name: string; items: string[] }[] = [
-  { name: 'Vegetable vendor', items: ['Ginger', 'Garlic', 'Green Chilli', 'Carrot', 'Cabbage', 'Coriander Leaves', 'Lemon', 'Tomato'] },
-  { name: 'Grocery vendor', items: ['Oil', 'Maida', 'Red Chilli Sauce', 'Green Chilli Sauce', 'Sesame seeds'] },
-  { name: 'Kalimata', items: ['Aromatic Powder', 'Makhni Gravy', 'Mayonnaise', 'Tomato Sauce', 'Tomato sauce sachet', 'Peri Peri Masala', 'Chat Masala', 'Ajinomoto', 'Liquid Cheese', 'Sweet Corn', 'Mozzarella Cheese', 'Tandoori masala'] },
-  { name: 'Butter vendor', items: ['Butter'] },
-  { name: 'Chicken vendor', items: ['Chicken'] },
-];
+// The latest way each item was written, from a saved list (the newest 400 items are kept).
+export function learnSpecs(specs: Record<string, ItemSpec>, lines: Pick<ShoppingLine, 'item' | 'qty' | 'unit' | 'packSize' | 'packUnit'>[], at: string): Record<string, ItemSpec> {
+  const next = { ...specs };
+  for (const l of lines) {
+    const k = itemKey(l.item);
+    if (!k || !l.qty) continue;
+    const pack = PACK_UNITS.has(l.unit) && l.packSize && l.packUnit;
+    next[k] = { item: l.item, qty: l.qty, unit: l.unit, ...(pack ? { packSize: l.packSize, packUnit: l.packUnit } : {}), at };
+  }
+  const keys = Object.keys(next);
+  if (keys.length <= 400) return next;
+  return Object.fromEntries(keys.map((k) => [k, next[k]] as const).sort((a, b) => b[1].at.localeCompare(a[1].at)).slice(0, 400));
+}

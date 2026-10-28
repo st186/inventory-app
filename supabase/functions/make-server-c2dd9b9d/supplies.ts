@@ -14,26 +14,34 @@
 //   chicken). The writer sends each vendor its part on WhatsApp from the app (the phone opens WhatsApp
 //   with the text; nothing is sent from the server), and the app keeps when. Saving a line with a
 //   vendor teaches the app that item's vendor for next time.
+//   Quantities (owner, 28 Oct 2026): packs say the size of each (2 packets x 1 L), vegetables go by
+//   weight, leafy herbs by the bundle. The app checks each line as it is written; before sending,
+//   Bunny (the same small AI model and monthly cap as the rest, insights.ts) checks the whole list
+//   and suggests a corrected line for anything unclear.
 // Registered from kpi.ts; lists waiting for the end of quiet hours go out with the store-cover cron.
 //
 //   supply-alert:{id}     one flag, and everyone who raised it
 //   shopping-list:{id}    the list, what was got, what was logged
 //   supply-vendor:{id}    a vendor: name, WhatsApp number, the items it supplies
-//   supply-vendors:started  the starter vendors were set up once
+//   supply-item-specs     how each item was last written on a list (unit, pack size)
 import { P, actorOf, loadPlaces, type Actor, type KpiDeps } from './attendance.ts';
 import { istDate } from './kpiCore.ts';
 import { DEFAULT_PREFS } from './notificationRules.ts';
 import { isBillPath } from './expensePaperwork.ts';
+import { AiError, askClaudeForJson } from './insights.ts';
 import {
-  STARTER_VENDORS, alertRecipients, deliverAt, isInchargeOf, isOwnerEmp, itemKey, learnVendorItems, linesPreview, listProgress, placeOf,
-  type EntryKind, type Place, type ShoppingLine, type ShoppingList, type SupplyAlert, type Vendor,
+  PACK_UNITS, alertRecipients, deliverAt, isInchargeOf, isOwnerEmp, itemKey, learnSpecs, learnVendorItems, linesPreview, listProgress, placeOf,
+  type EntryKind, type ItemSpec, type Place, type ShoppingLine, type ShoppingList, type SupplyAlert, type Vendor, type VendorKind,
 } from './suppliesRules.ts';
 
 const alertKey = (id: string) => `supply-alert:${id}`;
 const listKey = (id: string) => `shopping-list:${id}`;
 const vendorKey = (id: string) => `supply-vendor:${id}`;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const UNITS = new Set(['g', 'kg', 'pcs', 'L', 'mL', 'packet', 'carton', 'box', 'roll', 'bundle']);
+const UNITS = new Set(['g', 'kg', 'L', 'mL', 'pcs', 'packet', 'bottle', 'jar', 'bag', 'box', 'carton', 'tin', 'roll', 'bundle']);
+const SIZE_UNITS = new Set(['g', 'kg', 'mL', 'L', 'pcs']);
+const VENDOR_KINDS = new Set<VendorKind>(['vegetables', 'grocery', 'dairy', 'meat', 'other']);
+const SPECS_KEY = 'supply-item-specs';
 const newId = () => [...crypto.getRandomValues(new Uint8Array(9))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const clip = (s: unknown, n: number) => String(s ?? '').trim().slice(0, n);
 const num = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? Math.round(x * 1000) / 1000 : null; };
@@ -43,6 +51,18 @@ const shopperNote = (list: ShoppingList, nowMs: number) => ({
   title: `Shopping list for ${list.date === istDate(nowMs) ? 'today' : istDay(list.date)}: ${list.lines.length} item${list.lines.length === 1 ? '' : 's'}`,
   message: `From ${list.createdByName}: ${linesPreview(list.lines)}.${list.note ? ` "${list.note}"` : ''} Home > Shopping list.`,
 });
+
+// What Bunny checks on a shopping list (owner's rules, 28 Oct 2026).
+const QUANTITY_PROMPT = `You check a shopping list for Bunny Momos, a momo shop in Bardhaman, West Bengal, before it goes to vendors on WhatsApp. Every line must say exactly what to hand over, so the vendor cannot misread it.
+
+The rules:
+1. Anything sold in packs - oil, sauces, ketchup, mayonnaise, masalas and powders, gravies, ajinomoto, cheese, butter, sachets, seeds sold in packets - needs BOTH the number of packs (packet, bottle, jar, bag, box, carton or tin) AND the size of each pack (g, kg, mL, L, or pcs inside). "Oil 2 pcs" is wrong; "Oil 2 packets x 1 L" is right. A masala written only as a weight ("Chat masala 200 g") is wrong; "2 packets x 100 g" is right.
+2. Vegetables go by weight (g or kg). Only leafy herbs - coriander leaves, pudina (mint), curry leaves, spring onion, methi, palak - go by the bundle, and they must be by the bundle. Lemons, limes and eggs may be counted in pcs.
+3. Loose staples weighed out at the shop (maida, sugar, rice, besan, salt) may be a plain weight.
+4. Chicken and meat go by weight in kg.
+5. The amount must be believable for a small momo shop buying for a day or two: flag a likely typo (400 kg ginger, 0.5 g chilli, 60 packets of oil).
+
+For each line that breaks a rule, return the problem in one short sentence for the manager (plain English, no jargon) and the corrected amount. Pick the pack size from how it was bought before when that is given, otherwise the usual Indian retail pack (1 L oil pouch, 1 kg mayonnaise, 100 g masala, 500 g butter); if you cannot tell, leave packSize null and say what to ask the vendor. Lines that follow the rules: leave them out. Never comment on prices.`;
 
 type Ctx = { employees: any[]; places: Awaited<ReturnType<typeof loadPlaces>>; names: Map<string, string> };
 async function loadCtx(deps: KpiDeps): Promise<Ctx> {
@@ -181,7 +201,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
   // ---------------- Vendors ----------------
 
   const phoneOf = (v: unknown) => String(v ?? '').replace(/\D/g, '');
-  const cleanVendor = (body: any, others: Vendor[]): { name: string; phone?: string; items: string[] } | string => {
+  const cleanVendor = (body: any, others: Vendor[]): { name: string; kind: VendorKind; phone?: string; items: string[] } | string => {
     const name = clip(body?.name, 40);
     if (!name) return 'Write the vendor\'s name';
     if (others.some((o) => o.name.trim().toLowerCase() === name.toLowerCase())) return `There is already a vendor called ${name}`;
@@ -194,7 +214,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       seen.add(k);
       return true;
     }).slice(0, 200);
-    return { name, phone: phone || undefined, items };
+    return { name, kind: VENDOR_KINDS.has(body?.kind) ? body.kind : 'other', phone: phone || undefined, items };
   };
   // An item belongs to one vendor: one saved here comes off the others.
   const takeItems = async (keep: Vendor, all: Vendor[]) => {
@@ -205,20 +225,66 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
     }
   };
 
-  // The owner and ops. The first time, the vendors already ordered from are set up (no numbers yet).
+  // The owner and ops: the vendors, and how each item was last written on a list.
   app.get(`${P}/supply-vendors`, async (c: any) => {
     const { actor, error } = await actorOf(deps, c); if (error) return error;
     if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can see the vendors' }, 403);
     try {
-      let vendors = await allVendors();
-      if (!vendors.length && !(await deps.kv.get('supply-vendors:started'))) {
-        const now = new Date().toISOString();
-        vendors = STARTER_VENDORS.map((s) => ({ id: newId(), name: s.name, items: [...s.items], createdAt: now, updatedAt: now }));
-        for (const v of vendors) await deps.kv.set(vendorKey(v.id), v);
-        await deps.kv.set('supply-vendors:started', { at: now, by: actor!.name });
-      }
-      return c.json({ vendors: vendors.sort((a, b) => a.name.localeCompare(b.name)) });
+      const [vendors, specs] = await Promise.all([allVendors(), deps.kv.get<Record<string, ItemSpec>>(SPECS_KEY)]);
+      return c.json({ vendors: vendors.sort((a, b) => a.name.localeCompare(b.name)), specs: specs || {} });
     } catch (err) { return fail(c, err); }
+  });
+
+  // Bunny checks a list's quantities before it is sent: each line must say exactly what to hand
+  // over. Only item names, amounts, vendor types and past amounts go to the AI.
+  app.post(`${P}/shopping-lists/check`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can check a list' }, 403);
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const lines = (Array.isArray(body?.lines) ? body.lines : []).slice(0, 80).map((l: any) => ({
+        key: clip(l?.key, 20), item: clip(l?.item, 60), amount: clip(l?.amount, 40) || 'not given',
+        vendor: VENDOR_KINDS.has(l?.vendorKind) ? l.vendorKind : 'a shop', before: clip(l?.before, 80) || undefined,
+      })).filter((l: any) => l.key && l.item);
+      if (!lines.length) return c.json({ issues: [] });
+      const n = { anyOf: [{ type: 'number' }, { type: 'null' }] };
+      const { data } = await askClaudeForJson(deps.kv, {
+        purpose: 'shopping-check', user: { id: actor!.userId, isOwner: actor!.isOwner }, effort: 'low', maxTokens: 2500,
+        system: QUANTITY_PROMPT,
+        prompt: `The list (JSON, one object per line; "before" is how it was bought last time, from the expenses):\n${JSON.stringify(lines)}`,
+        schema: {
+          type: 'object', additionalProperties: false, required: ['issues'],
+          properties: {
+            issues: {
+              type: 'array',
+              items: {
+                type: 'object', additionalProperties: false, required: ['key', 'problem', 'qty', 'unit', 'packSize', 'packUnit'],
+                properties: {
+                  key: { type: 'string', description: 'The line\'s key, exactly as given' },
+                  problem: { type: 'string', description: 'One short plain-English sentence: what is unclear and what to write instead' },
+                  qty: { ...n, description: 'Corrected number of packs, or the weight/count; null if it cannot be known' },
+                  unit: { anyOf: [{ type: 'string', enum: [...UNITS] }, { type: 'null' }] },
+                  packSize: { ...n, description: 'Size of each pack when unit is a pack (packet, bottle, jar, bag, box, carton, tin); null if unknown or not a pack' },
+                  packUnit: { anyOf: [{ type: 'string', enum: [...SIZE_UNITS] }, { type: 'null' }] },
+                },
+              },
+            },
+          },
+        },
+      });
+      const keys = new Set(lines.map((l: any) => l.key));
+      const issues = (Array.isArray(data?.issues) ? data.issues : []).filter((i: any) => keys.has(i?.key) && i.problem).map((i: any) => ({
+        key: String(i.key), problem: clip(i.problem, 200),
+        fix: num(i.qty) && UNITS.has(String(i.unit)) ? {
+          qty: num(i.qty), unit: String(i.unit),
+          ...(PACK_UNITS.has(String(i.unit)) && num(i.packSize) && SIZE_UNITS.has(String(i.packUnit)) ? { packSize: num(i.packSize), packUnit: String(i.packUnit) } : {}),
+        } : null,
+      }));
+      return c.json({ issues });
+    } catch (err: any) {
+      if (err instanceof AiError) return c.json({ error: err.message }, err.status);
+      return fail(c, err);
+    }
   });
 
   app.post(`${P}/supply-vendors`, async (c: any) => {
@@ -233,7 +299,6 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       const vendor: Vendor = { id: newId(), ...v, createdAt: now, updatedAt: now };
       await deps.kv.set(vendorKey(vendor.id), vendor);
       await takeItems(vendor, all);
-      if (!(await deps.kv.get('supply-vendors:started'))) await deps.kv.set('supply-vendors:started', { at: now, by: actor!.name });
       return c.json({ vendor });
     } catch (err) { return fail(c, err); }
   });
@@ -280,10 +345,13 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (!place) return `Pick where ${item} is for`;
       const old = before.find((b) => b.id === r?.id);
       const vendor = r?.vendorId ? vendors.find((v) => v.id === String(r.vendorId)) : null;
+      const unit = UNITS.has(String(r?.unit)) ? String(r.unit) : 'pcs';
+      const packSize = PACK_UNITS.has(unit) ? num(r?.packSize) : null;
+      const packUnit = packSize && SIZE_UNITS.has(String(r?.packUnit)) ? String(r.packUnit) : null;
       out.push({
         id: old?.id || newId(), item, itemBn: clip(r?.itemBn, 60) || undefined,
         entryType: (r?.entryType === 'overhead' ? 'overhead' : 'inventory') as EntryKind, category: clip(r?.category, 40) || 'staples',
-        qty: num(r?.qty) || 0, unit: UNITS.has(String(r?.unit)) ? String(r.unit) : 'pcs', placeKind: place.kind, placeId: place.id, placeName: placeName(ctx, place),
+        qty: num(r?.qty) || 0, unit, packSize: packUnit ? packSize : null, packUnit, placeKind: place.kind, placeId: place.id, placeName: placeName(ctx, place),
         note: clip(r?.note, 120) || undefined, alertIds: Array.isArray(r?.alertIds) ? r.alertIds.map(String).slice(0, 10) : undefined,
         vendorId: vendor?.id || null, vendorName: vendor?.name || undefined,
         got: old?.got ?? null, missing: old?.missing, logged: old?.logged ?? null, skipped: old?.skipped,
@@ -304,9 +372,11 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
     }
   };
   // Items saved with a vendor are that vendor's from now on.
+  // and each item starts from how it was last written.
   const learnVendors = async (vendors: Vendor[], lines: ShoppingLine[]) => {
     const now = new Date().toISOString();
     for (const v of learnVendorItems(vendors, lines)) await deps.kv.set(vendorKey(v.id), { ...v, items: v.items.slice(0, 200), updatedAt: now });
+    await deps.kv.set(SPECS_KEY, learnSpecs((await deps.kv.get<Record<string, ItemSpec>>(SPECS_KEY)) || {}, lines, now));
   };
   const tellShopper = async (ctx: Ctx, list: ShoppingList) => {
     const person = ctx.employees.find((e) => String(e.employeeId) === list.assigneeId);
