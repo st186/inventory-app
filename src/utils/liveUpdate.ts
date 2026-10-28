@@ -1,6 +1,6 @@
 // Over-the-air updates for the Android app (owner, 28 Oct 2026: staff should get new versions
-// without being sent an APK). The app reads manifest.json from the public app-updates storage
-// folder (scripts/publish-update.mjs writes it):
+// without being sent an APK). GET /app-version says what the latest is (`updates`, written by
+// scripts/publish-update.mjs); the files are in the public app-updates storage folder:
 // - bundle: new screens and code. Downloaded in the background and switched to the next time
 //   the app goes to the background or is opened again (Capgo's updater, self-hosted: nothing
 //   goes to Capgo's servers). A bundle that fails to start is rolled back by the updater and
@@ -13,7 +13,7 @@ import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { APP_VERSION, isNewerVersion } from './appVersion';
 import { projectId } from './supabase/info';
 
-export const UPDATES_BASE = `https://${projectId}.supabase.co/storage/v1/object/public/app-updates`;
+const APP_VERSION_URL = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/app-version`;
 const FAILED_KEY = 'live-update-failed-versions';
 const CHECK_EVERY_MS = 30 * 60 * 1000;
 
@@ -78,9 +78,9 @@ async function check(): Promise<void> {
   checking = true;
   lastCheck = Date.now();
   try {
-    const res = await fetch(`${UPDATES_BASE}/manifest.json?t=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(`${APP_VERSION_URL}?t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) return;
-    const manifest = (await res.json()) as UpdateManifest;
+    const manifest = ((await res.json()).updates || {}) as UpdateManifest;
     const build = Number((await App.getInfo()).build) || 0;
     update({ apk: manifest.apk && manifest.apk.build > build ? { version: manifest.apk.version, url: manifest.apk.url } : null });
 

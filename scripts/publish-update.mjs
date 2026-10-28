@@ -11,8 +11,10 @@
 //                                            on an older APK get a Download button.
 //
 // --dry builds the files and the new manifest in a temp folder without uploading anything.
-// Both rewrite manifest.json and keep the other half. Uploads go through the Supabase CLI,
-// signed in as the project owner (`supabase storage cp --linked --experimental`).
+// Files go to the app-updates storage folder, named with a fingerprint of their contents, as
+// `supabase storage cp` can't replace a file: a rebuilt file gets a new name. The manifest - both halves, the other one kept -
+// is the kv row app-update-manifest, which GET /app-version hands out. Both go through the
+// Supabase CLI, signed in as the project owner.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -30,17 +32,25 @@ if (kind !== 'bundle' && kind !== 'apk') {
 
 const projectId = readFileSync(join(root, 'src/utils/supabase/info.tsx'), 'utf8').match(/projectId = "([^"]+)"/)[1];
 const base = `https://${projectId}.supabase.co/storage/v1/object/public/app-updates`;
+const appVersionUrl = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/app-version`;
 const appVersion = readFileSync(join(root, 'src/utils/appVersion.ts'), 'utf8').match(/APP_VERSION = '([\d.]+)'/)[1];
 const gradle = readFileSync(join(root, 'android/app/build.gradle'), 'utf8');
 const versionCode = Number(gradle.match(/versionCode (\d+)/)[1]);
 const versionName = gradle.match(/versionName "([\d.]+)"/)[1];
 const work = mkdtempSync(join(tmpdir(), 'bunny-update-'));
 
-function upload(file, dest, contentType, cacheControl) {
+// Windows runs npx through the shell, which splits unquoted paths at spaces ("Bunny Momos"); and
+// the CLI reads a "C:" path as a URL, so paths go in relative to the project.
+const win = process.platform === 'win32';
+const npx = (args) => execFileSync('npx', win ? args.map((a) => `"${a}"`) : args, { cwd: root, stdio: 'inherit', shell: win });
+const local = (file) => relative(root, file).split(sep).join('/');
+
+const fingerprint = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+
+async function upload(file, dest, contentType, cacheControl) {
+  if ((await fetch(`${base}/${dest}`, { method: 'HEAD' })).ok) return console.log(`app-updates/${dest} is already published`);
   if (dry) return console.log(`(dry) would upload ${file} -> app-updates/${dest}`);
-  execFileSync('npx', ['supabase', 'storage', 'cp', file, `ss:///app-updates/${dest}`, '--linked', '--experimental', '--content-type', contentType, '--cache-control', cacheControl], {
-    cwd: root, stdio: 'inherit', shell: process.platform === 'win32',
-  });
+  npx(['supabase', 'storage', 'cp', local(file), `ss:///app-updates/${dest}`, '--linked', '--experimental', '--content-type', contentType, '--cache-control', cacheControl]);
 }
 
 // A plain zip (deflate, forward-slash paths, index.html at the root) - what the updater unpacks.
@@ -96,8 +106,9 @@ function zipFolder(dir) {
   return Buffer.concat([...parts, directory, end]);
 }
 
-const res = await fetch(`${base}/manifest.json?t=${Date.now()}`, { cache: 'no-store' });
-const manifest = res.ok ? await res.json() : {};
+const current = await fetch(`${appVersionUrl}?t=${Date.now()}`, { cache: 'no-store' });
+if (!current.ok) throw new Error(`GET /app-version answered ${current.status}`);
+const manifest = (await current.json()).updates || {};
 
 if (kind === 'bundle') {
   const dist = join(root, 'dist');
@@ -109,21 +120,28 @@ if (kind === 'bundle') {
   const zip = zipFolder(dist);
   const file = join(work, `${appVersion}.zip`);
   writeFileSync(file, zip);
-  const checksum = createHash('sha256').update(zip).digest('hex');
-  upload(file, `bundles/${appVersion}.zip`, 'application/zip', 'max-age=31536000');
-  manifest.bundle = { version: appVersion, url: `${base}/bundles/${appVersion}.zip`, checksum, minNativeBuild: versionCode };
+  const checksum = fingerprint(file);
+  const dest = `bundles/${appVersion}-${checksum.slice(0, 10)}.zip`;
+  await upload(file, dest, 'application/zip', 'max-age=31536000');
+  manifest.bundle = { version: appVersion, url: `${base}/${dest}`, checksum, minNativeBuild: versionCode };
   console.log(`Bundle ${appVersion}: ${(zip.length / 1e6).toFixed(1)} MB, for APK build ${versionCode} and newer`);
 } else {
   const apk = join(root, 'android/app/build/outputs/apk/debug/app-debug.apk');
   const built = JSON.parse(readFileSync(join(root, 'android/app/build/outputs/apk/debug/output-metadata.json'), 'utf8')).elements[0];
   if (built.versionCode !== versionCode) throw new Error(`The APK is build ${built.versionCode}, build.gradle says ${versionCode} - rebuild it`);
-  const name = `BunnyMomos-${versionName}.apk`;
-  upload(apk, `apk/${name}`, 'application/vnd.android.package-archive', 'max-age=31536000');
-  manifest.apk = { version: versionName, build: versionCode, url: `${base}/apk/${name}` };
+  const dest = `apk/BunnyMomos-${versionName}-${fingerprint(apk).slice(0, 10)}.apk`;
+  await upload(apk, dest, 'application/vnd.android.package-archive', 'max-age=31536000');
+  manifest.apk = { version: versionName, build: versionCode, url: `${base}/${dest}` };
   console.log(`APK ${versionName} (build ${versionCode})`);
 }
 
-const manifestFile = join(work, 'manifest.json');
-writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
-upload(manifestFile, 'manifest.json', 'application/json', 'max-age=60');
 console.log(JSON.stringify(manifest, null, 2));
+const sql = join(work, 'manifest.sql');
+writeFileSync(sql, `insert into kv_store_c2dd9b9d (key, value) values ('app-update-manifest', $manifest$${JSON.stringify(manifest)}$manifest$::jsonb)
+on conflict (key) do update set value = excluded.value;
+`);
+if (dry) console.log(`(dry) would run ${sql}`);
+else {
+  npx(['supabase', 'db', 'query', '--linked', '-f', local(sql)]);
+  console.log('Published: GET /app-version now hands it out.');
+}

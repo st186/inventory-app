@@ -3565,8 +3565,12 @@ const SERVER_FEATURES: string[] = ['cors-v2', 'date-range-v1', 'lean-lists-v1', 
 
 // Public, no-login-required version check so a soft "update available" nudge can show even
 // if a stale build's own auth has gone stale. Deliberately not gated on verifyUser.
-app.get('/make-server-c2dd9b9d/app-version', (c) => {
-  return c.json({ latestVersion: LATEST_APP_VERSION, features: SERVER_FEATURES });
+// `updates`: the Android app's live updates (src/utils/liveUpdate.ts) - the latest bundle of
+// screens and code and the latest APK, in the public app-updates storage folder. Written by
+// scripts/publish-update.mjs.
+app.get('/make-server-c2dd9b9d/app-version', async (c) => {
+  const updates = await kv.get('app-update-manifest').catch(() => null);
+  return c.json({ latestVersion: LATEST_APP_VERSION, features: SERVER_FEATURES, updates: updates || null });
 });
 
 // Debug endpoint to check user metadata
