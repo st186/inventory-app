@@ -82,7 +82,7 @@ export function MyKpis() {
                   <p className="text-body-sm text-text-2">{t('team.kpi.weeklyOff', { days: weeklyOff })}</p>
                   <p className="text-label text-text-3">{k.from ? t('team.kpi.counted', { from: formatDay(k.from, lang, { short: true }), to: formatDay(k.to, lang, { short: true }) }) : t('team.kpi.noDays')}</p>
                 </div>
-                <TotalBadge total={k.total} extraPoints={k.extra?.points || 0} />
+                <TotalBadge total={k.total} extraPoints={k.extra?.points || 0} complaintPoints={k.complaints?.points || 0} />
               </div>
               {k.notes.length > 0 && (
                 <ul className="flex list-disc flex-col gap-0.5 pl-4 text-label text-text-3">

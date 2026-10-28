@@ -83,7 +83,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -114,6 +114,7 @@ export type ScreenSpec =
   | { screen: 'Inbox' }
   | { screen: 'Events' }
   | { screen: 'Recipes'; mode: 'capture' | 'review' }
+  | { screen: 'Complaints' }
   | { screen: 'AuditDashboard'; view: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll' };
 
 /** Counts shown on a tab (only where the data is already loaded by App.tsx). */
@@ -361,6 +362,9 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   if (kind === 'production-incharge') add('production/recipes', 'recipes.title', 'recipes', { screen: 'Recipes', mode: 'capture' }, null, 'recipes');
   if (kind === 'crew' && (user.designation || '').startsWith('production')) add('recipes', 'recipes.title', 'recipes', { screen: 'Recipes', mode: 'capture' }, null, 'recipes');
   if (kind === 'owner' || kind === 'ops') add('recipes-costs', 'recipes.costsTitle', 'recipes', { screen: 'Recipes', mode: 'review' }, null, 'recipes');
+  // Customer complaints (owner, 28 Oct 2026): logged and decided by the owner and operations managers;
+  // people asked to explain answer from their Home.
+  if (kind === 'owner' || kind === 'ops') add('complaints', 'more.complaints', 'complaints', { screen: 'Complaints' }, null, 'complaints');
 
   // --- Tabs and the More / Me lists (design review b4) -----------------------------------------
   const has = (path: string) => !!destinations[path];
@@ -387,7 +391,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events', 'complaints'),
       group('more.assets', 'equipment', 'investments'),
       group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
@@ -402,7 +406,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'events', 'recipes-costs', 'my-kpis'),
+      group('more.business', 'insights', 'events', 'recipes-costs', 'complaints', 'my-kpis'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup'),
       group('more.data', 'reports', 'audit-report'),

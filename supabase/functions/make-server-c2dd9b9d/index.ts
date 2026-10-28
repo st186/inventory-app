@@ -10,6 +10,7 @@ import { registerInsightsRoutes } from './insights.ts';
 import { registerExpenseReviewRoutes, reviewExpense, type ExpenseReviewDeps } from './expenseReview.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
+import { registerComplaintRoutes } from './complaints.ts';
 import { DEFAULT_GRACE_MIN, DEFAULT_SHIFTS, lateStartIssues, parseHHMM } from './kpiCore.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
@@ -17421,6 +17422,8 @@ registerEventsRoutes(app, eventsDeps);
 registerExpenseReviewRoutes(app, expenseReviewDeps);
 registerProductionReviewRoutes(app, expenseReviewDeps);
 registerRepairRoutes(app, expenseReviewDeps);
+// Customer complaints: photos, Bunny's reading, explanations, decisions (complaints.ts).
+registerComplaintRoutes(app, { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry, verifyUser, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate), storage: supabase.storage, getTodayIST });
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,

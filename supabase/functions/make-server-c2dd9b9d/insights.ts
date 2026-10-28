@@ -399,6 +399,25 @@ export async function askClaudeForJson(kv: Kv, opts: {
   return { data, model: res.model };
 }
 
+// The same, for a question about photos (customer complaint photos, complaints.ts): the images
+// first, then the text. At most four images are sent.
+export async function askClaudeWithImages(kv: Kv, opts: {
+  purpose: string; system: string; text: string; images: { base64: string; mediaType: string }[]; schema: any; user: AiUser; maxTokens?: number;
+}): Promise<{ data: any; model: string }> {
+  const content = [
+    ...opts.images.slice(0, 4).map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.base64 } })),
+    { type: 'text', text: opts.text },
+  ];
+  const res = await callClaude({ kv } as Deps, {
+    purpose: opts.purpose, system: opts.system, user: opts.user, effort: 'medium', maxTokens: opts.maxTokens || 4000,
+    format: { type: 'json_schema', schema: opts.schema }, messages: [{ role: 'user', content }],
+  });
+  let data: any = null;
+  try { data = JSON.parse(textOf(res)); } catch { /* reported below */ }
+  if (!data) throw new AiError('Claude did not return a usable answer - try again.', 502);
+  return { data, model: res.model };
+}
+
 function compactDay(d: DayRecord, events: Map<string, CalendarEvent>) {
   const p = d.pieces || {};
   const nonVeg = FORECAST_TYPES.filter((t) => !t.veg).reduce((s, t) => s + (p[t.key] || 0), 0);

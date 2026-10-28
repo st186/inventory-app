@@ -461,6 +461,7 @@ export type MonthKpis = {
   kpis: KpiResult[];
   total: number | null; // includes the extra-hours points, at most 100
   extra: { points: number; hours: number; days: number; pendingDays: number } | null;
+  complaints: { points: number; count: number } | null; // points off the total for upheld customer complaints
   coverage: number; // share of the weights that had data (0-1)
   notes: string[];
   flags: Record<string, number>; // check-ins worth a look, by kind
@@ -496,6 +497,7 @@ export type MonthInput = {
   productionCash?: any[]; // the day's production-house cash counts (production-cash:{house}:{date})
   coverDays?: { date: string; reasons: string[] }[]; // this month's store-cover days for the person
   coverPunches?: { date: string; rec: any }[]; // their separate store check-ins (punch-cover:{id}:{date})
+  complaintPenalties?: { date: string; points: number }[]; // upheld customer complaints decided this month (complaints.ts)
 };
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
@@ -1003,11 +1005,16 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
   }
   const extraHours = Math.round((extraMin / 60) * 10) / 10;
   const points = Math.min(EXTRA_POINTS_MAX, Math.floor(extraMin / 60 / EXTRA_HOURS_PER_POINT));
-  const total = base === null ? null : Math.min(100, Math.round((base + points) * 10) / 10);
+  // Upheld customer complaints come off the total (owner's decision, complaints.ts).
+  const complaintPts = (input.complaintPenalties || []).reduce((s, x) => s + (Number(x.points) || 0), 0);
+  const complaintCount = (input.complaintPenalties || []).length;
+  const total = base === null ? null : Math.max(0, Math.min(100, Math.round((base + points - complaintPts) * 10) / 10));
+  if (complaintCount) notes.push(`Customer complaints: ${plural(complaintCount, 'upheld complaint')}, ${complaintPts} points off the total.`);
   if (confirmedDays) notes.push(`Extra hours: ${extraHours} h confirmed on ${plural(confirmedDays, 'day')}${points ? `, +${points} point${points === 1 ? '' : 's'} on the total` : ''} (1 point per ${EXTRA_HOURS_PER_POINT} h, at most +${EXTRA_POINTS_MAX}).`);
   if (pendingDays) notes.push(`${plural(pendingDays, 'day')} of extra hours waiting for the incharge to confirm.`);
   const extra = confirmedDays || pendingDays ? { points, hours: extraHours, days: confirmedDays, pendingDays } : null;
-  return { month, from: days.length ? from : null, to: days.length ? to : null, scheduledDays: scheduled.length, kpis, total, extra, coverage, notes, flags };
+  const complaints = complaintCount ? { points: complaintPts, count: complaintCount } : null;
+  return { month, from: days.length ? from : null, to: days.length ? to : null, scheduledDays: scheduled.length, kpis, total, extra, complaints, coverage, notes, flags };
 }
 
 // Minutes before the shift start and after its end on one day, from a check-in and a check-out.

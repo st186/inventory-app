@@ -227,7 +227,7 @@ function PersonCard({
             </p>
           )}
         </div>
-        <TotalBadge total={p.kpis.total} extraPoints={p.kpis.extra?.points || 0} />
+        <TotalBadge total={p.kpis.total} extraPoints={p.kpis.extra?.points || 0} complaintPoints={p.kpis.complaints?.points || 0} />
       </div>
 
       <KpiBars kpis={p.kpis.kpis} compact={!open} />

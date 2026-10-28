@@ -396,6 +396,16 @@ test('requests accepted by 9 AM', () => {
   assert.match(k.requestAccepted.explanation, /2 of 4 stock requests accepted and started by 9:00 AM.*1 request never accepted/);
 });
 
+test('upheld customer complaints come off the total, never below 0', () => {
+  const base = computeMonthKpis(crewMonth());
+  const r = computeMonthKpis(crewMonth({ complaintPenalties: [{ date: '2026-10-05', points: 10 }, { date: '2026-10-09', points: 20 }] }));
+  assert.deepEqual(r.complaints, { points: 30, count: 2 });
+  assert.equal(r.total, Math.max(0, Math.round((base.total! - 30) * 10) / 10));
+  assert.match(r.notes.join(' '), /2 upheld complaints, 30 points off/);
+  assert.equal(computeMonthKpis(crewMonth({ complaintPenalties: [{ date: '2026-10-05', points: 500 }] })).total, 0);
+  assert.equal(base.complaints, null);
+});
+
 test('rider rides', () => {
   const base = crewMonth();
   const settings = resolveSettings(null, 'BM020', 'none', 'rider');

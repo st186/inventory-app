@@ -108,6 +108,7 @@ export type MonthKpis = {
   total: number | null; coverage: number; notes: string[]; flags: Record<string, number>;
   // Confirmed extra hours and the points they added to the total (at most 5).
   extra?: { points: number; hours: number; days: number; pendingDays: number } | null;
+  complaints?: { points: number; count: number } | null; // upheld customer complaints, off the total
 };
 export type KpiSettings = {
   employeeId: string; shiftStart: string; shiftEnd: string; weeklyOff: number[]; graceMin: number;

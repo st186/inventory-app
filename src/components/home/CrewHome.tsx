@@ -2,8 +2,10 @@
 // today's few jobs (workplace photos, receiving the delivery and logging out-of-stock items for
 // store crew, the profile), and what this month's pay comes to so far. Labels follow the App
 // language, which is Bengali for crew unless they change it.
-import { useEffect, useMemo } from 'react';
-import { AlertTriangle, Camera, IdCard, PackageCheck, Wallet } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Camera, IdCard, MessageSquareWarning, PackageCheck, Wallet } from 'lucide-react';
+import { ExplainComplaintSheet, useComplaintsToExplain } from '../complaints/ExplainComplaint';
+import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
 import { ListRow } from '../ui/list-row';
 import { Money } from '../ui/money';
@@ -50,8 +52,19 @@ export function CrewHome() {
   const payPath = useFirstPath('pay', 'my-pay');
   const pay = useMonthPay(user.employeeId, clock.today.slice(0, 7), !!payPath);
 
+  // Customer complaints the owner asked this person to explain (complaints.ts).
+  const complaintsToExplain = useComplaintsToExplain(true);
+  const [explaining, setExplaining] = useState<ComplaintT | null>(null);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (complaintsToExplain.items.length) {
+      list.push({
+        key: 'complaints', icon: MessageSquareWarning, title: complaintsToExplain.items.length === 1 ? 'Explain a customer complaint' : `Explain ${complaintsToExplain.items.length} customer complaints`,
+        meta: `${complaintsToExplain.items[0].orderDate} · ${complaintsToExplain.items[0].ai?.summary || complaintsToExplain.items[0].customerText || 'Customer complaint'}`.slice(0, 90), status: 'late', count: complaintsToExplain.items.length, due: 0,
+        onOpen: () => setExplaining(complaintsToExplain.items[0]),
+      });
+    }
+
     if (photos.status && checksPath) {
       list.push({
         key: 'photos', icon: Camera, title: t('home.task.photos'), due: toMinutes(photos.to) || 960,
@@ -74,7 +87,7 @@ export function CrewHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [photos, checksPath, has, open, nav.perms.canLogStockOuts, profile.needed, profile.openSheet, t]);
+  }, [photos, checksPath, has, open, nav.perms.canLogStockOuts, profile.needed, profile.openSheet, t, complaintsToExplain.items]);
 
   return (
     <HomePage>
@@ -100,6 +113,7 @@ export function CrewHome() {
         </div>
       )}
       {profile.sheet}
+      <ExplainComplaintSheet complaint={explaining} onClose={() => setExplaining(null)} onDone={complaintsToExplain.reload} />
     </HomePage>
   );
 }

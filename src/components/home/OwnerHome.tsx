@@ -3,7 +3,7 @@
 // through the month first), what needs them, today's brief and the next days' forecast.
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Clock3, Factory, IdCard, PackageCheck, ReceiptText, Scale, Trash2, Truck, Wallet, Wrench,
+  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Clock3, Factory, IdCard, MessageSquareWarning, PackageCheck, ReceiptText, Scale, Trash2, Truck, Wallet, Wrench,
 } from 'lucide-react';
 import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
@@ -11,6 +11,8 @@ import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/Re
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
 import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
 import { StoreCoverCard, StoreCoverNotice } from '../kpi/StoreCover';
+import { ExplainComplaintSheet, useComplaintsToDecide, useComplaintsToExplain } from '../complaints/ExplainComplaint';
+import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
 import { formatINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
@@ -65,6 +67,10 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   const [extraOpen, setExtraOpen] = useState(false);
   // Garbage dumps and filth the photo AI found (workplace.ts /workplace/alerts).
   const dirtAlerts = useWorkplaceAlerts(nav.perms.isClusterHead || nav.perms.isOperationsManager);
+  // Customer complaints: to decide (owner, operations managers), and to explain if asked.
+  const complaintsToDecide = useComplaintsToDecide(nav.perms.isClusterHead || nav.perms.isOperationsManager);
+  const complaintsToExplain = useComplaintsToExplain(!nav.perms.isClusterHead);
+  const [explaining, setExplaining] = useState<ComplaintT | null>(null);
   const x = home.extras;
 
   const attention = useMemo(() => {
@@ -137,6 +143,24 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         onOpen: () => setFlagsOpen(true),
       });
     }
+    if (complaintsToExplain.items.length) {
+      items.push({
+        key: 'complaint-explain', icon: MessageSquareWarning, tone: 'danger', rank: 1.1,
+        title: complaintsToExplain.items.length === 1 ? 'Explain a customer complaint' : `Explain ${complaintsToExplain.items.length} customer complaints`,
+        meta: `${complaintsToExplain.items[0].orderDate} · ${complaintsToExplain.items[0].ai?.summary || complaintsToExplain.items[0].customerText || 'Customer complaint'}`.slice(0, 90),
+        count: complaintsToExplain.items.length,
+        onOpen: () => setExplaining(complaintsToExplain.items[0]),
+      });
+    }
+    if (complaintsToDecide.length) {
+      items.push({
+        key: 'complaints', icon: MessageSquareWarning, tone: 'warning', rank: 1.3,
+        title: complaintsToDecide.length === 1 ? '1 customer complaint to decide' : `${complaintsToDecide.length} customer complaints to decide`,
+        meta: complaintsToDecide.slice(0, 2).map((c) => c.ai?.summary || c.customerText).filter(Boolean).join(' · ').slice(0, 90),
+        count: complaintsToDecide.length,
+        onOpen: () => open('complaints'),
+      });
+    }
     if (dirtAlerts.length) {
       items.push({
         key: 'dirt-alerts', icon: Trash2, tone: 'danger', rank: 1.2,
@@ -190,7 +214,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       items.push({ key: 'profile', icon: IdCard, tone: 'warning', rank: 9, title: t('home.task.profile'), meta: t('home.task.profileMeta'), onOpen: profile.openSheet });
     }
     return items;
-  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts]);
+  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, complaintsToDecide, complaintsToExplain.items]);
 
   const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
 
@@ -267,6 +291,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       <ProductionFlagsSheet open={productionFlagsOpen} onOpenChange={setProductionFlagsOpen} flags={productionFlags.flags} onChanged={productionFlags.reload} />
       <RepairAlertsSheet open={repairsOpen} onOpenChange={setRepairsOpen} alerts={repairs.alerts} onChanged={repairs.reload} />
       <ExtraHoursSheet open={extraOpen} onOpenChange={setExtraOpen} days={extraHours.days} onChanged={extraHours.reload} />
+      <ExplainComplaintSheet complaint={explaining} onClose={() => setExplaining(null)} onDone={complaintsToExplain.reload} />
     </HomePage>
   );
 }

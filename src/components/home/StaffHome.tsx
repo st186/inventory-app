@@ -4,7 +4,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Camera, ClipboardList, ClipboardPlus, Clock3, Factory, IdCard, PackageCheck, PackageOpen, Receipt, ReceiptText, Trash2, Truck, UserCheck, Wrench,
+  MessageSquareWarning,
 } from 'lucide-react';
+import { ExplainComplaintSheet, useComplaintsToExplain } from '../complaints/ExplainComplaint';
+import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
 import { Callout } from '../ui/callout';
 import { StatGrid, StatTile } from '../ui/stat-tile';
@@ -97,8 +100,19 @@ function InchargeHome() {
   const [extraOpen, setExtraOpen] = useState(false);
   // Garbage dumps and filth the photo AI found at this incharge's place.
   const dirtAlerts = useWorkplaceAlerts(nav.perms.isAnyIncharge);
+  // Customer complaints the owner asked this person to explain (complaints.ts).
+  const complaintsToExplain = useComplaintsToExplain(true);
+  const [explaining, setExplaining] = useState<ComplaintT | null>(null);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (complaintsToExplain.items.length) {
+      list.push({
+        key: 'complaints', icon: MessageSquareWarning, title: complaintsToExplain.items.length === 1 ? 'Explain a customer complaint' : `Explain ${complaintsToExplain.items.length} customer complaints`,
+        meta: `${complaintsToExplain.items[0].orderDate} · ${complaintsToExplain.items[0].ai?.summary || complaintsToExplain.items[0].customerText || 'Customer complaint'}`.slice(0, 90), status: 'late', count: complaintsToExplain.items.length, due: 0,
+        onOpen: () => setExplaining(complaintsToExplain.items[0]),
+      });
+    }
+
     if (dirtAlerts.length && reviewPath) {
       list.push({
         key: 'dirt-alerts', icon: Trash2, title: alertTitle(dirtAlerts), meta: alertMeta(dirtAlerts), status: 'late', count: dirtAlerts.length, due: 0,
@@ -230,7 +244,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);
@@ -308,6 +322,7 @@ function InchargeHome() {
       <ProductionFlagsSheet open={productionFlagsOpen} onOpenChange={setProductionFlagsOpen} flags={productionFlags.flags} onChanged={productionFlags.reload} />
       <RepairAlertsSheet open={repairsOpen} onOpenChange={setRepairsOpen} alerts={repairs.alerts} onChanged={repairs.reload} />
       <ExtraHoursSheet open={extraOpen} onOpenChange={setExtraOpen} days={extraHours.days} onChanged={extraHours.reload} />
+      <ExplainComplaintSheet complaint={explaining} onClose={() => setExplaining(null)} onDone={complaintsToExplain.reload} />
     </HomePage>
   );
 }
