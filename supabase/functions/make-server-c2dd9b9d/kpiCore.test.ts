@@ -58,6 +58,9 @@ test('workplace kind, role group, default shift, pins', () => {
   const pins = [{ kind: 'store' as const, id: 'STORE-1', lat: 1, lng: 1 }, { kind: 'production' as const, id: 'PH-1', lat: 2, lng: 2 }];
   assert.deepEqual(workplacePins(crew, 'store', pins).map((p) => p.id), ['STORE-1']);
   assert.equal(workplacePins(ops, 'none', pins).length, 2);
+  // An operations incharge tied to the store on their record still checks in at the production house.
+  const opsAtStore = { employeeId: 'BM004', role: 'manager', designation: 'operations_incharge', storeId: 'STORE-1', assignedStoreIds: ['STORE-1'] };
+  assert.deepEqual(workplacePins(opsAtStore, 'mixed', pins).map((p) => p.id).sort(), ['PH-1', 'STORE-1']);
   assert.equal(workplacePins(rider, 'none', pins).length, 0);
 });
 

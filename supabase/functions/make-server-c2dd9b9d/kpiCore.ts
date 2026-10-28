@@ -219,6 +219,9 @@ export function eventPinsFor(emp: any, events: any[], today: string): Pin[] {
 // pin for operations people who move between them (and when their own place isn't pinned yet).
 export function workplacePins(emp: any, kind: WorkplaceKind, all: Pin[]): Pin[] {
   if (kind === 'none' && (emp?.designation === 'rider' || emp?.role === 'rider')) return [];
+  // Operations staff move between the store and the production house all day: a check-in at any
+  // Bunny Momos place counts (owner, 28 Oct 2026 - one was marked away at the production house).
+  if (emp?.designation === 'operations_incharge' || emp?.designation === 'operations_manager') return all;
   const ids = new Set<string>([emp?.storeId, ...(emp?.assignedStoreIds || []), ...(emp?.assignedProductionHouseIds || [])].filter(Boolean).map(String));
   const own = all.filter((p) => ids.has(p.id) && (kind === 'mixed' || kind === 'none' || p.kind === kind));
   if (own.length) return own;
