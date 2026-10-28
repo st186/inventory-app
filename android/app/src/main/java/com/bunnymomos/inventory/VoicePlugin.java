@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -36,8 +37,10 @@ import java.util.Map;
  * Voice for the app (Bunny chat, Quick Add expense, sales cash count):
  * - startListening / stopListening: the phone's speech recogniser running inside the app, so a
  *   person can talk with pauses and tap to finish (the speech screen below stops at the first
- *   pause). It restarts itself after each phrase until stopped; live text comes as "partial"
- *   events. Needs the microphone permission, asked for once. Bengali (bn-IN), English or Hindi.
+ *   pause). On Android 13+ it is one segmented session (no restart between phrases); otherwise
+ *   it starts again at once after each phrase. Live text comes as "partial" events. Needs the
+ *   microphone permission, asked for once. Bengali (bn-IN), English or Hindi. Google's own
+ *   recogniser, free (owner, 29 Oct 2026: no paid speech services).
  * - listen: the phone's own speech screen (Google) - kept as a fallback when the in-app
  *   recogniser isn't available. Turning text into form fields happens on the server (/ai/voice-fill).
  * - speak / stopSpeaking: reads Bunny's answers aloud with the phone's text-to-speech in the
@@ -48,6 +51,19 @@ import java.util.Map;
 public class VoicePlugin extends Plugin {
 
     // ---- Continuous listening (tap to start, tap to finish) ----
+    // Words were cut off (owner, 29 Oct 2026): the recogniser was thrown away and rebuilt after every
+    // phrase, and Google ends a "phrase" at almost any short pause, so whatever was said during the
+    // second it took to come back was lost. Now:
+    //   - Android 13+: one segmented session - each phrase comes back through onSegmentResults while
+    //     the microphone stays open; the session only ends after SESSION_SILENCE_MS of silence (then
+    //     it starts again) or when the person taps Done. A recogniser without segmented sessions
+    //     ignores the extra and ends each phrase with onResults as before.
+    //   - Between phrases the same recogniser is started again at once (rebuilt only if it fails),
+    //     and "busy" is retried shortly after.
+    //   - Done waits up to STOP_WAIT_MS for the last words, and keeps what was on screen.
+    private static final long SESSION_SILENCE_MS = 10000L;
+    private static final long STOP_WAIT_MS = 3000L;
+    private static final int MAX_QUICK_RETRIES = 5;
     private final Handler main = new Handler(Looper.getMainLooper());
     private SpeechRecognizer recognizer;
     private boolean listening = false;
@@ -55,6 +71,7 @@ public class VoicePlugin extends Plugin {
     private final StringBuilder transcript = new StringBuilder();
     private String lastPartial = "";
     private PluginCall stopCall;
+    private int quickRetries = 0;
 
     @PluginMethod
     public void startListening(PluginCall call) {
@@ -82,25 +99,59 @@ public class VoicePlugin extends Plugin {
             lastPartial = "";
             stopCall = null;
             listening = true;
-            startRecognizer();
+            quickRetries = 0;
+            releaseRecognizer();
+            listenAgain();
             JSObject out = new JSObject();
             out.put("started", true);
             call.resolve(out);
         });
     }
 
-    private void startRecognizer() {
-        if (recognizer != null) recognizer.destroy();
-        recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-        recognizer.setRecognitionListener(new Listener());
+    private Intent listenIntent() {
         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, listenLanguage);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, listenLanguage);
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L);
-        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L);
-        recognizer.startListening(intent);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SESSION_SILENCE_MS);
+        intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, SESSION_SILENCE_MS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Keep the session open across pauses; it ends after the complete-silence length above.
+            intent.putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS);
+        }
+        return intent;
+    }
+
+    // Start (or start again) with the same recogniser; build one only when there is none.
+    private void listenAgain() {
+        if (!listening) return;
+        if (recognizer == null) {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            recognizer.setRecognitionListener(new Listener());
+        }
+        try {
+            recognizer.startListening(listenIntent());
+        } catch (RuntimeException e) {
+            // A recogniser that has gone bad: build a new one next time.
+            releaseRecognizer();
+            retrySoon(300);
+        }
+    }
+
+    private void retrySoon(long delayMs) {
+        if (!listening) { finishStop(); return; }
+        if (quickRetries >= MAX_QUICK_RETRIES) { releaseRecognizer(); quickRetries = 0; delayMs = 800; }
+        quickRetries++;
+        main.postDelayed(this::listenAgain, delayMs);
+    }
+
+    private void releaseRecognizer() {
+        if (recognizer != null) {
+            try { recognizer.cancel(); } catch (RuntimeException ignored) { }
+            recognizer.destroy();
+            recognizer = null;
+        }
     }
 
     private String fullText() {
@@ -115,15 +166,27 @@ public class VoicePlugin extends Plugin {
         notifyListeners("partial", out);
     }
 
-    // After each phrase: keep the words, and listen again until the person taps to finish.
-    private void phraseEnded(String finalText) {
-        if (finalText != null && !finalText.trim().isEmpty()) {
+    private void keep(String text) {
+        if (text != null && !text.trim().isEmpty()) {
             if (transcript.length() > 0) transcript.append(' ');
-            transcript.append(finalText.trim());
+            transcript.append(text.trim());
         }
         lastPartial = "";
         emitPartial();
-        if (listening) startRecognizer();
+    }
+
+    // A phrase inside a segmented session: keep it; the microphone stays open.
+    private void segmentEnded(String text) {
+        quickRetries = 0;
+        keep(text);
+    }
+
+    // The recogniser stopped (end of a phrase without segmented sessions, the end of a segmented
+    // session, or an error): keep what was heard and listen again until the person taps Done.
+    private void phraseEnded(String finalText) {
+        if (finalText != null && !finalText.trim().isEmpty()) quickRetries = 0;
+        keep(finalText);
+        if (listening) listenAgain();
         else finishStop();
     }
 
@@ -133,7 +196,7 @@ public class VoicePlugin extends Plugin {
         out.put("text", fullText());
         stopCall.resolve(out);
         stopCall = null;
-        if (recognizer != null) { recognizer.destroy(); recognizer = null; }
+        releaseRecognizer();
     }
 
     @PluginMethod
@@ -148,8 +211,10 @@ public class VoicePlugin extends Plugin {
             listening = false;
             stopCall = call;
             if (recognizer != null) recognizer.stopListening();
-            // The recogniser normally hands back the last words within a second; don't wait longer.
-            main.postDelayed(this::finishStop, 1500);
+            else { finishStop(); return; }
+            // The last words normally come back within a second or two; on slow data, wait a little
+            // longer, then finish with what is on screen (fullText keeps the words still in progress).
+            main.postDelayed(this::finishStop, STOP_WAIT_MS);
         });
     }
 
@@ -160,9 +225,14 @@ public class VoicePlugin extends Plugin {
             stopCall = null;
             transcript.setLength(0);
             lastPartial = "";
-            if (recognizer != null) { recognizer.cancel(); recognizer.destroy(); recognizer = null; }
+            releaseRecognizer();
             call.resolve();
         });
+    }
+
+    private static String best(Bundle b) {
+        ArrayList<String> m = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        return m != null && !m.isEmpty() ? m.get(0) : null;
     }
 
     private class Listener implements RecognitionListener {
@@ -174,13 +244,23 @@ public class VoicePlugin extends Plugin {
         @Override public void onEvent(int eventType, Bundle params) { }
 
         @Override public void onPartialResults(Bundle partialResults) {
-            ArrayList<String> m = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-            if (m != null && !m.isEmpty()) { lastPartial = m.get(0); emitPartial(); }
+            String text = best(partialResults);
+            if (text != null) { lastPartial = text; emitPartial(); }
+        }
+
+        // Android 13+: one phrase of a segmented session.
+        @Override public void onSegmentResults(Bundle segmentResults) {
+            String text = best(segmentResults);
+            segmentEnded(text != null ? text : lastPartial);
+        }
+
+        @Override public void onEndOfSegmentedSession() {
+            phraseEnded(null);
         }
 
         @Override public void onResults(Bundle results) {
-            ArrayList<String> m = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-            phraseEnded(m != null && !m.isEmpty() ? m.get(0) : lastPartial);
+            String text = best(results);
+            phraseEnded(text != null ? text : lastPartial);
         }
 
         @Override public void onError(int error) {
@@ -192,8 +272,21 @@ public class VoicePlugin extends Plugin {
                 finishStop();
                 return;
             }
-            // Silence, no match or busy between phrases: keep what was heard and listen again.
-            phraseEnded(lastPartial);
+            keep(lastPartial);
+            if (!listening) { finishStop(); return; }
+            if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                // Asked to listen again before the last session had closed: give it a moment.
+                try { recognizer.cancel(); } catch (RuntimeException ignored) { }
+                retrySoon(150);
+            } else if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED) {
+                releaseRecognizer();
+                retrySoon(200);
+            } else if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT || error == SpeechRecognizer.ERROR_SERVER) {
+                retrySoon(600);
+            } else {
+                // Silence or nothing understood between phrases: listen again straight away.
+                listenAgain();
+            }
         }
     }
 
