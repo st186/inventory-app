@@ -33,7 +33,7 @@ export const EXTRA_POINTS_MAX = 5;
 export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
-  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean';
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -46,7 +46,7 @@ export const KPI_LABELS: Record<KpiId, string> = {
   workplace: 'Photo checks on time',
   hygiene: 'Hygiene (photo score)',
   cashCount: 'Cash count saved',
-  cashAccuracy: 'Cash matches',
+  cashAccuracy: 'Store cash matches',
   stockOuts: 'No stock-outs',
   productionLogged: 'Production logged',
   wastage: 'Low wastage',
@@ -57,6 +57,8 @@ export const KPI_LABELS: Record<KpiId, string> = {
   productionApproved: 'Production approved on time',
   requestOnTime: 'Stock request sent on time',
   placeClean: 'Place kept clean (all photos)',
+  posCash: 'POS cash matches (cashier)',
+  productionCash: 'Production cash matches',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -429,6 +431,7 @@ export type MonthInput = {
   expenses?: any[]; // expense entries (inventory and overhead) the person logged
   approvals?: any[]; // production entries from the house that supplies the person's store
   placePhotos?: { date: string; item: any }[]; // every photo taken at the incharge's store or kitchen
+  productionCash?: any[]; // the day's production-house cash counts (production-cash:{house}:{date})
 };
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
@@ -450,6 +453,8 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'hygiene': return 'Clean before the photo - counters, floor, utensils and storage. Cleaner photos score higher.';
     case 'cashCount': return 'Save the cash count every working day before you close.';
     case 'cashAccuracy': return `Count carefully and record every cash expense so the cash matches within ${inr(CASH_TOLERANCE_INR)}.`;
+    case 'posCash': return `Take the right amount for every bill and ring up everything on the POS, so cash and Paytm match the POS within ${inr(CASH_TOLERANCE_INR)}.`;
+    case 'productionCash': return `Record every production-house cash expense and count the cash each evening, so it matches within ${inr(CASH_TOLERANCE_INR)}.`;
     case 'stockOuts': return 'Ask for stock early (use the forecast) so nothing runs out during the day.';
     case 'productionLogged': return 'Log the day\'s production every working day.';
     case 'wastage': return `Weigh carefully and reuse leftover dough and stuffing; keep wastage at ${WASTAGE_FULL_MARKS_PCT}% or less.`;
@@ -640,6 +645,45 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       }
     }
   }
+  // The cashier: what the counter collected (cash + Paytm) against what the POS billed that day
+  // (cashOverShortAmount: positive = short), on the person's working days.
+  if (ids.includes('posCash')) {
+    const byDay = new Map<string, any>();
+    for (const s of input.sales || []) {
+      const by = String(s?.createdBy || '');
+      if (!s?.date || !by || by === 'pos-sync' || by === 'cash-topup-approval') continue;
+      byDay.set(String(s.date).slice(0, 10), s);
+    }
+    const counted = scheduled.filter((d) => byDay.has(d));
+    if (!counted.length) set('posCash', null, 'No days saved on your working days yet.');
+    else {
+      let ok = 0, worst = 0, short = 0;
+      for (const d of counted) {
+        const gap = Number(byDay.get(d).cashOverShortAmount) || 0;
+        if (Math.abs(gap) <= CASH_TOLERANCE_INR) ok++;
+        if (Math.abs(gap) > Math.abs(worst)) worst = gap;
+        if (gap > 0) short += gap;
+      }
+      set('posCash', pct(ok, counted.length), `Cash and Paytm collected matched the POS bills within ${inr(CASH_TOLERANCE_INR)} on ${ok} of ${counted.length} days worked${Math.abs(worst) > CASH_TOLERANCE_INR ? `; biggest gap ${inr(Math.abs(worst))} ${worst > 0 ? 'short' : 'over'}` : ''}${short > CASH_TOLERANCE_INR ? `; ${inr(short)} short in all` : ''}.`);
+    }
+  }
+  // The production house's cash: counted each evening against what the books expect.
+  if (ids.includes('productionCash')) {
+    const rows = (input.productionCash || []).filter((r) => {
+      const d = String(r?.date || '').slice(0, 10);
+      return d >= from && d <= to && typeof r.discrepancy === 'number';
+    });
+    if (!rows.length) set('productionCash', null, 'No production cash counts in this period.');
+    else {
+      let ok = 0, worst = 0;
+      for (const r of rows) {
+        if (Math.abs(r.discrepancy) <= CASH_TOLERANCE_INR) ok++;
+        if (Math.abs(r.discrepancy) > Math.abs(worst)) worst = r.discrepancy;
+      }
+      set('productionCash', pct(ok, rows.length), `Production cash matched within ${inr(CASH_TOLERANCE_INR)} on ${ok} of ${plural(rows.length, 'day')}${Math.abs(worst) > CASH_TOLERANCE_INR ? `; biggest gap ${inr(Math.abs(worst))} ${worst < 0 ? 'short' : 'over'}` : ''}.`);
+    }
+  }
+
   if (ids.includes('stockOuts')) {
     const outs = (input.stockOuts || []).filter((s) => {
       const d = istDayOf(s?.startAt);

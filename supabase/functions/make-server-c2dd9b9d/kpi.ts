@@ -68,7 +68,7 @@ function houseOf(emp: any, places: Places): string | null {
 // Month-wide data shared by everyone on the team screen, loaded once and only when a role needs it.
 type Shared = {
   month: string; today: string; places: Places; punchSince: string | null;
-  sales: any[]; production: any[]; requests: any[]; trips: any[]; expenses: any[];
+  sales: any[]; production: any[]; requests: any[]; trips: any[]; expenses: any[]; productionCash: any[];
   checks: Map<string, { date: string; row: any }[]>;
   stockOuts: Map<string, Promise<any[]>>;
   ledger: Map<string, Promise<{ made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] }>>;
@@ -82,14 +82,15 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
   const inMonth = (d: string) => d >= first && d <= last;
   const need = (...ids: KpiId[]) => ids.some((id) => needs.has(id));
   const none = Promise.resolve([] as any[]);
-  const [sales, production, requests, trips, checkRows, inventory, overheads] = await Promise.all([
-    need('cashCount', 'cashAccuracy', 'salesOnTime') ? deps.getAllByPrefix('sales:') : none,
+  const [sales, production, requests, trips, checkRows, inventory, overheads, productionCash] = await Promise.all([
+    need('cashCount', 'cashAccuracy', 'salesOnTime', 'posCash') ? deps.getAllByPrefix('sales:') : none,
     need('productionLogged', 'wastage', 'productionApproved') ? deps.getAllByPrefix('production:') : none,
     need('shippedOnTime', 'requestOnTime') ? deps.getAllByPrefix('production_request_') : none,
     need('trips') ? deps.getAllByPrefix('rider-trip:') : none,
     rowsByPrefix(`workplace-check:${month}-`),
     need('expensesOnTime') ? deps.getAllByPrefix('inventory:') : none,
     need('expensesOnTime') ? deps.getAllByPrefix('overhead:') : none,
+    need('productionCash') ? deps.getAllByPrefix('production-cash:') : none,
   ]);
   const checks = new Map<string, { date: string; row: any }[]>();
   for (const { key, value } of checkRows) {
@@ -108,6 +109,7 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
     requests: (requests || []).filter((r: any) => r?.requestDate && inMonth(String(r.requestDate).slice(0, 10))),
     trips: (trips || []).filter((t: any) => t?.date && inMonth(String(t.date).slice(0, 10))),
     expenses: [...(inventory || []), ...(overheads || [])].filter((e: any) => e?.date && inMonth(String(e.date).slice(0, 10))),
+    productionCash: (productionCash || []).filter((r: any) => r?.date && inMonth(String(r.date).slice(0, 10))),
     checks,
     stockOuts: new Map(),
     ledger: new Map(),
@@ -188,6 +190,7 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     expenses: shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || ''))),
     approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
     placePhotos,
+    productionCash: supplyHouse ? shared.productionCash.filter((r: any) => r.productionHouseId === supplyHouse) : [],
   });
 }
 

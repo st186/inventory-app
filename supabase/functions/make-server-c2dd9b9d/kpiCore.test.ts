@@ -302,6 +302,29 @@ test('place kept clean: every photo at the incharge\'s place, a garbage dump cos
   assert.equal(computeMonthKpis({ ...base, group: 'store_incharge', settings, placePhotos: [] }).kpis.find((x) => x.id === 'placeClean')!.score, null);
 });
 
+test('cash KPIs: POS cash for the cashier, production cash', () => {
+  const base = crewMonth();
+  const settings = resolveSettings({ weeklyOff: [2], kpis: ['posCash', 'productionCash', 'cashAccuracy'] }, 'BM003', 'store', 'store_staff');
+  const sales = [
+    { date: '2026-10-01', createdBy: 'BM003', cashOverShortAmount: 0, salesDiscrepancy: 20 },
+    { date: '2026-10-02', createdBy: 'BM003', cashOverShortAmount: 350, salesDiscrepancy: -400 }, // ₹350 short at the counter
+    { date: '2026-10-03', createdBy: 'BM003', cashOverShortAmount: -60, salesDiscrepancy: 0 },
+    { date: '2026-10-06', createdBy: 'BM003', cashOverShortAmount: 900 }, // Tuesday: weekly off, not counted
+    { date: '2026-10-04', createdBy: 'pos-sync', cashOverShortAmount: 500 }, // nobody saved it
+  ];
+  const productionCash = [
+    { date: '2026-10-01', discrepancy: 0 }, { date: '2026-10-02', discrepancy: -250 }, { date: '2026-10-03', discrepancy: 6 },
+    { date: '2026-10-25', discrepancy: -999 }, // after the counted days
+  ];
+  const r = computeMonthKpis({ ...base, settings, sales, productionCash });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.posCash.score, 66.7); // 2 of 3 days within ₹100
+  assert.match(k.posCash.explanation, /biggest gap ₹350 short/);
+  assert.equal(k.productionCash.score, 66.7);
+  assert.match(k.productionCash.explanation, /biggest gap ₹250 short/);
+  assert.equal(k.cashAccuracy.label, 'Store cash matches');
+});
+
 test('rider rides', () => {
   const base = crewMonth();
   const settings = resolveSettings(null, 'BM020', 'none', 'rider');

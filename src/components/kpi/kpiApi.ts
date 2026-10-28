@@ -38,7 +38,7 @@ const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return {
 
 export type KpiId = 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
-  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean';
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash';
 
 export const KPI_LABELS: Record<KpiId, string> = {
   attendance: 'Attendance',
@@ -48,7 +48,7 @@ export const KPI_LABELS: Record<KpiId, string> = {
   workplace: 'Photo checks on time',
   hygiene: 'Hygiene (photo score)',
   cashCount: 'Cash count saved',
-  cashAccuracy: 'Cash matches',
+  cashAccuracy: 'Store cash matches',
   stockOuts: 'No stock-outs',
   productionLogged: 'Production logged',
   wastage: 'Low wastage',
@@ -59,14 +59,16 @@ export const KPI_LABELS: Record<KpiId, string> = {
   productionApproved: 'Production approved on time',
   requestOnTime: 'Stock request sent on time',
   placeClean: 'Place kept clean (all photos)',
+  posCash: 'POS cash matches (cashier)',
+  productionCash: 'Production cash matches',
 };
 
 // The KPIs the owner picks from for each person, grouped as in KPI settings (riders have none).
 export const KPI_SECTIONS: { title: string; ids: KpiId[] }[] = [
   { title: 'Everyone', ids: ['attendance', 'punctuality', 'fullShift', 'timesheet'] },
   { title: 'Photo checks', ids: ['workplace', 'hygiene', 'placeClean'] },
-  { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy'] },
-  { title: 'Production', ids: ['productionApproved', 'productionLogged', 'wastage', 'shippedOnTime'] },
+  { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy', 'posCash'] },
+  { title: 'Production', ids: ['productionApproved', 'productionLogged', 'wastage', 'shippedOnTime', 'productionCash'] },
 ];
 export const ADDED_KPI_WEIGHT = 10;
 
