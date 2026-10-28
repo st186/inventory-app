@@ -14,6 +14,7 @@
 //   workplace-check:{date}:{employeeId}                 one person's day - the KPI feature reads this shape
 //   workplace-sent:{date}                               reminders already sent that day (cron)
 //   workplace-results-sent:{date}:{employeeId}          when the person was last told their photos were checked
+//   push-photo:{token}                                  a photo shown inside a push notification (a day; pushPhotoUrl)
 //   workplace-settings                                  AI scoring on/off and the auto-flag score
 // Event stalls (events.ts) are a third kind of place, 'event': on the event days the incharge gets
 // a short stall checklist by default (or the one the owner saves for that event).
@@ -38,7 +39,8 @@ type Deps = {
   kv: Kv;
   verifyUser: (authHeader: string | null) => Promise<any>;
   getTodayIST: () => string;
-  notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<any>;
+  notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string,
+    quickAction?: { recordType: 'workplace_photo'; recordId: string }, extras?: { imageUrl?: string }) => Promise<any>;
   getAllClusterHeads: () => Promise<any[]>;
   storage: any; // service-role Supabase Storage client, used only when Drive isn't set up
 };
@@ -449,9 +451,40 @@ async function getSettings(kv: Kv): Promise<Settings> {
   return { ...DEFAULT_SETTINGS, ...(s || {}) };
 }
 
-async function safeNotify(deps: Deps, authUserId: string | undefined, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) {
+// more: a "Looks OK" button for a photo (POST /quick-action) and the photo itself in the push.
+async function safeNotify(deps: Deps, authUserId: string | undefined, type: string, title: string, message: string, relatedId?: string, relatedDate?: string,
+  more?: { photoCheck?: string; imageUrl?: string | null }) {
   if (!authUserId) return false;
-  try { await deps.notifyUser(authUserId, type, title, message, relatedId, relatedDate); return true; } catch { return false; }
+  try {
+    await deps.notifyUser(authUserId, type, title, message, relatedId, relatedDate,
+      more?.photoCheck ? { recordType: 'workplace_photo', recordId: more.photoCheck } : undefined, more?.imageUrl ? { imageUrl: more.imageUrl } : undefined);
+    return true;
+  } catch { return false; }
+}
+
+// A link to one photo for the phone to show inside a notification. Push messages can't carry the
+// photo itself and photos have no public links, so this is an unguessable link that works for a
+// day (GET /workplace/push-photo/:token, no sign-in - the phone fetches it before it shows).
+const PUSH_PHOTO_HOURS = 24;
+async function pushPhotoUrl(kv: Kv, o: { date: string; employeeId: string; itemId: string; photoId: string }) {
+  const base = Deno.env.get('SUPABASE_URL');
+  if (!base) return null;
+  const token = [...crypto.getRandomValues(new Uint8Array(18))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  await kv.set(`push-photo:${token}`, { token, ...o, expiresAt: new Date(Date.now() + PUSH_PHOTO_HOURS * 3600000).toISOString() });
+  return `${base}/functions/v1/make-server-c2dd9b9d/workplace/push-photo/${token}`;
+}
+
+// "Looks OK" from a notification's button (POST /quick-action in index.ts): the same as a
+// reviewer's OK in Workplace checks, without a note, so the person isn't pushed about it.
+export async function markCheckOk(kv: Pick<Kv, 'get' | 'set'>, o: { date: string; employeeId: string; itemId: string; by: string; byId?: string }) {
+  if (!DATE.test(o.date || '') || !o.employeeId || !o.itemId) return null;
+  const key = checkKey(o.date, o.employeeId);
+  const row = await kv.get<CheckRow>(key);
+  const it = row?.items?.[o.itemId];
+  if (!row || !it) return null;
+  it.flag = { status: 'ok', note: '', by: o.by, ...(o.byId ? { byId: o.byId } : {}), at: new Date().toISOString() };
+  await kv.set(key, row);
+  return it;
 }
 
 // ---------------- Photos ----------------
@@ -604,15 +637,16 @@ async function scoreOne(deps: Deps, settings: Settings, o: { key: string; itemId
 
 // What the person (and the incharge and owner) hear about one scored photo, then the round's
 // "your photos are checked" once nothing is waiting.
-async function afterScore(deps: Deps, settings: Settings, o: { date: string; employeeId: string; it: CheckItem; photo: Photo }) {
+async function afterScore(deps: Deps, settings: Settings, o: { date: string; employeeId: string; itemId: string; it: CheckItem; photo: Photo }) {
   if (isLow(o.photo, settings.aiThreshold) && o.it.flag?.auto) {
     // The photo's own issues, not the whole check's.
     const view = { ...o.it, aiScore: o.photo.aiScore, aiIssues: o.photo.aiIssues, aiIssuesBengali: o.photo.aiIssuesBengali, aiSevere: o.photo.aiSevere };
-    await pushAutoFlag(deps, { date: o.date, employeeId: o.employeeId, it: view, actorEmployeeId: null });
+    await pushAutoFlag(deps, { date: o.date, employeeId: o.employeeId, itemId: o.itemId, photoId: o.photo.id, it: view, actorEmployeeId: null });
   } else if (o.photo.aiStatus === 'scored' && o.photo.aiVerdict === 'unclear_photo') {
     const person = await deps.kv.get<any>(`unified-employee:${o.employeeId}`);
+    const imageUrl = await pushPhotoUrl(deps.kv, { date: o.date, employeeId: o.employeeId, itemId: o.itemId, photoId: o.photo.id }).catch(() => null);
     await safeNotify(deps, person?.authUserId, 'workplace_flag', `Retake: ${o.it.name} photo is not clear`,
-      'Take it again in good light with the whole area in the frame. · ভালো আলোয়, পুরো জায়গাটা ফ্রেমে রেখে আবার তুলুন।', `${o.it.locationKind}:${o.it.locationId}`, o.date);
+      'Take it again in good light with the whole area in the frame. · ভালো আলোয়, পুরো জায়গাটা ফ্রেমে রেখে আবার তুলুন।', `${o.it.locationKind}:${o.it.locationId}`, o.date, { imageUrl });
   }
   await resultPush(deps, o.date, o.employeeId);
 }
@@ -669,23 +703,27 @@ async function scoreLeftovers(deps: Deps, rows: CheckRow[]) {
     const bytes = file.body instanceof Uint8Array ? file.body : new Uint8Array(await new Response(file.body).arrayBuffer());
     const hint = (row.assigned || []).find((a) => a.id === itemId)?.hint;
     const r = await scoreOne(deps, settings, { key: checkKey(row.date, row.employeeId), itemId, photoId: photo.id, hint, base64: toBase64(bytes), mediaType: sniff(bytes) || photo.mimeType });
-    if (r) { done++; await afterScore(deps, settings, { date: row.date, employeeId: row.employeeId, it: r.it, photo: r.photo }); }
+    if (r) { done++; await afterScore(deps, settings, { date: row.date, employeeId: row.employeeId, itemId, it: r.it, photo: r.photo }); }
   }
   return done;
 }
 
-async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; it: CheckItem; actorEmployeeId: string | null }) {
+// photoId: the photo the push shows (default: the check's worst-scoring one).
+async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; itemId: string; photoId?: string; it: CheckItem; actorEmployeeId: string | null }) {
   const [employees, locs] = await Promise.all([loadEmployees(deps.kv), loadLocations(deps.kv)]);
   const person = employees.find((e) => empIdOf(e) === o.employeeId);
   const locName = findLoc(locs, o.it.locationKind, o.it.locationId)?.name || 'your workplace';
   const en = (o.it.aiIssues || []).join(', ');
   const bn = (o.it.aiIssuesBengali || []).join(', ');
   const related = `${o.it.locationKind}:${o.it.locationId}`;
+  const shown = o.photoId || [...photosOf(o.it)].sort((a, b) => (a.aiScore ?? 10) - (b.aiScore ?? 10))[0]?.id;
+  const imageUrl = shown ? await pushPhotoUrl(deps.kv, { date: o.date, employeeId: o.employeeId, itemId: o.itemId, photoId: shown }).catch(() => null) : null;
+  const photoCheck = `${o.date}|${o.employeeId}|${o.itemId}`;
   // Scored in the background, so the person is told too; a reviewer scoring again on screen
   // (actorEmployeeId) is not told about their own look.
   if (person && o.employeeId !== o.actorEmployeeId) {
     await safeNotify(deps, person.authUserId, 'workplace_flag', `Clean again: ${o.it.name} (AI ${o.it.aiScore}/10)`,
-      `${en ? `${en}. ` : ''}Clean it and take a new photo. · ${bn ? `${bn}। ` : ''}পরিষ্কার করে নতুন ছবি দিন।`, related, o.date);
+      `${en ? `${en}. ` : ''}Clean it and take a new photo. · ${bn ? `${bn}। ` : ''}পরিষ্কার করে নতুন ছবি দিন।`, related, o.date, { imageUrl });
   }
   // A garbage dump, overflowing waste, pests or filth: an alarm at once to the incharge, the
   // operations managers and the owner (it also stays on their Home, GET /workplace/alerts).
@@ -696,7 +734,7 @@ async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; i
     for (const e of (await deps.getAllClusterHeads()) || []) if (e?.authUserId) to.set(e.authUserId, e);
     for (const authUserId of to.keys()) {
       await safeNotify(deps, authUserId, 'workplace_alarm', `Garbage / dirt alert: ${o.it.name} at ${locName}`,
-        `${person?.name || 'A staff member'}'s photo shows a serious problem (AI ${o.it.aiScore}/10)${en ? `: ${en}` : ''}. Get it cleaned now. It lowers the incharge's KPI.`, related, o.date);
+        `${person?.name || 'A staff member'}'s photo shows a serious problem (AI ${o.it.aiScore}/10)${en ? `: ${en}` : ''}. Get it cleaned now. It lowers the incharge's KPI.`, related, o.date, { imageUrl });
     }
     return;
   }
@@ -709,7 +747,7 @@ async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; i
   for (const e of (await deps.getAllClusterHeads()) || []) if (e?.authUserId) to.set(e.authUserId, e);
   for (const authUserId of to.keys()) {
     await safeNotify(deps, authUserId, 'workplace_flag', `AI flagged ${o.it.name} at ${locName}`,
-      `${person?.name || 'A staff member'}'s photo scored ${o.it.aiScore}/10${en ? `: ${en}` : ''}. Open Workplace checks to confirm or mark it OK.`, related, o.date);
+      `${person?.name || 'A staff member'}'s photo scored ${o.it.aiScore}/10${en ? `: ${en}` : ''}. Open Workplace checks to confirm or mark it OK.`, related, o.date, { imageUrl, photoCheck });
   }
 }
 
@@ -913,7 +951,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     if (aiOn) {
       await inBackground('Workplace photo check', async () => {
         const r = await scoreOne(deps, settings, { key, itemId: a.id, photoId: shot.id, hint: a.hint, base64: photo.base64, mediaType: photo.type });
-        if (r) await afterScore(deps, settings, { date: today, employeeId: forEmployeeId, it: r.it, photo: r.photo });
+        if (r) await afterScore(deps, settings, { date: today, employeeId: forEmployeeId, itemId: a.id, it: r.it, photo: r.photo });
       });
     }
     return c.json({ success: true, flagged: false, item: { ...a, status: statusOf(today, today, nowMin, a, entry), ...itemView(entry) } });
@@ -990,8 +1028,22 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     settleFlag(target, settings.aiThreshold);
     await kv.set(key, latest);
     const flagged = !wasFlagged && target.flag?.status === 'needs_cleaning' && !!target.flag.auto;
-    if (flagged) await pushAutoFlag(deps, { date, employeeId, it: target, actorEmployeeId: actor!.employeeId });
+    if (flagged) await pushAutoFlag(deps, { date, employeeId, itemId, it: target, actorEmployeeId: actor!.employeeId });
     return c.json({ success: scoredAny, flagged, ...itemView(target) });
+  });
+
+  // The photo inside a push notification (pushPhotoUrl): no sign-in, the unguessable token that
+  // works for a day is the permission. Public in index.ts (PUBLIC_ROUTES).
+  app.get(`${P}/workplace/push-photo/:token`, async (c: any) => {
+    const token = String(c.req.param('token') || '');
+    if (!/^[0-9a-f]{36}$/.test(token)) return c.json({ error: 'Not found' }, 404);
+    const rec = await kv.get<any>(`push-photo:${token}`);
+    if (!rec || !rec.expiresAt || rec.expiresAt < new Date().toISOString()) return c.json({ error: 'Not found' }, 404);
+    const it = (await kv.get<CheckRow>(checkKey(rec.date, rec.employeeId)))?.items?.[rec.itemId];
+    const photo = it ? photosOf(it).find((p) => p.id === rec.photoId) : undefined;
+    const file = photo ? await readPhoto(deps, photo, false) : null;
+    if (!file) return c.json({ error: 'Not found' }, 404);
+    return c.body(file.body, 200, { 'Content-Type': file.type, 'Cache-Control': 'private, max-age=3600' });
   });
 
   // Streams one photo (or its thumbnail) to someone allowed to see it: reviewers of that place and
@@ -1288,6 +1340,10 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     let sentRowsRemoved = 0;
     for (const s of (await kv.getByPrefix<any>('workplace-sent:')) || []) {
       if (s?.date && s.date < addDays(today, -7)) { await kv.del(sentKey(s.date)); sentRowsRemoved++; }
+    }
+    const nowIso = new Date().toISOString();
+    for (const link of (await kv.getByPrefix<any>('push-photo:')) || []) {
+      if (link?.token && (!link.expiresAt || link.expiresAt < nowIso)) await kv.del(`push-photo:${link.token}`);
     }
     for (const r of (await kv.getByPrefix<any>('workplace-results-sent:')) || []) {
       if (r?.date && r?.employeeId && r.date < addDays(today, -7)) { await kv.del(resultsSentKey(r.date, r.employeeId)); sentRowsRemoved++; }

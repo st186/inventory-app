@@ -43,6 +43,8 @@ self.addEventListener('push', (event) => {
         // Urgent stays on screen until dealt with; updates arrive without a sound; a bundle that
         // grew buzzes again (notificationRules.ts).
         requireInteraction: flat.category === 'urgent',
+        // A photo (a dirty area, a complaint) where the browser can show one.
+        ...(flat.imageUrl ? { image: flat.imageUrl } : {}),
         silent: flat.category === 'update',
         renotify: flat.category !== 'update',
       };

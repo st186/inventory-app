@@ -22,7 +22,8 @@ export type ComplaintDeps = {
   kv: Kv;
   getAllByPrefix: (prefix: string) => Promise<any[]>;
   verifyUser: (authHeader: string | null) => Promise<any>;
-  notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<unknown>;
+  notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string,
+    quickAction?: undefined, extras?: { imageUrl?: string }) => Promise<unknown>;
   storage: any;
   getTodayIST: () => string;
 };
@@ -32,6 +33,7 @@ const BUCKET = 'complaint-photos';
 const MAX_PHOTOS = 6;
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
 const SIGNED_URL_SECONDS = 3600;
+const PUSH_PHOTO_SECONDS = 24 * 3600; // the complaint's first photo shown inside a notification
 export const COMPLAINT_SOURCES = ['zomato', 'swiggy', 'google', 'walk_in', 'phone', 'other'];
 export const ISSUE_KINDS = ['foreign_object', 'hair', 'insect_pest', 'raw_undercooked', 'rotten_spoiled', 'foul_smell', 'unclean_premises', 'unclean_packaging', 'cold_food', 'taste_quality', 'wrong_missing_item', 'staff_behaviour', 'delay', 'other'];
 // Default points off the monthly KPI total for an upheld complaint, by severity (owner can change).
@@ -233,10 +235,19 @@ export function registerComplaintRoutes(app: any, deps: ComplaintDeps) {
       return { ...c, photoUrls: (data || []).map((d: any) => d?.signedUrl || null) };
     } catch { return { ...c, photoUrls: [] }; }
   };
-  const tell = async (employeeIds: string[], type: string, title: string, message: string, relatedId: string, date: string) => {
+  // The complaint's first photo for a notification to show (a signed link that works for a day).
+  const pushPhoto = async (c: any): Promise<{ imageUrl?: string } | undefined> => {
+    const path = c?.photos?.[0]?.path;
+    if (!path) return undefined;
+    try {
+      const { data } = await deps.storage.from(BUCKET).createSignedUrl(path, PUSH_PHOTO_SECONDS);
+      return data?.signedUrl ? { imageUrl: data.signedUrl } : undefined;
+    } catch { return undefined; }
+  };
+  const tell = async (employeeIds: string[], type: string, title: string, message: string, relatedId: string, date: string, extras?: { imageUrl?: string }) => {
     for (const id of employeeIds) {
       const e = await deps.kv.get(`unified-employee:${id}`);
-      if (e?.authUserId) await deps.notifyUser(e.authUserId, type, title, message, relatedId, date).catch(() => undefined);
+      if (e?.authUserId) await deps.notifyUser(e.authUserId, type, title, message, relatedId, date, undefined, extras).catch(() => undefined);
     }
   };
   const headline = (c: any) => `${c.rating ? `${c.rating}★ ` : ''}${({ zomato: 'Zomato', swiggy: 'Swiggy', google: 'Google review', walk_in: 'Walk-in', phone: 'Phone call', other: 'Customer' } as any)[c.source] || 'Customer'} complaint`;
@@ -297,7 +308,8 @@ export function registerComplaintRoutes(app: any, deps: ComplaintDeps) {
         if (!latest.asked?.length) latest.proposed = proposePeople(latest.evidence, ai.likelySource || 'unclear');
         await deps.kv.set(`complaint:${id}`, latest);
         await deps.notifyUser(a.user.id, 'complaint_read', ai.status === 'done' ? `Bunny has read it: ${headline(latest)}` : `Bunny could not read it: ${headline(latest)}`,
-          ai.status === 'done' ? `${ai.summary || ''} Open it to ask the people concerned to explain.`.trim() : 'Open the complaint and tap Try again.', id, latest.orderDate).catch(() => undefined);
+          ai.status === 'done' ? `${ai.summary || ''} Open it to ask the people concerned to explain.`.trim() : 'Open the complaint and tap Try again.', id, latest.orderDate,
+          undefined, await pushPhoto(latest)).catch(() => undefined);
       });
       return c.json({ complaint: await withPhotos(complaint) });
     } catch (err) { return fail(c, err); }
@@ -349,7 +361,7 @@ export function registerComplaintRoutes(app: any, deps: ComplaintDeps) {
       await deps.kv.set(key, cmp);
       const issue = cmp.ai?.summary || cmp.customerText.slice(0, 120) || 'a customer complaint';
       await tell(fresh.map((p) => p.id), 'complaint_explain', `${headline(cmp)}: please explain`,
-        `${issue} (order ${cmp.orderDate}). Open Home and say what happened.`, cmp.id, cmp.orderDate);
+        `${issue} (order ${cmp.orderDate}). Open Home and say what happened.`, cmp.id, cmp.orderDate, await pushPhoto(cmp));
       return c.json({ complaint: await withPhotos(cmp) });
     } catch (err) { return fail(c, err); }
   });

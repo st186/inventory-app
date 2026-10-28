@@ -17,7 +17,7 @@ import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 import { registerAssetsRoutes } from './assets.ts';
-import { registerWorkplaceRoutes } from './workplace.ts';
+import { registerWorkplaceRoutes, markCheckOk } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
 import { idempotencyMiddleware } from './idempotency.ts';
@@ -310,7 +310,7 @@ console.log('✅ Logger middleware configured');
 // carry X-Cron-Secret). Leftover setup/test/debug routes are switched off. The most sensitive
 // routes are limited by role here as well; routes still do their own finer checks.
 const API_PREFIX = '/make-server-c2dd9b9d';
-const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action'];
+const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action', '/workplace/push-photo'];
 // Read-only item catalog lists that app builds up to 1.15.18 (and the website before PR #4)
 // fetch with the public key. Nothing private in them; drop this once every phone is on 1.15.19+.
 const LEGACY_PUBLIC_READS = ['/inventory-items', '/custom-items', '/custom-categories'];
@@ -3610,7 +3610,7 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // No KV storage involved on purpose: this file already gets redeployed as part of every
 // release in this project's workflow, so the constant here and the one in the frontend
 // bundle are updated together, in the same release, by construction.
-const LATEST_APP_VERSION = '1.16.3';
+const LATEST_APP_VERSION = '1.17.0';
 
 // What this server supports, so a newer app can switch each feature on only against a server
 // that has it (an older app ignores the list). Add a name here only once the feature ships:
@@ -7824,6 +7824,7 @@ app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
         }
       }
 
+      for (const leaveId of leaveIds) await resolveNotifications(leaveId, { by: approverName, verb: approve ? 'approved' : 'rejected' });
       if (employeeAuthUserId) {
         const dateLabel = leaveIds.length > 1 ? `starting ${sampleDate} (${leaveIds.length} day(s))` : sampleDate;
         await notifyUser(
@@ -7854,6 +7855,7 @@ app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
         ? { ...timesheet, status: 'approved', approvedBy: approverName, approvedAt: getNowIST() }
         : { ...timesheet, status: 'rejected', rejectedBy: approverName, rejectedAt: new Date().toISOString(), rejectionReason: 'Rejected via notification quick action' };
       await kv.set(key, updated);
+      await resolveNotifications(String(tokenRecord.recordId), { by: approverName, verb: approve ? 'approved' : 'rejected' });
 
       const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
       if (employee?.authUserId) {
@@ -7907,6 +7909,38 @@ app.post('/make-server-c2dd9b9d/quick-action', async (c) => {
       }
 
       return c.json({ success: true, title: 'Marked delivered', message: updated.requestDate });
+    }
+
+    // A store's stock request, accepted from the production incharge's notification: the same as
+    // Accept in the app (PUT /production-requests/:id/status) - it counts for "accepted by 9 AM".
+    if (tokenRecord.recordType === 'stock_request') {
+      const key = `production_request_${tokenRecord.recordId}`;
+      const request = await kv.get(key);
+      if (!request) return c.json({ error: 'Stock request not found' }, 404);
+      if (request.status !== 'pending') {
+        return c.json({ success: true, title: 'Already accepted', message: `This request is already ${request.status}` });
+      }
+      const now = new Date().toISOString();
+      const updated = { ...request, status: 'accepted', updatedAt: now, acceptedAt: now, acceptedBy: approverName };
+      await kv.set(key, updated);
+      const storeName = updated.storeName || 'Unknown Store';
+      const requestDate = new Date(updated.requestDate).toLocaleDateString();
+      const storeIncharge = await getStoreIncharge(updated.storeId);
+      const told = [storeIncharge, ...(await getOperationsManagers(updated.storeId)), ...(await getAllClusterHeads())].filter((u: any) => u?.authUserId);
+      for (const person of told) {
+        await notifyUser(person.authUserId, 'production_request_accepted', 'Production Request Accepted',
+          `Production request from ${storeName} for ${requestDate} has been accepted by ${approverName} and is ready for preparation`, tokenRecord.recordId, updated.requestDate);
+      }
+      await resolveNotifications(String(tokenRecord.recordId), { by: approverName, verb: 'accepted' });
+      return c.json({ success: true, title: 'Request accepted', message: `${storeName} · ${requestDate}` });
+    }
+
+    // "Looks OK" on an AI photo flag: the same as a reviewer's OK in Workplace checks.
+    if (tokenRecord.recordType === 'workplace_photo') {
+      const [date, employeeId, itemId] = String(tokenRecord.recordId).split('|');
+      const it = await markCheckOk(kv, { date, employeeId, itemId, by: approverName, byId: approverEmployeeId || undefined });
+      if (!it) return c.json({ error: 'That photo check is no longer there' }, 404);
+      return c.json({ success: true, title: 'Marked OK', message: it.name });
     }
 
     return c.json({ error: 'Unknown record type' }, 400);
@@ -10119,6 +10153,7 @@ app.put('/make-server-c2dd9b9d/notifications/:id/read', async (c) => {
     };
     
     await kvWithRetry.set(key, updatedNotification);
+    await afterResponse('Tray dismiss', () => dismissOnPhone(userId, [notificationId]));
     
     return c.json({ success: true, notification: updatedNotification });
   } catch (error: any) {
@@ -10243,6 +10278,7 @@ app.put('/make-server-c2dd9b9d/notifications/read-all', async (c) => {
     // downloading the history and re-writing it row batches missed rows on large backlogs.
     const { data: updated, error: rpcError } = await supabase.rpc('mark_all_notifications_read', { p_user: userId });
     if (rpcError) throw new Error(rpcError.message);
+    await afterResponse('Tray dismiss', () => dismissOnPhone(userId, 'all'));
 
     return c.json({ success: true, updated: updated ?? 0 });
   } catch (error: any) {
@@ -10366,12 +10402,23 @@ async function indexRelatedNotification(relatedId: string, key: string) {
 async function resolveNotifications(relatedId: string, o: { by: string; verb: string; onlyUser?: string }) {
   const keys: string[] = (await kvWithRetry.get(`notification-related:${relatedId}`)) || [];
   const now = new Date().toISOString();
+  const done = new Map<string, string[]>(); // person -> notification ids, to take off their phones
   for (const key of keys) {
     if (o.onlyUser && !key.startsWith(`notification:${o.onlyUser}:`)) continue;
     const n = await kvWithRetry.get(key);
     if (!n || n.resolvedAt) continue;
     await kvWithRetry.set(key, { ...n, resolvedAt: now, resolvedBy: o.by, resolvedVerb: o.verb, read: true, readAt: n.readAt || now });
+    const [, userId, id] = key.split(':');
+    if (userId && id) done.set(userId, [...(done.get(userId) || []), id]);
   }
+  for (const [userId, ids] of done) await dismissOnPhone(userId, ids).catch(() => undefined);
+}
+
+// Takes notifications off the person's phone tray: handled by someone else, or read in the app
+// (new Android builds only; push.sendFcmDismiss).
+async function dismissOnPhone(authUserId: string, ids: string[] | 'all') {
+  const emp = (await staffForNotifications()).find((u: any) => u.authUserId === authUserId);
+  if (emp?.employeeId) await push.sendFcmDismiss(emp.employeeId, ids);
 }
 
 // Nightly cleanup across ALL users - deletes notifications that are already read and
@@ -10445,7 +10492,18 @@ async function getEmployeeIdByAuthUserId(authUserId: string): Promise<string | n
 // can't call the normal authenticated /approve or /reject routes. The token only ever
 // authorizes the exact action on the exact record it was minted for (see POST
 // /quick-action below) and is marked used immediately, so it can't be replayed.
-async function createQuickActionToken(action: 'approve' | 'reject' | 'deliver', recordType: 'leave' | 'timesheet' | 'production_request', recordId: string, approverUserId: string): Promise<string> {
+// The buttons each kind of record gets on its notification (Android, QuickActionMessagingService).
+type QuickRecord = 'leave' | 'timesheet' | 'production_request' | 'stock_request' | 'workplace_photo';
+type QuickVerb = 'approve' | 'reject' | 'deliver' | 'accept' | 'ok';
+const QUICK_ACTIONS: Record<QuickRecord, { action: QuickVerb; label: string }[]> = {
+  leave: [{ action: 'approve', label: 'Approve' }, { action: 'reject', label: 'Reject' }],
+  timesheet: [{ action: 'approve', label: 'Approve' }, { action: 'reject', label: 'Reject' }],
+  production_request: [{ action: 'deliver', label: 'Delivered' }],
+  stock_request: [{ action: 'accept', label: 'Accept' }],
+  workplace_photo: [{ action: 'ok', label: 'Looks OK' }],
+};
+
+async function createQuickActionToken(action: QuickVerb, recordType: QuickRecord, recordId: string, approverUserId: string): Promise<string> {
   const token = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   await kv.set(`quick_action_token:${token}`, {
     action,
@@ -10472,7 +10530,9 @@ async function notifyUser(
   message: string,
   relatedId?: string,
   relatedDate?: string,
-  quickAction?: { recordType: 'leave' | 'timesheet' | 'production_request'; recordId: string }
+  quickAction?: { recordType: QuickRecord; recordId: string },
+  // imageUrl: a photo shown inside the Android notification (a link that works for a day).
+  extras?: { imageUrl?: string }
 ) {
   const notificationResult = await createNotification(userId, type, title, message, relatedId, relatedDate);
 
@@ -10511,12 +10571,19 @@ async function notifyUser(
         relatedDate: relatedDate || null,
         notificationId: notificationResult?.id || null,
       };
-      if (quickAction?.recordType === 'production_request') {
-        data.deliverToken = await createQuickActionToken('deliver', 'production_request', quickAction.recordId, userId);
-      } else if (quickAction) {
-        data.approveToken = await createQuickActionToken('approve', quickAction.recordType, quickAction.recordId, userId);
-        data.rejectToken = await createQuickActionToken('reject', quickAction.recordType, quickAction.recordId, userId);
+      if (quickAction) {
+        const actions: { id: string; label: string; token: string }[] = [];
+        for (const k of QUICK_ACTIONS[quickAction.recordType] || []) {
+          const token = await createQuickActionToken(k.action, quickAction.recordType, quickAction.recordId, userId);
+          actions.push({ id: k.action, label: k.label, token });
+          // App builds before 1.17.0 read these three instead of `actions`.
+          if (k.action === 'approve') data.approveToken = token;
+          if (k.action === 'reject') data.rejectToken = token;
+          if (k.action === 'deliver') data.deliverToken = token;
+        }
+        data.actions = actions;
       }
+      if (extras?.imageUrl) data.imageUrl = extras.imageUrl;
       data.category = category;
       await push.sendPushNotification(employeeId, {
         title: pushTitle,
@@ -13478,7 +13545,8 @@ app.post('/make-server-c2dd9b9d/stock-requests', async (c) => {
           'New Stock Request',
           `${storeName} has requested stock from ${productionHouseName} for ${new Date(requestDate).toLocaleDateString()}`,
           id,
-          requestDate
+          requestDate,
+          { recordType: 'stock_request', recordId: id }
         );
         console.log('Notified production head:', prodHead.name, prodHead.authUserId);
       }
@@ -13495,7 +13563,8 @@ app.post('/make-server-c2dd9b9d/stock-requests', async (c) => {
             'New Stock Request',
             `${storeName} has requested stock from ${productionHouseName} for ${new Date(requestDate).toLocaleDateString()}`,
             id,
-            requestDate
+            requestDate,
+            { recordType: 'stock_request', recordId: id }
           );
           console.log('Notified production head (fallback):', prodHead.name, prodHead.authUserId);
         }
@@ -14612,13 +14681,13 @@ app.post('/make-server-c2dd9b9d/push/unsubscribe', async (c) => {
 // Subscribe to native (Android/FCM) push notifications
 app.post('/make-server-c2dd9b9d/push/subscribe-fcm', async (c) => {
   try {
-    const { token, userId } = await c.req.json();
+    const { token, userId, nativeBuild } = await c.req.json();
 
     if (!token || !userId) {
       return c.json({ error: 'token and userId are required' }, 400);
     }
 
-    await push.storeFcmToken(userId, token);
+    await push.storeFcmToken(userId, token, Number(nativeBuild) || undefined);
 
     return c.json({
       success: true,

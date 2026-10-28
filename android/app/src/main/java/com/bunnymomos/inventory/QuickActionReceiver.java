@@ -1,26 +1,28 @@
 package com.bunnymomos.inventory;
 
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Handles the Approve/Reject tap from an actionable notification (see
- * QuickActionMessagingService). Runs the network call on a background thread via
+ * Handles a button tapped on a notification (see QuickActionMessagingService): Approve,
+ * Reject, Delivered, Accept, Looks OK. Runs the network call on a background thread via
  * goAsync() - BroadcastReceiver.onReceive() must return immediately, and a blocking
- * network call would otherwise be killed by the OS before it completes.
+ * network call would otherwise be killed by the OS before it completes. The short result
+ * ("Request accepted", or why it didn't work) comes from the server.
  */
 public class QuickActionReceiver extends BroadcastReceiver {
 
@@ -31,34 +33,28 @@ public class QuickActionReceiver extends BroadcastReceiver {
     // bundle (src/utils/supabase/info.tsx). The actual authorization for this specific
     // action comes from the single-use token in the request body, not this header.
     private static final String SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhzc3huaHJ6eHZ0ZWphdm9xZ3dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYwODAzNjksImV4cCI6MjA4MTY1NjM2OX0.boONpQZ8Xv2AzlDylEoKnAlGEW7DFsMQ0zEQ1S5LPGE";
-    private static final String RESULT_CHANNEL_ID = "bhandar_actionable";
 
     @Override
     public void onReceive(Context context, Intent intent) {
         String token = intent.getStringExtra("token");
         int notifId = intent.getIntExtra("notifId", 0);
-        String actionType = "approve";
-        String rawAction = intent.getAction();
-        if (rawAction != null) {
-            if (rawAction.endsWith("REJECT")) actionType = "reject";
-            else if (rawAction.endsWith("DELIVER")) actionType = "deliver";
-        }
         if (token == null) return;
 
-        final String finalActionType = actionType;
         final PendingResult pendingResult = goAsync();
         final Context appContext = context.getApplicationContext();
         new Thread(() -> {
             try {
-                runQuickAction(appContext, token, notifId, finalActionType);
+                runQuickAction(appContext, token, notifId);
             } finally {
                 pendingResult.finish();
             }
         }).start();
     }
 
-    private void runQuickAction(Context context, String token, int notifId, String actionType) {
+    private void runQuickAction(Context context, String token, int notifId) {
         boolean succeeded = false;
+        String title = null;
+        String message = null;
         try {
             URL url = new URL(ENDPOINT);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -76,47 +72,49 @@ public class QuickActionReceiver extends BroadcastReceiver {
 
             int status = conn.getResponseCode();
             succeeded = status == 200;
+            JSONObject answer = readJson(succeeded ? conn.getInputStream() : conn.getErrorStream());
+            if (answer != null) {
+                title = answer.optString("title", null);
+                message = succeeded ? answer.optString("message", null) : answer.optString("error", null);
+            }
             conn.disconnect();
         } catch (Exception e) {
             Log.e(TAG, "Quick action request failed", e);
         }
 
         NotificationManagerCompat.from(context).cancel(notifId);
-        showResultNotification(context, notifId, actionType, succeeded);
+        showResultNotification(context, notifId, succeeded, title, message);
+        QuickActionMessagingService.refreshAllSummaries(context);
     }
 
-    private void showResultNotification(Context context, int notifId, String actionType, boolean succeeded) {
-        createChannelIfNeeded(context);
-
-        String successTitle;
-        switch (actionType) {
-            case "reject": successTitle = "Rejected"; break;
-            case "deliver": successTitle = "Marked Delivered"; break;
-            default: successTitle = "Approved"; break;
+    private static JSONObject readJson(InputStream in) {
+        if (in == null) return null;
+        try (InputStream stream = in) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = stream.read(buf)) != -1 && out.size() < 64 * 1024) out.write(buf, 0, n);
+            return new JSONObject(out.toString("UTF-8"));
+        } catch (Exception e) {
+            return null;
         }
-        String title = succeeded ? successTitle : "Action failed";
-        String body = succeeded
-            ? "Done."
-            : "Couldn't complete this action. Open the app to try again.";
+    }
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, RESULT_CHANNEL_ID)
+    private void showResultNotification(Context context, int notifId, boolean succeeded, String title, String message) {
+        QuickActionMessagingService.ensureChannels(context);
+        String shownTitle = succeeded ? (title != null && !title.isEmpty() ? title : "Done") : "That didn't work";
+        String shownBody = succeeded
+            ? (message != null && !message.isEmpty() ? message : "Done.")
+            : (message != null && !message.isEmpty() ? message : "Open the app to try again.");
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, QuickActionMessagingService.CH_UPDATE)
             .setSmallIcon(context.getApplicationInfo().icon)
-            .setContentTitle(title)
-            .setContentText(body)
+            .setContentTitle(shownTitle)
+            .setContentText(shownBody)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setTimeoutAfter(10000);
 
         NotificationManagerCompat.from(context).notify(notifId, builder.build());
-    }
-
-    private void createChannelIfNeeded(Context context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(RESULT_CHANNEL_ID, "Approvals", NotificationManager.IMPORTANCE_HIGH);
-            NotificationManager manager = context.getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
-            }
-        }
     }
 }
