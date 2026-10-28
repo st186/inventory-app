@@ -1,8 +1,17 @@
 import { useMemo, useState } from 'react';
-import { Smartphone, CalendarCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Smartphone, CalendarCheck, AlertTriangle, CheckCircle2, Store } from 'lucide-react';
 import { InventoryContextType } from '../App';
 import { OnlineCashRecalibration } from './OnlineCashRecalibration';
-import { addDays, getTodayIST } from '../utils/timezone';
+import { DatePicker } from './DatePicker';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { EmptyState } from './ui/empty-state';
+import { ListGroup, ListRow } from './ui/list-row';
+import { formatINR } from './ui/money';
+import { StatusChip } from './ui/status-chip';
+import { OptionChip, SectionHeading } from './insights/parts/common';
+import { formatDay } from './team/shared';
+import { addDays, formatDateTimeIST, getTodayIST } from '../utils/timezone';
 import { knownPaytmBalance } from '../utils/paytmRules';
 
 type Props = {
@@ -65,82 +74,67 @@ export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate
   if (stores.length === 0) return null;
 
   return (
-    <div className="mt-6 bg-card rounded-2xl border border-border p-5">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-9 h-9 rounded-xl bg-surface border border-border flex items-center justify-center shadow-md flex-shrink-0">
-          <Smartphone className="w-4 h-4 text-text" />
-        </div>
-        <h2 className="text-foreground font-bold text-lg sm:text-xl tracking-tight">Weekly Paytm Reconciliation</h2>
-      </div>
+    <section className="mt-6 flex flex-col gap-3" aria-labelledby="paytm-weekly-title">
+      <SectionHeading
+        id="paytm-weekly-title"
+        as="h3"
+        title="Weekly Paytm reconciliation"
+        caption="Every Sunday, check the real Paytm balance and log it. The app compares it with what it expected."
+      />
 
       {isSunday && !alreadyLoggedThisWeek && (
-        <div className="mb-4 rounded-xl border border-warning-border bg-warning-soft p-3 flex items-center gap-2">
-          <CalendarCheck className="w-4 h-4 text-warning flex-shrink-0" />
-          <p className="text-sm text-warning">It's Sunday — check the actual Paytm balance and log it below.</p>
-        </div>
+        <Callout tone="warning" icon={CalendarCheck} title="It's Sunday">Check the actual Paytm balance and log it below.</Callout>
       )}
 
-      <div className="flex flex-wrap gap-3 mb-4">
-        <select
-          value={selectedStoreId}
-          onChange={(e) => setSelectedStoreId(e.target.value)}
-          className="min-h-11 px-3 py-2 border border-border rounded-lg text-sm bg-background text-foreground"
-        >
-          {stores.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={selectedDate}
-          max={today}
-          onChange={(e) => setSelectedDate(e.target.value)}
-          className="min-h-11 px-3 py-2 border border-border rounded-lg text-sm bg-background text-foreground"
-        />
-        <button
-          onClick={() => setShowModal(true)}
-          className="min-h-11 inline-flex items-center gap-1.5 px-3 py-2 border border-border-strong bg-surface text-text rounded-lg text-sm hover:bg-surface-2 transition-colors"
-        >
-          <Smartphone className="w-4 h-4" /> Log Paytm Balance
-        </button>
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          {stores.length > 1 && (
+            <OptionChip
+              value={selectedStoreId}
+              options={stores.map((s) => ({ value: s.id, label: s.name }))}
+              onChange={setSelectedStoreId}
+              title="Store"
+              icon={<Store aria-hidden="true" />}
+            />
+          )}
+          <DatePicker label="Day to check" value={selectedDate} max={today} onChange={setSelectedDate} className="min-w-[180px] flex-1" />
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <span className="flex min-w-0 flex-col">
+            <span className="text-label text-text-3">The app expects on Paytm that day</span>
+            <span className="num text-title font-semibold text-text">{formatINR(Math.round(systemBalance))}</span>
+          </span>
+          <Button variant="secondary" className="w-full sm:w-auto" leadingIcon={<Smartphone />} onClick={() => setShowModal(true)}>Log Paytm balance</Button>
+        </div>
       </div>
 
-      {history.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No reconciliations logged yet for {store?.name || 'this store'}.</p>
-      ) : (
-        <div className="space-y-2">
-          {history.map((r) => {
-            const hasDiscrepancy = Math.abs(r.difference) > 200;
-            return (
-              <div key={r.id} className="rounded-xl border border-border bg-background p-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-foreground">
-                    {new Date(r.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    {/* When this count was actually logged, not just which business day it's
-                        dated for - the two can differ by hours (a very-early-morning count
-                        logged for "yesterday", or a late one after midnight) and that gap
-                        matters for deciding whether a same-day top-up landed before or after
-                        this reconciliation, per PRODUCTION_CASH_GO_LIVE_DATE-era late-topup
-                        logic elsewhere. */}
-                    {r.createdAt && (
-                      <span className="text-muted-foreground font-normal">
-                        {' '}· logged {new Date(r.createdAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    System ₹{r.systemBalance.toLocaleString()} vs Actual ₹{r.actualBalance.toLocaleString()}
-                  </p>
-                </div>
-                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs ${hasDiscrepancy ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success'}`}>
-                  {hasDiscrepancy ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                  {r.difference >= 0 ? '+' : ''}₹{r.difference.toLocaleString()}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <ListGroup
+        title="Past checks"
+        meta={store?.name}
+        empty={<EmptyState compact icon={Smartphone} title={`No checks logged yet for ${store?.name || 'this store'}`} />}
+      >
+        {history.map((r) => {
+          const hasDiscrepancy = Math.abs(r.difference) > 200;
+          return (
+            <ListRow
+              key={r.id}
+              title={formatDay(r.date, 'en', { weekday: true })}
+              // When the count was logged as well as the day it is for: they can differ by hours
+              // (an early-morning count logged for "yesterday"), which decides whether a same-day
+              // top-up landed before or after it.
+              subtitle={[
+                `Counted ${formatINR(Math.round(r.actualBalance))} · app ${formatINR(Math.round(r.systemBalance))}`,
+                r.createdAt ? `logged ${formatDateTimeIST(r.createdAt)}` : '',
+              ].filter(Boolean).join(' · ')}
+              trailing={
+                <StatusChip tone={hasDiscrepancy ? 'danger' : 'success'} icon={hasDiscrepancy ? AlertTriangle : CheckCircle2}>
+                  <span className="num">{formatINR(Math.round(r.difference), { sign: true })}</span>
+                </StatusChip>
+              }
+            />
+          );
+        })}
+      </ListGroup>
 
       {showModal && selectedStoreId && (
         <OnlineCashRecalibration
@@ -152,6 +146,6 @@ export function PaytmWeeklyReconciliation({ context, initialStoreId, initialDate
           onSaveSuccess={() => context.refreshData()}
         />
       )}
-    </div>
+    </section>
   );
 }

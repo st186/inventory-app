@@ -93,7 +93,10 @@ export function mockContext(user: NonNullable<InventoryContextType['user']>, sal
   const noop = async () => undefined;
   const base: Record<string, unknown> = {
     inventory: INVENTORY, overheads: OVERHEADS, fixedCosts: FIXED, salesData: salesFor(saleState), categorySalesData: [],
-    onlineCashRecalibrations: [], onlineSalesData: ONLINE_SALES, onlinePayoutData: [],
+    onlineCashRecalibrations: [
+      { id: 'rc1', storeId: 'STORE-1', storeName: 'Store A', month: addDays(TODAY, -4).slice(0, 7), date: addDays(TODAY, -4), systemBalance: 24455.9773, actualBalance: 56657.91, difference: 32201.9327, notes: 'Owner count', createdBy: 'owner', createdAt: `${addDays(TODAY, -4)}T07:31:09.440Z` },
+      { id: 'rc2', storeId: 'STORE-1', storeName: 'Store A', month: addDays(TODAY, -11).slice(0, 7), date: addDays(TODAY, -11), systemBalance: 5790.29, actualBalance: 5810.19, difference: 19.9, notes: '', createdBy: 'owner', createdAt: `${addDays(TODAY, -11)}T03:10:00.000Z` },
+    ], onlineSalesData: ONLINE_SALES, onlinePayoutData: [],
     aggregatorSettlements: [{ id: 'set-1', aggregator: 'zomato', storeId: 'STORE-1', settlementDate: TODAY, netPayout: 2410 }],
     productionData: [], productionHouses: PRODUCTION_HOUSES, stockRequests: [], productionRequests: [], stores: STORES,
     managedStoreIds: ['STORE-1'], managedProductionHouseIds: ['PH-1'], inventoryItems: [], isManager: user.role === 'manager',
