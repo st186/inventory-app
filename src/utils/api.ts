@@ -2479,6 +2479,24 @@ export async function getAllLeaves(accessToken?: string): Promise<LeaveApplicati
   return data.leaves || [];
 }
 
+// Who is off and when, for the whole team (GET /team/leave-calendar): names, where they work,
+// the day, full or half day and approved or waiting - no reasons. Default today to the end of
+// next month.
+export interface TeamLeavePlace { key: string; kind: 'store' | 'production' | 'riders' | 'managers'; id: string | null; name: string; people: number }
+export interface TeamLeaveDay { leaveDate: string; employeeId: string; name: string; placeKey: string; leaveType: 'full' | 'half'; status: 'approved' | 'pending' }
+export interface TeamLeaveCalendar { today: string; from: string; to: string; people: number; places: TeamLeavePlace[]; leaves: TeamLeaveDay[]; myPlaceKey?: string | null }
+
+export async function getTeamLeaveCalendar(accessToken?: string, from?: string, to?: string): Promise<TeamLeaveCalendar> {
+  let token = accessToken;
+  if (!token) {
+    const { data: { session } } = await createBrowserSupabase().auth.getSession();
+    if (!session?.access_token) throw new Error('Not authenticated');
+    token = session.access_token;
+  }
+  const query = from && to ? `?from=${from}&to=${to}` : '';
+  return fetchWithAuth(`${API_BASE}/team/leave-calendar${query}`, token);
+}
+
 export async function applyLeave(leave: LeaveApplication): Promise<LeaveApplication> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();

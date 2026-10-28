@@ -24,6 +24,7 @@ import { TodayChecklist, type ChecklistTask } from './TodayChecklist';
 import { HomePage, istMinutes, timeOf, toMinutes, useClock, useDateWords, useFirstPath, useLoad, useOpen } from './HomeParts';
 import { useHomeData } from './homeData';
 import { useFocusProfile } from './HomeShortcuts';
+import { TeamLeaveRow } from './TeamLeaveRow';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
@@ -192,6 +193,7 @@ function InchargeHome() {
     <HomePage>
       {has('events') && <EventHomeCard onOpen={(id, tab) => router.push('events', tab ? { id, tab } : { id })} />}
       <ShiftClockCard isLead framed={false} />
+      <TeamLeaveRow onOpenAttendance={has('team/attendance') ? () => open('team/attendance') : undefined} />
       <TodayChecklist tasks={tasks} />
 
       {(outNow.length > 3 ? outNow.slice(0, 2) : outNow).map((e) => (

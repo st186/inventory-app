@@ -2,7 +2,8 @@
 // waiting, and a sticky "Apply for leave" that opens the application sheet (regular or advance).
 // Same rules as before: a regular application can't go over the balance (days still waiting count
 // too); advance leave borrows from next month and over 4 days goes to the owner instead of the
-// manager.
+// manager. While choosing the days it shows who else in the team is already off then (owner, 28
+// Oct 2026), so two people from one store or kitchen don't take the same day.
 import * as React from 'react';
 import { BookOpen, CalendarPlus, CalendarDays, Trash2 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -25,6 +26,7 @@ import { teamApi } from './team/teamApi';
 import { StickyFooter, formatDay } from './team/shared';
 import type { MyAttendance } from './team/attendance/useMyAttendance';
 import { leaveTypeLabel } from './ApproveLeaves';
+import { leaveDays, placeLabel } from './team/teamLeave';
 
 const MAX_ADVANCE_DAYS_BEFORE_ESCALATION = 4;
 
@@ -142,6 +144,26 @@ function ApplyLeaveSheet({ open, onOpenChange, user, att }: { open: boolean; onO
   const leaveBalance = att.leaveBalance ?? 0;
   const projectedBalance = att.projectedBalance ?? 0;
 
+  // Who else is off on the chosen days: today to the end of next month, or the chosen days
+  // themselves when they go past that.
+  const [cal, setCal] = React.useState<api.TeamLeaveCalendar | null>(null);
+  const lastChosen = form.endDate || form.startDate;
+  const outside = !!cal && !!form.startDate && (form.startDate < cal.from || lastChosen > cal.to);
+  React.useEffect(() => {
+    if (!open) {
+      setCal(null);
+      return;
+    }
+    if (cal && !outside) return;
+    let cancelled = false;
+    const call = outside ? teamApi.getTeamLeaveCalendar(undefined, form.startDate, lastChosen) : teamApi.getTeamLeaveCalendar();
+    call.then((c) => { if (!cancelled) setCal(c); }).catch(() => undefined);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, outside]);
+  const othersOff = cal && form.startDate && lastChosen >= form.startDate ? leaveDays(cal, getDateRange(form.startDate, lastChosen), user.employeeId) : [];
+  const samePlace = !!cal?.myPlaceKey && othersOff.some((d) => d.people.some((p) => p.placeKey === cal.myPlaceKey));
+
   const reset = () => {
     setMode('regular');
     setForm({ startDate: '', endDate: '', leaveType: 'full', reason: '' });
@@ -242,6 +264,21 @@ function ApplyLeaveSheet({ open, onOpenChange, user, att }: { open: boolean; onO
           <DatePicker label={t('team.leave.to')} value={form.endDate} onChange={(date) => setForm({ ...form, endDate: date })} min={form.startDate || undefined} className="w-full" />
           <p className="text-caption text-text-3">{t('team.leave.toHelp')}</p>
         </div>
+        {cal && othersOff.length > 0 && (
+          <Callout tone={samePlace ? 'warning' : 'info'} title={t('teamLeave.alsoOffTitle')}>
+            <ul className="flex flex-col gap-1">
+              {othersOff.map((d) => (
+                <li key={d.date}>
+                  <span className="font-medium">{formatDay(d.date, lang, { short: true, weekday: true })}:</span>{' '}
+                  {d.people
+                    .map((p) => `${p.name} (${[placeLabel(cal, p.placeKey, t), p.leaveType === 'half' ? t('team.att.halfDay') : '', p.status === 'pending' ? t('teamLeave.waiting') : ''].filter(Boolean).join(', ')})`)
+                    .join(', ')}
+                </li>
+              ))}
+            </ul>
+            {samePlace && <p className="mt-2">{t('teamLeave.samePlace')}</p>}
+          </Callout>
+        )}
         <Field label={t('team.leave.type')} helper={!isSingleDay ? t('team.leave.halfOnlyOne') : undefined}>
           <SegmentedControl
             aria-label={t('team.leave.type')}

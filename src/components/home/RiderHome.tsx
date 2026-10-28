@@ -10,6 +10,7 @@ import { StatusChip } from '../ui/status-chip';
 import { Skeleton } from '../ui/skeleton';
 import { useT } from '../../utils/i18n';
 import { ShiftClockCard } from '../kpi/ShiftClockCard';
+import { TeamLeaveRow } from './TeamLeaveRow';
 import { useProfileCompletion } from '../ProfileCompletionCard';
 import { HomePage, useOpen } from './HomeParts';
 import { useHomeData } from './homeData';
@@ -39,6 +40,7 @@ export function RiderHome() {
         </div>
       )}
       <ShiftClockCard isLead={false} framed={false} />
+      <TeamLeaveRow />
     </>
   );
   if (data.renderRiderTrips) {

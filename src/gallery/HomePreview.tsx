@@ -120,6 +120,21 @@ function mockHomeData(personaId: string, params: Params, sample: ReturnType<type
       { id: 'lv3', employeeId: 'DEMO-61', leaveDate: today, status: 'approved' },
       { id: 'lv4', employeeId: 'DEMO-41', leaveDate: addDays(today, 2), status: 'approved' },
     ] as any),
+    getTeamLeaveCalendar: () => later({
+      today, from: today, to: addDays(today, 34), people: 8,
+      places: [
+        { key: 'store:STORE-1', kind: 'store', id: 'STORE-1', name: 'Store A', people: 3 },
+        { key: 'production:PH-1', kind: 'production', id: 'PH-1', name: 'Kitchen A', people: 2 },
+        { key: 'riders', kind: 'riders', id: null, name: '', people: 1 },
+        { key: 'managers', kind: 'managers', id: null, name: '', people: 2 },
+      ],
+      leaves: params.empty ? [] : [
+        { leaveDate: today, employeeId: 'DEMO-61', name: 'Kitchen Crew Demo', placeKey: 'production:PH-1', leaveType: 'full', status: 'approved' },
+        { leaveDate: addDays(today, 2), employeeId: 'DEMO-41', name: 'Counter Crew Demo', placeKey: 'store:STORE-1', leaveType: 'half', status: 'approved' },
+        { leaveDate: addDays(today, 3), employeeId: 'DEMO-41', name: 'Counter Crew Demo', placeKey: 'store:STORE-1', leaveType: 'full', status: 'pending' },
+        { leaveDate: addDays(today, 3), employeeId: 'DEMO-51', name: 'Store Lead Demo', placeKey: 'store:STORE-1', leaveType: 'full', status: 'pending' },
+      ],
+    }),
     getAllRecalibrationsForApproval: () => later({ recalibrations: params.empty ? [] : [{ id: 'r1' }] }),
     getEmployeesByIncharge: () => later(sample.employees.filter((e) => e.inchargeId)),
     getTimesheets: () => later(params.empty ? [] : [{ id: 'ts1', status: 'pending' }, { id: 'ts2', status: 'approved' }] as any),

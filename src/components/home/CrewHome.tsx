@@ -11,6 +11,7 @@ import { Skeleton } from '../ui/skeleton';
 import { useT } from '../../utils/i18n';
 import { EventHomeCard } from '../events';
 import { ShiftClockCard } from '../kpi/ShiftClockCard';
+import { TeamLeaveRow } from './TeamLeaveRow';
 import { useWorkplaceDue } from '../workplace/WorkplaceDueCard';
 import { fmt12 } from '../workplace/workplaceUtils';
 import { useProfileCompletion } from '../ProfileCompletionCard';
@@ -79,6 +80,7 @@ export function CrewHome() {
     <HomePage>
       {has('events') && <EventHomeCard onOpen={(id, tab) => router.push('events', tab ? { id, tab } : { id })} />}
       <ShiftClockCard isLead={false} framed={false} />
+      <TeamLeaveRow />
       <TodayChecklist title={t('home.todo')} tasks={tasks} loading={!photos.loaded || !profile.loaded} />
       {payPath && (
         <div className="overflow-hidden rounded-lg border border-border bg-surface" data-ai-private>

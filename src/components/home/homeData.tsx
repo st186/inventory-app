@@ -33,6 +33,7 @@ export type HomeData = {
   getOnlineLoans: typeof api.getOnlineLoans;
   fetchCashTopupRequests: typeof api.fetchCashTopupRequests;
   getAllLeaves: typeof api.getAllLeaves;
+  getTeamLeaveCalendar: typeof api.getTeamLeaveCalendar;
   getAllRecalibrationsForApproval: typeof api.getAllRecalibrationsForApproval;
   getEmployeesByIncharge: typeof api.getEmployeesByIncharge;
   getTimesheets: typeof api.getTimesheets;
@@ -65,6 +66,7 @@ export const realHomeData: HomeData = {
   getOnlineLoans: api.getOnlineLoans,
   fetchCashTopupRequests: api.fetchCashTopupRequests,
   getAllLeaves: api.getAllLeaves,
+  getTeamLeaveCalendar: api.getTeamLeaveCalendar,
   getAllRecalibrationsForApproval: api.getAllRecalibrationsForApproval,
   getEmployeesByIncharge: api.getEmployeesByIncharge,
   getTimesheets: api.getTimesheets,

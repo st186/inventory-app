@@ -72,6 +72,7 @@ export const teamApi = {
   rejectTimesheet: wrap('api', 'rejectTimesheet', api.rejectTimesheet),
   getLeaves: wrap('api', 'getLeaves', api.getLeaves),
   getAllLeaves: wrap('api', 'getAllLeaves', api.getAllLeaves),
+  getTeamLeaveCalendar: wrap('api', 'getTeamLeaveCalendar', api.getTeamLeaveCalendar),
   getLeaveBalance: wrap('api', 'getLeaveBalance', api.getLeaveBalance),
   applyLeaveBulk: wrap('api', 'applyLeaveBulk', api.applyLeaveBulk),
   deleteLeave: wrap('api', 'deleteLeave', api.deleteLeave),

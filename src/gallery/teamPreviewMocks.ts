@@ -168,6 +168,19 @@ export const TEAM_PREVIEW_MOCK: TeamPreviewMock = {
     getTimesheets: (id: never) => wait(TIMESHEETS[id as unknown as string] || []),
     getLeaves: (id: never) => wait(LEAVES[id as unknown as string] || []),
     getAllLeaves: () => wait([...Object.values(LEAVES).flat(), leave('DEMO-51', 8, 'pending', { isAdvanceLeave: true, advanceDaysRequested: 6, approverRole: 'cluster_head', reason: 'Village visit' })]),
+    getTeamLeaveCalendar: () => wait({
+      today, from: today, to: day(34), people: 8, myPlaceKey: 'store:STORE-1',
+      places: [
+        { key: 'store:STORE-1', kind: 'store', id: 'STORE-1', name: 'Store A', people: 3 },
+        { key: 'production:PH-1', kind: 'production', id: 'PH-1', name: 'Kitchen A', people: 2 },
+        { key: 'riders', kind: 'riders', id: null, name: '', people: 1 },
+        { key: 'managers', kind: 'managers', id: null, name: '', people: 2 },
+      ],
+      leaves: [
+        { leaveDate: day(2), employeeId: 'DEMO-42', name: 'Steamer Crew Demo', placeKey: 'store:STORE-1', leaveType: 'full', status: 'approved' },
+        { leaveDate: day(3), employeeId: 'DEMO-51', name: 'Store Lead Demo', placeKey: 'store:STORE-1', leaveType: 'half', status: 'pending' },
+      ],
+    }),
     getLeaveBalance: () => wait({ balance: 7, pendingDays: 2 }),
     createUnifiedEmployee: () => wait({ employee: { employeeId: 'DEMO-77' } }),
     approveTimesheet: () => wait(undefined),

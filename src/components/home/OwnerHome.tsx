@@ -3,10 +3,9 @@
 // through the month first), what needs them, today's brief and the next days' forecast.
 import { useEffect, useMemo } from 'react';
 import {
-  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, Scale, Truck, Users, Wallet,
+  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, Scale, Truck, Wallet,
 } from 'lucide-react';
 import { useShell } from '../shell/ShellContext';
-import { ListRow } from '../ui/list-row';
 import { formatINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
 import { useInsightsOverview } from '../insights/useInsightsOverview';
@@ -19,10 +18,11 @@ import { OwnerKpis } from './OwnerKpis';
 import { HomePage, timeOf, useClock, useDateWords, useOpen } from './HomeParts';
 import { useOwnerHome } from './useOwnerHome';
 import { useFocusProfile } from './HomeShortcuts';
-import { lastDayOfMonth, peopleOnLeave, productionApprovalsPending, salesApprovalsPending } from './homeFigures';
+import { TeamLeaveRow } from './TeamLeaveRow';
+import { productionApprovalsPending, salesApprovalsPending } from './homeFigures';
 
 export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) {
-  const { user, context, stores, employees, selectedStoreId, nav, openBunny } = useShell();
+  const { user, context, stores, selectedStoreId, nav, openBunny } = useShell();
   const { t } = useT();
   const words = useDateWords();
   const clock = useClock();
@@ -129,27 +129,15 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
     return items;
   }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words]);
 
-  const leaveToday = x.leaves ? peopleOnLeave(x.leaves, clock.today, clock.today) : null;
-  const leaveMonth = x.leaves ? peopleOnLeave(x.leaves, clock.today, lastDayOfMonth(clock.today)) : null;
-  const people = employees.filter((e) => e.status !== 'inactive').length;
   const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
 
   return (
     <HomePage wide>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* The team first (owner, 28 Oct 2026): who's in today before the money. */}
-        {teamPath && (
-          <div className="lg:col-span-12">
-            <div className="overflow-hidden rounded-lg border border-border bg-surface">
-              <ListRow
-                icon={Users}
-                title={t('home.team.people', { n: people })}
-                subtitle={leaveToday !== null && leaveMonth !== null ? t('home.team.leave', { today: leaveToday, month: leaveMonth }) : undefined}
-                onClick={() => open(teamPath)}
-              />
-            </div>
-          </div>
-        )}
+        <div className="lg:col-span-12">
+          <TeamLeaveRow onOpenAttendance={teamPath ? () => open(teamPath) : undefined} />
+        </div>
         <div className="lg:col-span-8">
           <SalesTodayHero
             today={clock.today}

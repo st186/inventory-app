@@ -7240,6 +7240,74 @@ app.get('/make-server-c2dd9b9d/leaves/all', async (c) => {
   }
 });
 
+// Who is off and when, for everyone in the team to plan their own leave around (owner, 28 Oct
+// 2026: "otherwise two people take the same day and the store or production is short"). Names,
+// where they work, the day, full or half day, approved or still waiting - never the reason.
+// Default: today to the end of next month; at most 92 days.
+app.get('/make-server-c2dd9b9d/team/leave-calendar', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const myId = authResult.user.user_metadata?.employeeId || null;
+    const today = getTodayIST();
+    const [y, m] = today.split('-').map(Number);
+    const endOfNextMonth = new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10);
+    const from = c.req.query('from') || today;
+    const to = c.req.query('to') || endOfNextMonth;
+    if (!ISO_DAY.test(from) || !ISO_DAY.test(to) || from > to) return c.json({ error: 'from and to must be dates like 2026-10-28, from first' }, 400);
+    if ((Date.parse(to) - Date.parse(from)) / 86400000 > 92) return c.json({ error: 'At most 92 days at a time' }, 400);
+
+    const [people, leaves, stores, houses] = await Promise.all([
+      kv.getByPrefix('unified-employee:'),
+      getAllByPrefixWithRetry('leave:', { from, to, field: 'leaveDate' }),
+      kv.getByPrefix('store:'),
+      kv.getByPrefix('production_house_'),
+    ]);
+    const storeById = new Map<string, any>((stores || []).filter((s: any) => s?.id).map((s: any) => [s.id, s]));
+    const houseById = new Map<string, any>((houses || []).filter((h: any) => h?.id).map((h: any) => [h.id, h]));
+    // A production person's storeId held their house's id until assignedProductionHouseIds.
+    const placeOf = (p: any) => {
+      const designation = String(p.designation || '');
+      if (designation === 'rider') return { key: 'riders', kind: 'riders', id: null, name: '' };
+      if (designation.startsWith('production')) {
+        const id = p.assignedProductionHouseIds?.[0] || (houseById.has(p.storeId) ? p.storeId : storeById.get(p.storeId)?.productionHouseId) || null;
+        return { key: `production:${id || ''}`, kind: 'production', id, name: houseById.get(id)?.name || '' };
+      }
+      if (designation.startsWith('store')) {
+        const id = (storeById.has(p.storeId) ? p.storeId : p.assignedStoreIds?.[0]) || null;
+        return { key: `store:${id || ''}`, kind: 'store', id, name: storeById.get(id)?.name || '' };
+      }
+      return { key: 'managers', kind: 'managers', id: null, name: '' };
+    };
+
+    const active = (people || []).filter((p: any) => p?.employeeId && p.status !== 'inactive');
+    const byId = new Map<string, any>();
+    const places = new Map<string, any>();
+    for (const p of active) {
+      const place = placeOf(p);
+      byId.set(p.employeeId, { name: p.name || p.employeeId, placeKey: place.key });
+      const row = places.get(place.key) || { ...place, people: 0 };
+      row.people++;
+      places.set(place.key, row);
+    }
+    const days = (leaves || [])
+      .filter((l: any) => (l.status === 'approved' || l.status === 'pending') && byId.has(l.employeeId))
+      .map((l: any) => ({
+        leaveDate: String(l.leaveDate).slice(0, 10),
+        employeeId: l.employeeId,
+        name: byId.get(l.employeeId).name,
+        placeKey: byId.get(l.employeeId).placeKey,
+        leaveType: l.leaveType === 'half' ? 'half' : 'full',
+        status: l.status,
+      }))
+      .sort((a: any, b: any) => a.leaveDate.localeCompare(b.leaveDate) || a.name.localeCompare(b.name));
+    return c.json({ today, from, to, people: active.length, places: [...places.values()], leaves: days, myPlaceKey: (myId && byId.get(myId)?.placeKey) || null });
+  } catch (error) {
+    console.log('Error fetching the team leave calendar:', error);
+    return c.json({ error: 'Failed to fetch who is on leave' }, 500);
+  }
+});
+
 // Get leaves for an employee
 app.get('/make-server-c2dd9b9d/leaves/:employeeId', async (c) => {
   try {
