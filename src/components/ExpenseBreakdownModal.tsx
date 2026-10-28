@@ -1,7 +1,17 @@
+// One food or packaging line from Insights > Costs (Meat & Dairy, Vegetables, ...): what each
+// item's price did across every purchase, in plain words, with a one-day jump that goes
+// straight back called out as a likely typing slip; then the items by money spent.
 import { useMemo, useState } from 'react';
-import { TrendingUp, TrendingDown, Package, DollarSign, BarChart3, AlertTriangle, Activity } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Activity, AlertTriangle, ArrowDown, ArrowUp } from 'lucide-react';
 import { ResponsiveModal } from './ui/responsive-modal';
+import { Callout } from './ui/callout';
+import { ChoiceChips } from './ui/chip';
+import { EmptyState } from './ui/empty-state';
+import { ListGroup, ListRow } from './ui/list-row';
+import { formatINR } from './ui/money';
+import { StatusChip } from './ui/status-chip';
+import { SectionHeading } from './insights/parts/common';
+import { CHART_COLORS, TrendChart } from './insights/tabs/shared';
 
 type Props = {
   category: string;
@@ -154,257 +164,112 @@ export function ExpenseBreakdownModal({ category, items, totalAmount, onClose }:
   const chartableItems = topItems.filter((item) => item.history.length >= 2).slice(0, MAX_TREND_CHARTS);
   const activeChartItem = chartableItems.find((i) => i.itemName === selectedItem) || chartableItems[0] || null;
 
-  const renderAnomalyDot = (color: string, jump: ItemAnalysis['maxJump']) => (props: any) => {
-    const { cx, cy, payload } = props;
-    const isAnomaly = !!jump && Math.abs(jump.percent) >= SUDDEN_CHANGE_THRESHOLD_PERCENT && payload.rawDate === jump.toDate;
-    if (isAnomaly) {
-      return <circle key={`dot-${payload.rawDate}`} cx={cx} cy={cy} r={6} fill="var(--chart-1)" stroke="var(--chart-grid)" strokeWidth={1.5} />;
-    }
-    return <circle key={`dot-${payload.rawDate}`} cx={cx} cy={cy} r={3} fill={color} />;
+  const rupees = (n: number) => formatINR(Math.round(n * 100) / 100);
+  const jumpOf = (item: ItemAnalysis | null) => (item?.maxJump && Math.abs(item.maxJump.percent) >= SUDDEN_CHANGE_THRESHOLD_PERCENT ? item.maxJump : null);
+  // A jump that comes straight back on the next purchase is more often a typing slip (quantity
+  // or price) than a real price change.
+  const bouncedBack = (item: ItemAnalysis, jump: NonNullable<ItemAnalysis['maxJump']>) => {
+    const i = item.history.findIndex((p) => p.date === jump.toDate);
+    const next = item.history[i + 1];
+    return next && jump.fromPrice > 0 && Math.abs(next.price - jump.fromPrice) / jump.fromPrice < 0.1 ? next : null;
   };
+  const changeWords = (pct: number) => (Math.abs(pct) < 0.5 ? 'no change' : `${pct > 0 ? 'up' : 'down'} ${Math.abs(pct).toFixed(0)}%`);
+  const active = activeChartItem;
+  const activeJump = jumpOf(active);
+  const activeBack = active && activeJump ? bouncedBack(active, activeJump) : null;
 
   return (
     <ResponsiveModal
       open
       onOpenChange={(o) => { if (!o) onClose(); }}
-      title={`${category} breakdown`}
-      description={`Spent ₹${Math.round(totalAmount).toLocaleString('en-IN')} · ${items.length} purchases · ${topItems.length} items`}
+      title={category}
+      description={`Spent ${formatINR(Math.round(totalAmount))} · ${items.length} purchases · ${topItems.length} items`}
       size="detail"
     >
-      <div>
-          {/* Cost Trend Over Time - the actual point of this modal: what has each item's
-              price done across every purchase, not just where it started and ended. */}
-          <div className="bg-surface rounded-lg p-5 border border-border mb-6">
-            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-              <h3 className="text-base font-semibold text-text flex items-center gap-2">
-                <Activity className="w-4.5 h-4.5 text-danger" />
-                Cost Trend Over Time
-              </h3>
-              {chartableItems.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {chartableItems.map((item) => (
-                    <button
-                      key={item.itemName}
-                      onClick={() => setSelectedItem(item.itemName)}
-                      className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                        activeChartItem?.itemName === item.itemName
-                          ? 'bg-danger text-on-danger'
-                          : 'bg-surface-2 text-text-2 hover:bg-surface-3'
-                      }`}
-                    >
-                      {item.itemName}{item.mixedUnits ? ' *' : ''}
-                    </button>
-                  ))}
-                </div>
-              )}
+      <div className="flex flex-col gap-6">
+        <section className="flex flex-col gap-3" aria-labelledby="price-trend-title">
+          <SectionHeading id="price-trend-title" as="h3" title="Price over time" caption="What it cost per kg, litre or piece on each day it was bought" />
+          {!active ? (
+            <div className="rounded-lg border border-border bg-surface">
+              <EmptyState compact icon={Activity} title="Not enough purchases to show a trend" body="An item needs purchases on at least 2 different days." />
             </div>
-
-            {!activeChartItem ? (
-              <div className="text-center py-10 text-text-3">
-                <Activity className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No item in this category has enough purchases yet to plot a trend.</p>
-                <p className="text-xs text-text-3 mt-1">Needs at least 2 purchases on different dates.</p>
+          ) : (
+            <>
+              {chartableItems.length > 1 && (
+                <ChoiceChips
+                  aria-label="Item"
+                  value={active.itemName}
+                  onValueChange={setSelectedItem}
+                  options={chartableItems.map((item) => ({ value: item.itemName, label: item.itemName }))}
+                />
+              )}
+              <p className="text-body-sm text-text-2">
+                <span className="font-semibold text-text">{active.itemName}</span>:{' '}
+                <span className="num">{rupees(active.firstUnitPrice)}</span> per {active.canonicalUnit} on {formatShortDate(active.history[0].date)},{' '}
+                <span className="num">{rupees(active.lastUnitPrice)}</span> on {formatShortDate(active.history[active.history.length - 1].date)} ({changeWords(active.netChangePercent)}), over {active.history.length} purchase days.
+                {active.mixedUnits && ' Logged in a mix of units (g and kg, mL and L), converted to the same unit first.'}
+              </p>
+              {activeJump && (
+                <Callout tone="warning" icon={AlertTriangle} title={`${activeJump.percent > 0 ? '+' : '−'}${Math.abs(activeJump.percent).toFixed(0)}% on ${formatShortDate(activeJump.toDate)}`}>
+                  {rupees(activeJump.fromPrice)} on {formatShortDate(activeJump.fromDate)}, {rupees(activeJump.toPrice)} on {formatShortDate(activeJump.toDate)}.
+                  {activeBack
+                    ? ` Back to ${rupees(activeBack.price)} on ${formatShortDate(activeBack.date)}, so check the ${formatShortDate(activeJump.toDate)} entry for a slip in the quantity or price.`
+                    : ' The price stayed there afterwards.'}
+                </Callout>
+              )}
+              <div className="rounded-lg border border-border bg-surface p-3">
+                <TrendChart
+                  data={active.history.map((p) => ({ period: formatShortDate(p.date), price: Math.round(p.price * 100) / 100 }))}
+                  series={[{ key: 'price', name: `Price per ${active.canonicalUnit}`, color: CHART_COLORS.primary }]}
+                  height={200}
+                  ariaLabel={`${active.itemName} price per ${active.canonicalUnit} on each purchase day`}
+                />
               </div>
-            ) : (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className="text-sm font-semibold text-text">{activeChartItem.itemName}</p>
-                    <p className="text-xs text-text-3">
-                      ₹{activeChartItem.firstUnitPrice.toFixed(2)} → ₹{activeChartItem.lastUnitPrice.toFixed(2)} per {activeChartItem.canonicalUnit} across {activeChartItem.history.length} purchase dates
-                      {activeChartItem.mixedUnits && (
-                        <span className="text-warning"> (normalized - logged in a mix of units)</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {activeChartItem.maxJump && Math.abs(activeChartItem.maxJump.percent) >= SUDDEN_CHANGE_THRESHOLD_PERCENT && (
-                      <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-danger-soft text-danger text-xs font-semibold">
-                        <AlertTriangle className="w-3 h-3" />
-                        {activeChartItem.maxJump.percent > 0 ? '+' : ''}{activeChartItem.maxJump.percent.toFixed(0)}% on {formatShortDate(activeChartItem.maxJump.toDate)}
-                      </span>
+            </>
+          )}
+        </section>
+
+        <ListGroup title="Items" meta="by money spent">
+          {topItems.slice(0, 15).map((item) => {
+            const share = totalAmount > 0 ? (item.totalSpent / totalAmount) * 100 : 0;
+            const pct = item.netChangePercent;
+            return (
+              <ListRow
+                key={item.itemName}
+                title={item.itemName}
+                subtitle={`${item.quantity.toFixed(item.quantity < 10 ? 2 : 0)} ${item.canonicalUnit} · ${item.transactionCount} purchases · ${rupees(item.avgUnitPrice)}/${item.canonicalUnit} on average · ${share.toFixed(0)}% of the line`}
+                trailing={
+                  <span className="flex flex-col items-end gap-1">
+                    <span className="num text-body-md font-semibold text-text">{formatINR(Math.round(item.totalSpent))}</span>
+                    {item.history.length >= 2 && Math.abs(pct) >= 5 && (
+                      <StatusChip tone={pct > 0 ? 'danger' : 'success'} icon={pct > 0 ? ArrowUp : ArrowDown}><span className="num">{Math.abs(pct).toFixed(0)}%</span></StatusChip>
                     )}
-                    <span className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                      activeChartItem.netChangePercent > 0.5 ? 'bg-danger-soft text-danger' : activeChartItem.netChangePercent < -0.5 ? 'bg-success-soft text-success' : 'bg-surface-2 text-text-3'
-                    }`}>
-                      {activeChartItem.netChangePercent > 0.5 ? <TrendingUp className="w-3 h-3" /> : activeChartItem.netChangePercent < -0.5 ? <TrendingDown className="w-3 h-3" /> : null}
-                      {activeChartItem.netChangePercent >= 0 ? '+' : ''}{activeChartItem.netChangePercent.toFixed(1)}% overall
-                    </span>
-                  </div>
-                </div>
-                <ResponsiveContainer width="100%" height={240}>
-                  <LineChart data={activeChartItem.history.map((p) => ({ date: formatShortDate(p.date), rawDate: p.date, price: p.price }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `₹${v}`} width={50} />
-                    <Tooltip
-                      formatter={(value: number) => [`₹${value.toFixed(2)}`, `Cost/${activeChartItem.canonicalUnit}`]}
-                      labelFormatter={(label: string) => label}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="price"
-                      stroke="var(--chart-1)"
-                      strokeWidth={2}
-                      dot={renderAnomalyDot('var(--chart-1)', activeChartItem.maxJump)}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-                <p className="text-xs text-text-3 mt-2">
-                  Each point is that purchase date's total spend ÷ total quantity bought, in ₹/{activeChartItem.canonicalUnit}
-                  {activeChartItem.mixedUnits && ' - purchases logged in g/mL are converted to kg/L first, so a day bought in grams and a day bought in kilos are actually comparable'}.
-                  {activeChartItem.maxJump && Math.abs(activeChartItem.maxJump.percent) >= SUDDEN_CHANGE_THRESHOLD_PERCENT && (
-                    <> The <span className="inline-block w-2 h-2 rounded-full bg-danger align-middle mx-1" /> marks the biggest single jump - {formatShortDate(activeChartItem.maxJump.fromDate)} (₹{activeChartItem.maxJump.fromPrice.toFixed(2)}) to {formatShortDate(activeChartItem.maxJump.toDate)} (₹{activeChartItem.maxJump.toPrice.toFixed(2)}).</>
-                  )}
-                </p>
-              </div>
-            )}
-          </div>
+                  </span>
+                }
+              />
+            );
+          })}
+        </ListGroup>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Top Items by Spend */}
-            <div className="rounded-lg p-6 border-2 border-border bg-surface">
-              <h3 className="text-lg font-semibold text-text mb-4 flex items-center gap-2">
-                <Package className="w-5 h-5 text-info" />
-                Top Items by Spend
-              </h3>
-              <div className="space-y-3">
-                {topItems.slice(0, 10).map((item, index) => {
-                  const percentage = totalAmount > 0 ? (item.totalSpent / totalAmount) * 100 : 0;
-                  return (
-                    <div key={`top-${item.itemName}-${index}`} className="bg-surface rounded-lg p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="bg-info text-on-primary text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
-                              {index + 1}
-                            </span>
-                            <span className="font-medium text-text">{item.itemName}</span>
-                            {item.mixedUnits && (
-                              <span className="text-caption text-warning font-normal" title="Logged in a mix of units (e.g. g and kg) - quantity/price shown are unit-normalized">* mixed units</span>
-                            )}
-                          </div>
-                          <div className="text-sm text-text-2 mt-1 ml-8">
-                            {item.quantity.toFixed(2)} {item.canonicalUnit} • ₹{item.avgUnitPrice.toFixed(2)}/{item.canonicalUnit} avg
-                          </div>
-                        </div>
-                        <div className="text-right ml-4">
-                          <div className="font-bold text-text">₹{item.totalSpent.toFixed(2)}</div>
-                          <div className="text-xs text-info font-medium">{percentage.toFixed(1)}%</div>
-                        </div>
-                      </div>
-                      <div className="mt-2">
-                        <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-surface border border-border"
-                            style={{ width: `${percentage}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Sudden Price Changes - the biggest single-purchase jump per item, not a
-                first-vs-last comparison that can hide a mid-period spike entirely. */}
-            <div className="rounded-lg p-6 border-2 border-border bg-surface">
-              <h3 className="text-lg font-semibold text-text mb-4 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-primary" />
-                Sudden Price Changes
-              </h3>
-              {suddenChanges.length === 0 ? (
-                <div className="bg-surface rounded-lg p-8 text-center text-text-3">
-                  <TrendingDown className="w-12 h-12 mx-auto mb-3 text-text-3" />
-                  <p>No purchase-to-purchase jump over {SUDDEN_CHANGE_THRESHOLD_PERCENT}% detected</p>
-                  <p className="text-sm mt-1">Every item's price has moved gradually this period</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {suddenChanges.slice(0, 10).map((item, index) => {
-                    const jump = item.maxJump!;
-                    const isIncrease = jump.percent > 0;
-                    return (
-                      <div key={`fluc-${item.itemName}-${index}`} className="bg-surface rounded-lg p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex-1">
-                            <div className="font-medium text-text flex items-center gap-1.5">
-                              {item.itemName}
-                              {item.mixedUnits && (
-                                <span className="text-caption text-warning font-normal" title="Logged in a mix of units - prices below are unit-normalized">* mixed units</span>
-                              )}
-                            </div>
-                            <div className="text-sm text-text-2 mt-1">
-                              {formatShortDate(jump.fromDate)} → {formatShortDate(jump.toDate)}
-                            </div>
-                          </div>
-                          <div className={`flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold ${
-                            isIncrease
-                              ? 'bg-danger-soft text-danger'
-                              : 'bg-success-soft text-success'
-                          }`}>
-                            {isIncrease ? (
-                              <TrendingUp className="w-4 h-4" />
-                            ) : (
-                              <TrendingDown className="w-4 h-4" />
-                            )}
-                            {isIncrease ? '+' : ''}{jump.percent.toFixed(1)}%
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
-                          <div className="bg-surface-2 rounded p-2">
-                            <div className="text-xs text-text-2">{formatShortDate(jump.fromDate)}</div>
-                            <div className="font-semibold text-text">₹{jump.fromPrice.toFixed(2)}/{item.canonicalUnit}</div>
-                          </div>
-                          <div className="bg-surface-2 rounded p-2">
-                            <div className="text-xs text-text-2">{formatShortDate(jump.toDate)}</div>
-                            <div className="font-semibold text-text">₹{jump.toPrice.toFixed(2)}/{item.canonicalUnit}</div>
-                          </div>
-                        </div>
-                        <div className={`mt-2 text-xs font-medium ${
-                          isIncrease ? 'text-danger' : 'text-success'
-                        }`}>
-                          {isIncrease ? 'Jumped up' : 'Dropped'} ₹{Math.abs(jump.toPrice - jump.fromPrice).toFixed(2)}/{item.canonicalUnit} in one purchase
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Summary Statistics */}
-          <div className="mt-6 rounded-lg p-6 border-2 border-border bg-surface">
-            <h3 className="text-lg font-semibold text-text mb-4 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-primary" />
-              Summary Statistics
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="rounded-lg p-4 text-text bg-surface border border-border">
-                <div className="text-xs uppercase tracking-wide text-text-2">Total Items</div>
-                <div className="text-2xl font-semibold">{topItems.length}</div>
-              </div>
-              <div className="rounded-lg p-4 text-text bg-surface border border-border">
-                <div className="text-xs uppercase tracking-wide text-text-2">Transactions</div>
-                <div className="text-2xl font-semibold">{items.length}</div>
-              </div>
-              <div className="rounded-lg p-4 text-text bg-surface border border-border">
-                <div className="text-xs uppercase tracking-wide text-text-2">Avg per Item</div>
-                <div className="text-2xl font-semibold">
-                  {topItems.length > 0 ? `₹${(totalAmount / topItems.length).toFixed(0)}` : '₹0'}
-                </div>
-              </div>
-              <div className="rounded-lg p-4 text-text bg-surface border border-border">
-                <div className="text-xs uppercase tracking-wide text-text-2">Items with Price Jumps</div>
-                <div className="text-2xl font-semibold">
-                  {suddenChanges.length}
-                  <span className="text-sm font-normal ml-1">/ {topItems.length}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+        {suddenChanges.length > 0 && (
+          <ListGroup title="Sudden price changes" footer={`A change of ${SUDDEN_CHANGE_THRESHOLD_PERCENT}% or more between two purchase days. One that goes straight back is often a typing slip.`}>
+            {suddenChanges.map((item) => {
+              const jump = item.maxJump!;
+              const back = bouncedBack(item, jump);
+              return (
+                <ListRow
+                  key={`jump-${item.itemName}`}
+                  icon={AlertTriangle}
+                  iconTone="warning"
+                  title={item.itemName}
+                  subtitle={`${rupees(jump.fromPrice)} → ${rupees(jump.toPrice)} per ${item.canonicalUnit}, ${formatShortDate(jump.fromDate)} to ${formatShortDate(jump.toDate)}${back ? ` · back to ${rupees(back.price)} on ${formatShortDate(back.date)}` : ''}`}
+                  trailing={<StatusChip tone={jump.percent > 0 ? 'danger' : 'success'}><span className="num">{jump.percent > 0 ? '+' : '−'}{Math.abs(jump.percent).toFixed(0)}%</span></StatusChip>}
+                  onClick={chartableItems.some((c) => c.itemName === item.itemName) ? () => setSelectedItem(item.itemName) : undefined}
+                />
+              );
+            })}
+          </ListGroup>
+        )}
       </div>
     </ResponsiveModal>
   );

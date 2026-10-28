@@ -32,6 +32,8 @@ export const CostsTab = memo(function CostsTab({ d }: { d: AnalyticsData }) {
     const type = item.type as CostType;
     if (type === 'salary') setSelectedExpenseCategory({ category: item.name, items: item.items || [], amount: item.value, type: 'salary' });
     else if (type === 'commission' || type === 'interest') setSelectedExpenseCategory({ category: item.name, items: [], amount: item.value, type });
+    // Bills, running costs and equipment: the entries behind the row. Food: its price trend.
+    else if (type === 'fixed' || type === 'overhead') d.setCategoryLine(item.name);
     else setSelectedExpenseCategory({ category: item.name, items: item.items || [], amount: item.value });
   };
   const top = useMemo(() => [...expenseBreakdown].sort((a: any, b: any) => b.value - a.value), [expenseBreakdown]);

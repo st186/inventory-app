@@ -333,6 +333,19 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
             onClose={() => setSelectedExpenseCategory(null)}
           />
         )}
+        {d.categoryLine && (() => {
+          const detail = d.buildCategoryLine(d.categoryLine);
+          return (
+            <CostLineModal
+              title={detail.title}
+              periodLabel={getPeriodLabel()}
+              groups={detail.groups}
+              note={detail.note}
+              revenue={metrics.totalRevenue}
+              onClose={() => d.setCategoryLine(null)}
+            />
+          );
+        })()}
         {costLine && (() => {
           const detail = buildCostLine(costLine);
           return (

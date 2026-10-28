@@ -326,6 +326,8 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  } | null>(null);
  // Unit Economics: the ladder line whose detail sheet is open (see buildCostLine below).
  const [costLine, setCostLine] = useState<CostLineKey | null>(null);
+ // Insights > Costs: one running-cost, bill or equipment line opened from its row (by name).
+ const [categoryLine, setCategoryLine] = useState<string | null>(null);
  
  // Debug: Log activeView changes
  useEffect(() => {
@@ -2931,6 +2933,49 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  return { title: '', groups: [] };
  }
  };
+ // One row of Insights > Costs that isn't food (bills, running costs, equipment spread over its
+ // life): the entries behind it by place, so the sheet adds up to the row (owner, 28 Oct 2026:
+ // these rows opened to nothing). Bills say the month they're for and electricity its units.
+ const buildCategoryLine = (name: string): { title: string; groups: CostLineGroup[]; note?: string } => {
+ const row: any = expenseBreakdown.find((x: any) => x.name === name);
+ const groups = new Map<string, CostLineGroup>();
+ const add = (groupLabel: string, entry: { id: string; date: string; name: string; detail?: string; amount: number }) => {
+ if (!entry.amount) return;
+ const g = groups.get(groupLabel) || { label: groupLabel, amount: 0, entries: [] };
+ g.amount += entry.amount;
+ g.entries.push(entry);
+ groups.set(groupLabel, g);
+ };
+ const place = (x: any) => (x.entityType === 'production_house' ? 'Production house' : 'Store');
+ const monthName = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+ let hasBills = false;
+ (row?.items || []).forEach((x: any, i: number) => {
+ const isBill = x.category && costBucketFor(x.category, 'fixedcost') === 'fixed' && x.amount !== undefined && x.totalCost === undefined && !x.employeeName;
+ if (isBill) hasBills = true;
+ const detail = [
+ x.forMonth ? `for ${monthName(x.forMonth)}` : '',
+ x.units && x.category === 'electricity' ? `${x.units} units · ₹${(x.unitPrice || x.amount / x.units).toFixed(2)} a unit` : '',
+ x.quantity && x.itemName ? `${x.quantity} ${x.unit || ''}`.trim() : '',
+ x.employeeName || '',
+ ].filter(Boolean).join(' · ');
+ add(place(x), { id: `cat-${x.id || i}`, date: x.date, name: x.itemName || x.description || name, detail: detail || undefined, amount: x.totalCost ?? x.amount ?? 0 });
+ });
+ // Equipment, the scooter and the yearly POS fee: this period's share of each purchase.
+ const today = getTodayIST();
+ const spreadEnd = periodRange.endDate > today ? today : periodRange.endDate;
+ let hasSpread = false;
+ spreadSourceRecords.filter((r) => plainLabel(expenseCategoryLabel(r.category)) === name).forEach((r, i) => {
+ const share = buildSpreadCosts([r], periodRange.startDate, spreadEnd).total;
+ if (share < 0.5) return;
+ hasSpread = true;
+ add('Purchases spread over their life', { id: `spr-${r.id || i}`, date: r.date, name: r.name || name, detail: `this period's share of ₹${Math.round(r.amount).toLocaleString('en-IN')}`, amount: share });
+ });
+ const note = hasSpread
+ ? 'Each purchase counts a little every month over its life (3 years for equipment and vehicles, 12 months for the POS fee); this is the share in the period.'
+ : hasBills ? 'Counted on the day each bill was paid.' : undefined;
+ return { title: name, groups: [...groups.values()].sort((a, b) => b.amount - a.amount), note };
+ };
+
  // Commission, salaries and interest already have purpose-built breakdowns.
  const openCostLine = (line: CostLineKey) => {
  if (line === 'commission' || line === 'ads') {
@@ -3213,6 +3258,9 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
   expenseBreakdown,
   buildCostLine,
   openCostLine,
+  categoryLine,
+  setCategoryLine,
+  buildCategoryLine,
   COLORS,
   calculateCashDiscrepancy,
   totalCashDiscrepancy,
