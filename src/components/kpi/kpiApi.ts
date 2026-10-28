@@ -129,7 +129,7 @@ export const approveVariablePay = (month: string, employeeId: string, amount: nu
   send('POST', '/kpi/approve', { month, employeeId, amount });
 export const withdrawVariablePay = (month: string, employeeId: string) => send('POST', '/kpi/approve', { month, employeeId, withdraw: true });
 // Payroll: the variable pay approved in Team KPIs for one person and month (null if none yet).
-export const getApprovedVariablePay = (month: string, employeeId: string): Promise<{ approved: number | null; approvedAt: string | null }> =>
+export const getApprovedVariablePay = (month: string, employeeId: string): Promise<{ approved: number | null; approvedAt: string | null; max?: number }> =>
   send('GET', `/kpi/variable-pay?month=${encodeURIComponent(month)}&employeeId=${encodeURIComponent(employeeId)}`);
 
 // ---- Small display helpers ----

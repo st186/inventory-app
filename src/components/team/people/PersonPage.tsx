@@ -18,6 +18,7 @@ import { confirm } from '../../ui/confirm';
 import { toast } from '../../ui/sonner';
 import type * as api from '../../../utils/api';
 import { partsForMonth } from '../../../utils/payslip';
+import { getApprovedVariablePay } from '../../kpi/kpiApi';
 import { ForcePasswordResetButton } from '../../ForcePasswordResetButton';
 import { EmployeeDetailsModal } from '../../EmployeeDetailsModal';
 import { teamApi } from '../teamApi';
@@ -58,6 +59,17 @@ export function PersonPage({
   // This month's fixed total; a part with a start month (the food allowance) counts from then.
   const fixedTotal = partsForMonth(parts).reduce((s, c) => s + (c.amount || 0), 0);
   const fromLabel = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  // Variable pay: the maximum and this month's approved amount (owner and managers only; the
+  // server refuses others, and then the row just doesn't show).
+  const thisMonth = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 7);
+  const [variable, setVariable] = React.useState<{ max: number; approved: number | null } | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    getApprovedVariablePay(thisMonth, person.employeeId)
+      .then((r) => { if (!cancelled) setVariable({ max: r.max || 0, approved: r.approved }); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [person.employeeId, thisMonth]);
 
   const deactivate = async () => {
     const ok = await confirm({
@@ -141,11 +153,21 @@ export function PersonPage({
       <DocumentsSection person={person} canSeeImages={isOwner || isSelf} />
 
       {(parts.length > 0 || person.dailyRate) && (
-        <ListGroup overline="Pay components" footer={parts.length > 0 ? 'Variable pay is entered with each payout.' : undefined}>
+        <ListGroup overline="Pay components" footer={variable && variable.max > 0 ? 'Variable pay is decided each month in Team > KPIs, with a slider for the share to give.' : parts.length > 0 ? 'Variable pay is entered with each payout.' : undefined}>
           {parts.map((c, i) => (
             <ListRow key={i} density="compact" title={c.label || 'Part'} subtitle={c.fromMonth ? `From ${fromLabel(c.fromMonth)}` : undefined} amount={c.amount || 0} />
           ))}
           {parts.length > 0 && <ListRow density="compact" title="Fixed total a month" trailing={<Money value={fixedTotal} className="text-body-md font-semibold" />} />}
+          {variable && variable.max > 0 && (
+            <ListRow
+              density="compact"
+              title="Variable pay"
+              subtitle={variable.approved !== null
+                ? `Up to ₹${variable.max.toLocaleString('en-IN')} · this month ₹${variable.approved.toLocaleString('en-IN')} (${Math.round((variable.approved / variable.max) * 100)}%)`
+                : `Up to ₹${variable.max.toLocaleString('en-IN')} a month · not decided for this month yet`}
+              amount={variable.max}
+            />
+          )}
           {person.dailyRate ? <ListRow density="compact" title="Daily rate" amount={person.dailyRate} /> : null}
         </ListGroup>
       )}

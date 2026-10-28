@@ -8,6 +8,7 @@ import { ErrorState } from '../ui/error-state';
 import { Field } from '../ui/field';
 import { Input } from '../ui/input';
 import { MoneyInput } from '../ui/money';
+import { Slider } from '../ui/slider';
 import { ResponsiveModal } from '../ui/responsive-modal';
 import { SkeletonText } from '../ui/skeleton';
 import { StatusChip } from '../ui/status-chip';
@@ -282,6 +283,39 @@ function PersonCard({
             )}
           </div>
           {canApprove ? (
+            <div className="flex flex-col gap-3">
+            {/* Plan the share of the maximum to give (owner, 28 Oct 2026); the amount follows. */}
+            {s.variablePayMax > 0 && (
+              <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2/50 p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-body-sm font-medium text-text">Share of the maximum</span>
+                  <span className="num text-body-md font-semibold text-text">
+                    {Math.round(((amount || 0) / s.variablePayMax) * 100)}% · {kpi.rupees(amount || 0)} <span className="font-normal text-text-3">of {kpi.rupees(s.variablePayMax)}</span>
+                  </span>
+                </div>
+                <Slider
+                  aria-label={`Share of ${p.name}'s variable pay maximum`}
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={[Math.min(100, Math.round(((amount || 0) / s.variablePayMax) * 100))]}
+                  onValueChange={([pct]) => setAmount(Math.round((s.variablePayMax * pct) / 100))}
+                />
+                {(p.formula || (p.review?.suggestedAmount !== undefined && p.review?.suggestedAmount !== null)) && (
+                  <div className="flex flex-wrap gap-x-3 text-label text-text-3">
+                    {p.formula && <span>Formula {Math.round((p.formula.amount / s.variablePayMax) * 100)}%</span>}
+                    {p.review?.suggestedAmount !== undefined && p.review?.suggestedAmount !== null && <span>Bunny {Math.round((p.review.suggestedAmount / s.variablePayMax) * 100)}%</span>}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {[0, 50, 75, 100].map((pct) => (
+                    <button key={pct} type="button" className="min-h-8 rounded-full border border-border px-2.5 text-label text-text-2 hover:bg-surface-2" onClick={() => setAmount(Math.round((s.variablePayMax * pct) / 100))}>
+                      {pct}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap items-end gap-2">
               <Field label="Final amount" className="w-40">
                 <MoneyInput value={amount} onValueChange={(n) => setAmount(n)} decimals={0} max={s.variablePayMax} />
@@ -299,6 +333,7 @@ function PersonCard({
                   </Button>
                 </span>
               )}
+            </div>
             </div>
           ) : p.approval ? (
             <StatusChip tone="success" icon={BadgeCheck}>

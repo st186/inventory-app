@@ -431,8 +431,10 @@ export function registerKpiRoutes(app: any, deps: KpiDeps) {
     const employeeId = c.req.query('employeeId');
     try {
       if (employeeId) {
-        const rec = await deps.kv.get<any>(`variable-pay:${month}:${employeeId}`);
-        return c.json({ month, employeeId, approved: rec?.approved ?? null, approvedAt: rec?.approvedAt ?? null });
+        const [rec, settings] = await Promise.all([deps.kv.get<any>(`variable-pay:${month}:${employeeId}`), deps.kv.get<any>(`kpi-settings:${employeeId}`)]);
+        // max: 0 when the person has no variable pay (shown on their page under Pay components).
+        const max = settings?.hasVariablePay ? Number(settings.variablePayMax) || 0 : 0;
+        return c.json({ month, employeeId, approved: rec?.approved ?? null, approvedAt: rec?.approvedAt ?? null, max });
       }
       const rows = await rowsByPrefix(`variable-pay:${month}:`);
       return c.json({ month, approvals: rows.map((x) => ({ employeeId: x.value?.employeeId, approved: x.value?.approved ?? null, approvedAt: x.value?.approvedAt ?? null })) });
