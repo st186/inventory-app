@@ -232,9 +232,10 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
           {/* The store opening checklist: theirs to tick on a cover day; every store's progress. */}
           <OpeningChecklistCard />
           <OpeningOverview />
-          {/* Running low (anyone can flag) and the shopping lists (written here, bought by the production incharge). */}
+          {/* Running low (anyone can flag; the owner hears too). Shopping lists are written by operations
+              and bought by the production incharge, so the owner's Home leaves them out (owner, 28 Oct 2026). */}
           <RunningLowCard />
-          <ShoppingCard />
+          {variant === 'ops' && <ShoppingCard />}
           <TeamLeaveRow onOpenAttendance={teamPath ? () => open(teamPath) : undefined} />
         </div>
         <div className="lg:col-span-8">

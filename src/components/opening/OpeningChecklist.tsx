@@ -143,6 +143,14 @@ export function OpeningOverview() {
         </div>
         {!list.length && <p className="text-body-sm text-text-2">Not set up yet. Pick who ticks it before the store opens.</p>}
         {list.map((c) => {
+          if (c.startsOn) {
+            return (
+              <div key={c.storeId} className="flex flex-col">
+                <span className="text-body-sm font-medium text-text">{c.storeName}</span>
+                <span className="text-label text-text-2">Starts {new Date(`${c.startsOn}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })} · {c.assigneeName || 'nobody yet'} ticks it by {fmt12(c.dueBy)}</span>
+              </div>
+            );
+          }
           const late = c.done < c.total && nowHHMM() > c.dueBy;
           return (
             <div key={c.storeId} className="flex flex-col gap-2">

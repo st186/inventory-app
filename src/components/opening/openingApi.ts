@@ -12,6 +12,8 @@ export interface OpeningChecklist {
   assigneeName: string; coverName: string;
   items: OpeningBox[]; done: number; total: number; score: number | null;
   needsPick?: boolean;
+  /** Set up to start on this later day (the owner and ops see it before then). */
+  startsOn?: string;
 }
 export interface OpeningTemplate { storeId: string; assigneeId: string | null; coverId: string | null; backupId: string | null; dueBy: string; coverDueBy: string; startedOn: string }
 export interface OpeningSetup {

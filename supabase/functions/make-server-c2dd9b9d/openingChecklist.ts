@@ -66,6 +66,11 @@ export function registerOpeningChecklistRoutes(app: any, deps: KpiDeps) {
       const lead = isLead(actor!);
       const mine: any[] = []; const overview: any[] = [];
       for (const t of templates) {
+        // Set up to start on a later day: nobody ticks it yet; the owner and ops see when it starts.
+        if (t.startedOn && t.startedOn > date) {
+          if (lead) overview.push({ ...viewOf(ctx, t, null, date), startsOn: t.startedOn, needsPick: false });
+          continue;
+        }
         const day = await deps.kv.get<OpeningDay>(dayKey(date, t.storeId));
         const v = viewOf(ctx, t, day, date);
         if (actor!.employeeId && v.doerId === actor!.employeeId) mine.push(v);
