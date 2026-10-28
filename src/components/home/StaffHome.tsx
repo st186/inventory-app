@@ -34,6 +34,7 @@ import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/Re
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
 import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
 import { StoreCoverCard, StoreCoverNotice } from '../kpi/StoreCover';
+import { OpeningChecklistCard } from '../opening/OpeningChecklist';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
@@ -264,6 +265,7 @@ function InchargeHome() {
       <ShiftClockCard isLead framed={false} />
       <StoreCoverCard />
       <StoreCoverNotice />
+      <OpeningChecklistCard />
       <TeamLeaveRow onOpenAttendance={has('team/attendance') ? () => open('team/attendance') : undefined} />
       <TodayChecklist tasks={tasks} />
 

@@ -80,7 +80,7 @@ export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -110,6 +110,7 @@ export const KPI_LABELS: Record<KpiId, string> = {
   requestAccepted: 'Requests accepted by 9 AM',
   cratesClean: 'Crates and containers clean',
   photoChecks: 'Photo checks (on time and clean)',
+  storeReadiness: 'Store ready on time',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -502,6 +503,7 @@ export type MonthInput = {
   productionCash?: any[]; // the day's production-house cash counts (production-cash:{house}:{date})
   coverDays?: { date: string; reasons: string[] }[]; // this month's store-cover days for the person
   coverPunches?: { date: string; rec: any }[]; // their separate store check-ins (punch-cover:{id}:{date})
+  openingDays?: { date: string; score: number | null }[]; // the store opening checklist on days it was theirs (openingChecklist.ts), score 0-1
   complaintPenalties?: { date: string; points: number }[]; // upheld customer complaints decided this month (complaints.ts)
 };
 
@@ -526,6 +528,7 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'cashCount': return 'Save the cash count every working day before you close.';
     case 'cashAccuracy': return `Count carefully and record every cash expense so the cash matches within ${inr(CASH_TOLERANCE_INR)}.`;
     case 'posCash': return `Take the right amount for every bill and ring up everything on the POS, so cash and Paytm match the POS within ${inr(CASH_TOLERANCE_INR)}.`;
+    case 'storeReadiness': return 'Tick every item on the opening checklist as it is ready, before 4 PM. Ticked later in the day counts half.';
     case 'storeCover': return s.storeCover ? `On a store-cover day, leave the production house by ${fmt12(parseHHMM(s.storeCover.productionEnd) || 0)}, check in at the store by ${fmt12((parseHHMM(s.storeCover.start) || 0) + s.graceMin)} and stay until ${fmt12(parseHHMM(s.storeCover.end) || 0)}.` : 'Check in at the store on store-cover days.';
     case 'requestAccepted': return `Accept each day's stock request and start preparing by ${fmt12(ACCEPT_BY_MIN)}, so it ships on time.`;
     case 'productionCash': return `Record every production-house cash expense and count the cash each evening, so it matches within ${inr(CASH_TOLERANCE_INR)}.`;
@@ -754,6 +757,17 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     }
   }
   // Store cover: a separate check-in at the store on each cover day, on time, staying until the end.
+  // Store opening checklist (owner, 28 Oct 2026): each day it was theirs, ticked by the due time
+  // counts in full, later that day half; days on leave are the cover person's.
+  if (ids.includes('storeReadiness')) {
+    const days = (input.openingDays || []).filter((x) => x.date >= from && x.date <= to && !fullLeave.has(x.date) && x.score !== null);
+    if (!days.length) set('storeReadiness', null, 'No opening checklists yet.');
+    else {
+      const full = days.filter((x) => (x.score as number) >= 0.999).length;
+      const avg = days.reduce((sum, x) => sum + (x.score as number), 0) / days.length;
+      set('storeReadiness', avg * 100, `Opening checklist: ${full} of ${plural(days.length, 'day')} fully ticked on time; the days average ${Math.round(avg * 100)}%.`);
+    }
+  }
   if (ids.includes('storeCover')) {
     const cover = settings.storeCover;
     const coverDays = (input.coverDays || []).filter((x) => x.date >= from && x.date <= to && !fullLeave.has(x.date));

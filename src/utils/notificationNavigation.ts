@@ -76,6 +76,9 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   password_expiring: { view: 'analytics' },
   // Workplace checks: staff land on their own list; "review" falls back to it for non-reviewers.
   workplace_due: { view: 'workplace', tab: 'mine' },
+  opening_due: { view: 'home' },
+  opening_late: { view: 'home' },
+  opening_pick: { view: 'home' },
   workplace_checked: { view: 'workplace', tab: 'mine' },
   complaint_read: { view: 'complaints' },
   complaint_answered: { view: 'complaints' },

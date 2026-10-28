@@ -13,6 +13,7 @@ import {
   type StoreCover,
 } from './kpiCore.ts';
 import { P, actorOf, loadConfig, loadPlaces, profileOf, type KpiDeps } from './attendance.ts';
+import { openingChecklistTick } from './openingChecklist.ts';
 
 const istMinutesNow = () => {
   const d = new Date(Date.now() + 330 * 60000);
@@ -141,11 +142,13 @@ export function registerStoreCoverRoutes(app: any, deps: KpiDeps) {
 
   // Every 30 minutes (pg_cron): in the morning, tell the cover person and the store's incharge(s)
   // that today is a store-cover day and why; from 4:15 PM, nudge the cover person to leave for the
-  // store if they haven't checked in there. Once each per person per day.
+  // store if they haven't checked in there. Once each per person per day. The store opening
+  // checklist's reminders ride along (openingChecklist.ts).
   app.post(`${P}/cron/store-cover-reminders`, async (c: any) => {
     const secret = Deno.env.get('CRON_SYNC_SECRET');
     if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
     if (!deps.notifyUser) return c.json({ success: true, sent: 0 });
+    await openingChecklistTick(deps).catch((err) => console.log('[opening-checklist] reminders failed:', err?.message || 'error'));
     try {
       const date = istDate(Date.now());
       const now = istMinutesNow();

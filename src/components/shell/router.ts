@@ -77,6 +77,8 @@ export const LEGACY_ALIASES: Record<string, Candidates> = {
   // Event stalls: the event id travels as `highlight` (notificationNavigation.ts), EventsDestination opens it.
   events: () => ['events'],
   complaints: () => ['complaints'],
+  // Home cards (the store opening checklist).
+  home: () => ['home'],
 };
 
 export function resolveLegacyTarget(target: LegacyTarget | null | undefined, nav: Pick<NavModel, 'destinations'>): Route {

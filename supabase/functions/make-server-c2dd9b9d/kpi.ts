@@ -23,6 +23,8 @@ import {
   type KpiId, type MonthKpis, isCratesCheck,
 } from './kpiCore.ts';
 import { coverFor, loadCoverContext, registerStoreCoverRoutes } from './storeCover.ts';
+import { registerOpeningChecklistRoutes } from './openingChecklist.ts';
+import { openingScore, type OpeningDay, type OpeningTemplate } from './openingRules.ts';
 import {
   P, actorOf, canManage, loadConfig, loadPlaces, profileOf, registerAttendanceRoutes,
   type Actor, type KpiDeps, type Places, type Profile,
@@ -173,6 +175,18 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     const recs = await deps.kv.getByPrefix<any>(`punch-cover:${id}:${month}-`);
     coverPunches = (recs || []).filter((x: any) => x?.date).map((x: any) => ({ date: String(x.date), rec: x }));
   }
+  // Store opening checklist: every day since it started at a store where it is theirs.
+  const openingDays: { date: string; score: number | null }[] = [];
+  if (profile.settings.kpis?.includes('storeReadiness')) {
+    const mine = ((await deps.kv.getByPrefix<OpeningTemplate>('opening-template:')) || []).filter((t) => t?.assigneeId === id);
+    for (const t of mine) {
+      const rows = (await deps.kv.getByPrefix<OpeningDay>(`opening-check:${month}-`)) || [];
+      const byDate = new Map(rows.filter((r) => r?.storeId === t.storeId).map((r) => [r.date, r]));
+      for (const d of monthDays(month).filter((x) => x >= t.startedOn && x < shared.today)) {
+        openingDays.push({ date: d, score: openingScore(t, byDate.get(d) || null, d, t.dueBy) });
+      }
+    }
+  }
   // Production entries are approved for the house that supplies the person's store.
   const supplyHouse = house || (store ? places.storeHouse.get(store) || null : null);
   // Every photo taken at the incharge's place (a production incharge's kitchen, else their store),
@@ -220,6 +234,7 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     productionCash: supplyHouse ? shared.productionCash.filter((r: any) => r.productionHouseId === supplyHouse) : [],
     coverDays,
     coverPunches,
+    openingDays,
     complaintPenalties: shared.complaints.filter((x: any) => x.decision.penalties?.[id]).map((x: any) => ({ date: istDayOf(x.decision.at), points: Number(x.decision.penalties[id]) || 0 })),
   });
 }
@@ -280,6 +295,7 @@ ${JSON.stringify({
 export function registerKpiRoutes(app: any, deps: KpiDeps) {
   registerAttendanceRoutes(app, deps);
   registerStoreCoverRoutes(app, deps);
+  registerOpeningChecklistRoutes(app, deps);
 
   const fail = (c: any, err: any) => {
     if (err instanceof AiError) return c.json({ error: err.message, ...err.extra }, err.status);
