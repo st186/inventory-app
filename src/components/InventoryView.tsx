@@ -1,10 +1,23 @@
+// Expenses for the auditor (Audit > Expenses) and the owner's read-only view: one day's
+// purchases, running and fixed costs for the store, the production house or both, the month so
+// far against the same days last month, and a search across every date. Read-only.
 import { useState } from 'react';
-import { InventoryContextType, InventoryItem, OverheadItem, FixedCostItem } from '../App';
-import { DateSelector } from './DateSelector';
-import { Package, DollarSign, TrendingUp, Lock, Eye, Calendar, AlertTriangle, Search, X, ArrowUp, ArrowDown, Minus, Building2, Store as StoreIcon, Layers } from 'lucide-react';
+import { InventoryContextType, InventoryItem, OverheadItem } from '../App';
+import { Package, Receipt, TrendingUp, Lock, Calendar, AlertTriangle, Search, X, Tags, Boxes } from 'lucide-react';
 import { MonthlyStockRecalibration } from './MonthlyStockRecalibration';
 import { UtilitiesStockStatus } from './UtilitiesStockStatus';
 import { CategoryManagerModal } from './CategoryManagerModal';
+import { Button } from './ui/button';
+import { Callout } from './ui/callout';
+import { DateStrip } from './ui/date-strip';
+import { EmptyState } from './ui/empty-state';
+import { IconButton } from './ui/icon-button';
+import { Input } from './ui/input';
+import { ListGroup, ListRow } from './ui/list-row';
+import { formatINR } from './ui/money';
+import { SegmentedControl } from './ui/segmented-control';
+import { StatGrid, StatTile } from './ui/stat-tile';
+import { SectionHeading } from './insights/parts/common';
 import { getTodayIST } from '../utils/timezone';
 
 type Props = {
@@ -12,42 +25,14 @@ type Props = {
   selectedStoreId?: string | null;
 };
 
-function StatChip({ label, value, color = 'blue' }: { label: string; value: number; color?: 'blue' | 'amber' | 'purple' | 'rose' }) {
-  return (
-    <div className={`rounded-2xl p-4 text-white shadow-lg bg-surface-2 ${
-      color === 'blue' ? ''
-      : color === 'amber' ? ''
-      : color === 'purple' ? ''
-      : ''
-    }`}>
-      <p className="text-xs uppercase tracking-wide text-white/80">{label}</p>
-      <p className="text-xl font-semibold mt-1">₹{value.toLocaleString()}</p>
-    </div>
-  );
-}
+type Tab = 'store' | 'production' | 'combined';
+const TABS: { value: Tab; label: string }[] = [
+  { value: 'store', label: 'Store' },
+  { value: 'production', label: 'Production' },
+  { value: 'combined', label: 'Both' },
+];
 
-function SectionCard({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
-  return (
-    <div className="bg-card rounded-2xl border border-border p-5 mb-4">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-          {icon}
-        </div>
-        <h2 className="text-foreground font-bold tracking-tight">{title}</h2>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function EmptyState({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <div className="text-center py-10 text-muted-foreground">
-      <div className="mx-auto mb-3 opacity-50 w-fit">{icon}</div>
-      <p className="text-sm">{label}</p>
-    </div>
-  );
-}
+const rupees = (n: number) => formatINR(Math.round(n * 100) / 100);
 
 export function InventoryView({ context, selectedStoreId }: Props) {
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -60,7 +45,8 @@ export function InventoryView({ context, selectedStoreId }: Props) {
   // stores) can never surface them and a plain storeId match always excludes them.
   // Mirrors the same tab split already used in InventoryManagement.tsx (the editable
   // operations-manager view) so the cluster head's read-only view can see both.
-  const [activeTab, setActiveTab] = useState<'store' | 'production' | 'combined' | 'utilities'>('store');
+  const [activeTab, setActiveTab] = useState<Tab>('store');
+  const [showUtilities, setShowUtilities] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   const categoryLabels: Record<string, string> = {
@@ -88,7 +74,7 @@ export function InventoryView({ context, selectedStoreId }: Props) {
   // InventoryManagement.tsx makes when tagging/matching production-tab entries.
   const targetProductionHouseId = context.productionHouses?.[0]?.id;
 
-  const belongsToTab = (item: { entityType?: 'store' | 'production_house' }, tab: 'store' | 'production' | 'combined' | 'utilities') =>
+  const belongsToTab = (item: { entityType?: 'store' | 'production_house' }, tab: Tab) =>
     tab === 'production' ? item.entityType === 'production_house' : tab === 'store' ? item.entityType !== 'production_house' : true;
 
   const matchesEffectiveScope = (item: { storeId?: string | null; productionHouseId?: string | null; entityType?: 'store' | 'production_house' }) => {
@@ -207,270 +193,151 @@ export function InventoryView({ context, selectedStoreId }: Props) {
 
   const pctChange = (curr: number, prev: number) => (prev > 0 ? ((curr - prev) / prev) * 100 : (curr > 0 ? 100 : 0));
 
-  return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header with Read-Only Badge */}
-      <div className="mb-4 sm:mb-8 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-surface border border-border flex items-center justify-center shadow-lg flex-shrink-0">
-            <Eye className="w-6 h-6 text-text" />
-          </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-text tracking-tight">Inventory overview</h1>
-            <p className="text-sm sm:text-base text-text-3">Read-only view of purchases and costs</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-warning-soft rounded-full flex-shrink-0">
-          <Lock className="w-3.5 h-3.5 text-warning" />
-          <span className="text-xs text-warning">View only</span>
-        </div>
-      </div>
-
-      {/* Date Selector */}
-      <DateSelector
-        selectedDate={selectedDate}
-        onDateChange={setSelectedDate}
+  const today = getTodayIST();
+  const rangeLabel = `1–${dayOfMonth} ${selDateObj.toLocaleDateString('en-IN', { month: 'short' })}`;
+  const mtdTile = (label: string, value: number, prev: number, hero = false) => {
+    const change = pctChange(value, prev);
+    return (
+      <StatTile
+        hero={hero}
+        label={label}
+        tint="peach"
+        value={rupees(value)}
+        delta={prev > 0 ? { value: change, label: 'vs last month', goodWhen: 'down', text: `${change > 0 ? '+' : change < 0 ? '−' : ''}${Math.abs(change).toFixed(0)}%` } : undefined}
+        caption={prev > 0 ? `Last month ${rupees(prev)}` : 'Nothing last month'}
       />
+    );
+  };
+  const categoryMeta = (n: number) => (n === 1 ? '1 entry' : `${n} entries`);
 
-      {/* Store vs Production House vs Combined - production house data can't be reached
-          via the store selector above (it only lists retail stores), so this tab is the
-          only way to view its inventory/overhead costs. */}
-      <div className="flex bg-surface-2 rounded-xl p-1 mt-4">
-        {(['store', 'production', 'combined', 'utilities'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`min-h-11 flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === tab
-                ? tab === 'combined'
-                  ? 'bg-primary text-white shadow-sm'
-                  : tab === 'production'
-                  ? 'bg-primary text-white shadow-sm'
-                  : tab === 'utilities'
-                  ? 'bg-primary text-white shadow-sm'
-                  : 'bg-primary text-white shadow-sm'
-                : 'text-text-2 hover:text-text'
-            }`}
-          >
-            {tab === 'combined' ? 'Combined' : tab === 'production' ? 'Production House' : tab === 'utilities' ? 'Utilities' : 'Store'}
-          </button>
-        ))}
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-lg border border-border bg-surface px-2 pt-1 pb-2">
+        <DateStrip
+          value={selectedDate}
+          onChange={setSelectedDate}
+          today={today}
+          max={today}
+          showMonthLabel
+          headerAction={selectedDate !== today ? <Button variant="ghost" size="sm" onClick={() => setSelectedDate(today)}>Today</Button> : undefined}
+        />
       </div>
 
-      {activeTab === 'utilities' ? (
-        <div className="mt-6">
-          <UtilitiesStockStatus context={context} stores={context.stores} />
-        </div>
-      ) : (
-      <>
-      {/* Month-to-Date Expense Overview - production house vs store vs combined, each
-          against the same day-range last month. Independent of the Store/Production/
-          Combined tab above, since the whole point is to see both sides at once. */}
-      <div className="bg-card rounded-2xl border border-border p-5 mt-6">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-primary flex-shrink-0">
-            <Layers className="w-4 h-4" />
-          </div>
-          <div>
-            <h2 className="text-foreground font-bold tracking-tight">Month-to-date expenses</h2>
-            <p className="text-xs text-muted-foreground">1st to {selDateObj.getDate()} {selDateObj.toLocaleDateString('en-IN', { month: 'short' })} &middot; vs same days last month</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {([
-            { label: 'Production House', icon: <Building2 className="w-4 h-4" />, value: productionMTD, prev: productionPrevMTD, accent: 'text-success' },
-            { label: 'Store', icon: <StoreIcon className="w-4 h-4" />, value: storeMTD, prev: storePrevMTD, accent: 'text-info' },
-            { label: 'Combined', icon: <Layers className="w-4 h-4" />, value: combinedMTD, prev: combinedPrevMTD, accent: 'text-info' },
-          ] as const).map(({ label, icon, value, prev, accent }) => {
-            const change = pctChange(value, prev);
-            const direction: 'up' | 'down' | 'same' = change > 0.5 ? 'up' : change < -0.5 ? 'down' : 'same';
-            return (
-              <div key={label} className="rounded-xl border border-border bg-background p-3.5">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={accent}>{icon}</span>
-                  <span className="text-xs text-muted-foreground font-medium">{label}</span>
-                </div>
-                <div className="flex items-end justify-between gap-2">
-                  <p className="text-xl font-bold text-foreground tabular-nums">₹{value.toLocaleString()}</p>
-                  {prev > 0 && (
-                    <span className={`flex items-center gap-0.5 text-xs font-semibold flex-shrink-0 ${
-                      direction === 'up' ? 'text-danger' : direction === 'down' ? 'text-success' : 'text-text-3'
-                    }`}>
-                      {direction === 'up' && <ArrowUp className="w-3 h-3" />}
-                      {direction === 'down' && <ArrowDown className="w-3 h-3" />}
-                      {direction === 'same' && <Minus className="w-3 h-3" />}
-                      {Math.abs(change).toFixed(0)}%
-                    </span>
-                  )}
-                </div>
-                {prev > 0 && (
-                  <p className="text-caption text-muted-foreground mt-1">vs ₹{prev.toLocaleString()} last month</p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Production house records carry a productionHouseId, not a storeId, so the store
+          picker can't reach them: this switch is the only way to see their costs. */}
+      <SegmentedControl aria-label="Whose costs" value={activeTab} onValueChange={setActiveTab} options={TABS} />
 
-      {/* Search */}
-      <div className="relative mt-6">
-        <Search className="w-4 h-4 text-muted-foreground absolute left-3.5 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
+      {/* The month so far, both sides at once whatever the switch above says. */}
+      <section className="flex flex-col gap-3" aria-labelledby="mtd-title">
+        <SectionHeading id="mtd-title" as="h3" title="Month to date" caption={`${rangeLabel} against the same days last month`} />
+        {mtdTile('Store and production', combinedMTD, combinedPrevMTD, true)}
+        <StatGrid>
+          {mtdTile('Production house', productionMTD, productionPrevMTD)}
+          {mtdTile('Store', storeMTD, storePrevMTD)}
+        </StatGrid>
+      </section>
+
+      {/* The selected day only, even while a search is showing every date below. */}
+      <section className="flex flex-col gap-3" aria-labelledby="day-title">
+        <SectionHeading id="day-title" as="h3" title={selDateObj.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })} />
+        <StatGrid columns={4}>
+          <StatTile label="Purchases" tint="peach" value={rupees(totalInventoryCost)} />
+          <StatTile label="Running costs" tint="peach" value={rupees(totalOverheadCost)} />
+          <StatTile label="Fixed costs" tint="peach" value={rupees(totalFixedCost)} />
+          <StatTile label="Total spent" tint="peach" value={rupees(totalInventoryCost + totalOverheadCost + totalFixedCost)} />
+        </StatGrid>
+      </section>
+
+      <div className="flex flex-col gap-2">
+        <Input
+          leading={<Search className="size-4 text-text-3" aria-hidden="true" />}
+          trailing={searchQuery ? <IconButton icon={<X />} label="Clear search" variant="ghost" onClick={() => setSearchQuery('')} /> : undefined}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search for an item..."
-          className="min-h-11 w-full pl-10 pr-9 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+          placeholder="Search an item across all dates"
+          aria-label="Search an item"
         />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery('')}
-            className="hit-44 absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-secondary"
-          >
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
-        )}
+        {isSearching && <p className="text-label text-text-3">Showing "{searchQuery.trim()}" on every date, newest first.</p>}
       </div>
 
-      {/* Summary Cards - always reflect the selected day only, even while a global search
-          is active below, so these figures never look like they've silently changed. */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 mb-4">
-        <StatChip label="Inventory cost" value={totalInventoryCost} color="blue" />
-        <StatChip label="Overhead cost" value={totalOverheadCost} color="amber" />
-        <StatChip label="Fixed cost" value={totalFixedCost} color="purple" />
-        <StatChip label="Total expenses" value={totalInventoryCost + totalOverheadCost + totalFixedCost} color="rose" />
-      </div>
-
-      {isSearching && (
-        <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-secondary text-xs text-muted-foreground">
-          <Search className="w-3.5 h-3.5 flex-shrink-0" />
-          Showing "{searchQuery.trim()}" across all dates, not just {selectedDate}
-        </div>
-      )}
-
-      {/* Inventory Items by Category */}
-      <SectionCard icon={<Package className="w-4 h-4" />} title="Inventory items">
-        {Object.keys(inventoryByCategory).length > 0 ? (
-          <div className="space-y-5">
-            {Object.entries(inventoryByCategory).map(([category, items]) => {
-              const categoryTotal = items.reduce((sum, item) => sum + (item.totalCost || 0), 0);
-              return (
-              <div key={category}>
-                <div className="flex items-center justify-between mb-2 px-1">
-                  <h3 className="text-xs text-muted-foreground uppercase tracking-wide">{categoryLabels[category] || category}</h3>
-                  <span className="text-xs font-semibold text-foreground">₹{categoryTotal.toLocaleString()}</span>
-                </div>
-                <div className="space-y-2">
-                  {items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="rounded-xl border border-border bg-background p-3 flex items-center gap-3"
-                    >
-                      <div className="w-9 h-9 rounded-md bg-surface-2 flex items-center justify-center flex-shrink-0 text-text-2">
-                        <Package className="size-5" aria-hidden="true" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-foreground truncate">
-                          {item.itemName || (
-                            <span className="text-danger italic inline-flex items-center gap-1">
-                              <AlertTriangle className="w-3 h-3" /> Missing name
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {isSearching && <span className="text-foreground/70">{item.date} · </span>}
-                          {item.quantity} {item.unit} · ₹{(item.costPerUnit || 0).toFixed(2)}/{item.unit}
-                        </p>
-                      </div>
-                      <span className="text-sm text-primary flex-shrink-0">₹{(item.totalCost || 0).toLocaleString()}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              );
-            })}
+      <section className="flex flex-col gap-3" aria-labelledby="purchases-title">
+        <SectionHeading id="purchases-title" as="h3" title="Purchases" />
+        {Object.keys(inventoryByCategory).length === 0 ? (
+          <div className="rounded-lg border border-border bg-surface">
+            <EmptyState compact icon={Package} title={isSearching ? 'No purchases match this search' : 'No purchases on this day'} />
           </div>
         ) : (
-          <EmptyState icon={<Package className="w-10 h-10" />} label={isSearching ? 'No inventory items match this search' : 'No inventory items for this date'} />
+          Object.entries(inventoryByCategory).map(([category, items]: [string, InventoryItem[]]) => (
+            <ListGroup
+              key={category}
+              title={categoryLabels[category] || category}
+              meta={categoryMeta(items.length)}
+              action={<span className="num text-body-sm font-semibold text-text">{rupees(items.reduce((sum, item) => sum + (item.totalCost || 0), 0))}</span>}
+            >
+              {items.map((item) => (
+                <ListRow
+                  key={item.id}
+                  icon={item.itemName ? Package : AlertTriangle}
+                  iconTone={item.itemName ? undefined : 'danger'}
+                  title={item.itemName || 'Missing name'}
+                  subtitle={[isSearching ? item.date : '', `${item.quantity} ${item.unit} · ${rupees(item.costPerUnit || 0)}/${item.unit}`].filter(Boolean).join(' · ')}
+                  trailing={<span className="num text-body-md font-semibold text-text">{rupees(item.totalCost || 0)}</span>}
+                />
+              ))}
+            </ListGroup>
+          ))
         )}
-      </SectionCard>
+      </section>
 
-      {/* Overhead Costs by Category */}
-      <SectionCard icon={<DollarSign className="w-4 h-4" />} title="Overhead costs">
-        {Object.keys(overheadsByCategory).length > 0 ? (
-          <div className="space-y-5">
-            {Object.entries(overheadsByCategory).map(([category, items]) => {
-              const categoryTotal = items.reduce((sum, item) => sum + (item.amount || 0), 0);
-              return (
-              <div key={category}>
-                <div className="flex items-center justify-between mb-2 px-1">
-                  <h3 className="text-xs text-muted-foreground uppercase tracking-wide">{categoryLabels[category] || category}</h3>
-                  <span className="text-xs font-semibold text-foreground">₹{categoryTotal.toLocaleString()}</span>
-                </div>
-                <div className="space-y-2">
-                  {items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="rounded-xl border border-border bg-background p-3 flex items-center justify-between gap-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm text-foreground truncate">{item.description}</p>
-                        {isSearching && <p className="text-xs text-muted-foreground mt-0.5">{item.date}</p>}
-                      </div>
-                      <span className="text-sm text-primary flex-shrink-0">₹{item.amount.toLocaleString()}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              );
-            })}
+      <section className="flex flex-col gap-3" aria-labelledby="running-title">
+        <SectionHeading id="running-title" as="h3" title="Running costs" />
+        {Object.keys(overheadsByCategory).length === 0 ? (
+          <div className="rounded-lg border border-border bg-surface">
+            <EmptyState compact icon={Receipt} title={isSearching ? 'No running costs match this search' : 'No running costs on this day'} />
           </div>
         ) : (
-          <EmptyState icon={<DollarSign className="w-10 h-10" />} label={isSearching ? 'No overhead costs match this search' : 'No overhead costs for this date'} />
+          Object.entries(overheadsByCategory).map(([category, items]: [string, OverheadItem[]]) => (
+            <ListGroup
+              key={category}
+              title={categoryLabels[category] || category}
+              meta={categoryMeta(items.length)}
+              action={<span className="num text-body-sm font-semibold text-text">{rupees(items.reduce((sum, item) => sum + (item.amount || 0), 0))}</span>}
+            >
+              {items.map((item) => (
+                <ListRow
+                  key={item.id}
+                  icon={Receipt}
+                  title={item.description}
+                  subtitle={isSearching ? item.date : undefined}
+                  trailing={<span className="num text-body-md font-semibold text-text">{rupees(item.amount)}</span>}
+                />
+              ))}
+            </ListGroup>
+          ))
         )}
-      </SectionCard>
+      </section>
 
-      {/* Fixed Costs */}
       {searchedFixedCosts.length > 0 && (
-        <SectionCard icon={<TrendingUp className="w-4 h-4" />} title="Fixed costs">
-          <div className="space-y-2">
-            {searchedFixedCosts.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-xl border border-border bg-background p-3 flex items-center justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm text-foreground truncate">{categoryLabels[item.category] || item.category}</p>
-                  <p className="text-xs text-muted-foreground truncate">{item.description}{isSearching && ` · ${item.date}`}</p>
-                </div>
-                <span className="text-sm text-primary flex-shrink-0">₹{item.amount.toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
+        <ListGroup title="Fixed costs">
+          {searchedFixedCosts.map((item) => (
+            <ListRow
+              key={item.id}
+              icon={TrendingUp}
+              title={categoryLabels[item.category] || item.category}
+              subtitle={[item.description, isSearching ? item.date : ''].filter(Boolean).join(' · ')}
+              trailing={<span className="num text-body-md font-semibold text-text">{rupees(item.amount)}</span>}
+            />
+          ))}
+        </ListGroup>
       )}
 
-      {/* Monthly Stock Recalibration Button */}
       {isClusterHead && (
-        <div className="mt-2 mb-4 flex flex-wrap gap-2">
-          <button
-            className="min-h-11 flex items-center gap-2 bg-primary hover:opacity-90 text-primary-foreground py-2.5 px-4 rounded-xl text-sm transition-opacity"
-            onClick={() => setShowRecalibration(true)}
-          >
-            <Calendar className="w-4 h-4" />
-            Monthly stock recalibration
-          </button>
-          <button
-            className="min-h-11 flex items-center gap-2 bg-text hover:bg-text text-white py-2.5 px-4 rounded-xl text-sm transition-colors"
-            onClick={() => setShowCategoryManager(true)}
-          >
-            <Package className="w-4 h-4" />
-            Manage Categories
-          </button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" leadingIcon={<Calendar />} onClick={() => setShowRecalibration(true)}>Monthly stock recalibration</Button>
+          <Button variant="secondary" leadingIcon={<Tags />} onClick={() => setShowCategoryManager(true)}>Manage categories</Button>
         </div>
       )}
 
-      {/* Monthly Stock Recalibration Modal */}
       {showRecalibration && (
         <MonthlyStockRecalibration
           context={context}
@@ -482,21 +349,26 @@ export function InventoryView({ context, selectedStoreId }: Props) {
       {showCategoryManager && (
         <CategoryManagerModal onClose={() => setShowCategoryManager(false)} />
       )}
-      </>
-      )}
 
-      {/* Info Message */}
-      <div className="mt-4 bg-secondary rounded-2xl p-4">
-        <div className="flex gap-3">
-          <Lock className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-foreground">
-            {isClusterHead
-              ? "You're viewing inventory data in read-only mode. Only operations managers can add or edit inventory items."
-              : "You're viewing inventory data in read-only mode. To add or modify inventory items, contact your operations manager."
-            }
-          </p>
+      <div className="flex flex-col gap-3">
+        <div className="overflow-hidden rounded-lg border border-border bg-surface">
+          <ListRow
+            icon={Boxes}
+            title="Utilities stock"
+            subtitle="Boxes, trays and drinks left at each store, from POS orders"
+            chevron={showUtilities ? 'down' : true}
+            aria-expanded={showUtilities}
+            onClick={() => setShowUtilities((v) => !v)}
+          />
         </div>
+        {showUtilities && <UtilitiesStockStatus context={context} stores={context.stores} />}
       </div>
+
+      <Callout tone="neutral" icon={Lock}>
+        {isClusterHead
+          ? 'Read-only here. Operations managers add and edit these entries.'
+          : 'Read-only. To add or change an entry, ask the operations manager.'}
+      </Callout>
     </div>
   );
 }

@@ -3573,6 +3573,34 @@ app.get('/make-server-c2dd9b9d/app-version', async (c) => {
   return c.json({ latestVersion: LATEST_APP_VERSION, features: SERVER_FEATURES, updates: updates || null });
 });
 
+// Deletes published update files no phone needs any more, so the app-updates storage folder
+// stays small (free plan: 1 GB). Keeps what the manifest points to and the newest two of each
+// kind, so a phone half-way through a download can still finish it. Cron-secret only: the
+// publish script (scripts/publish-update.mjs) calls it through the database after each release.
+app.post('/make-server-c2dd9b9d/app-updates/cleanup', async (c) => {
+  const expectedSecret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!expectedSecret || c.req.header('X-Cron-Secret') !== expectedSecret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const manifest = await kv.get('app-update-manifest');
+    const keep = new Set([manifest?.bundle?.url, manifest?.apk?.url].filter(Boolean).map((url: string) => url.split('/app-updates/')[1]));
+    const removed: string[] = [];
+    for (const folder of ['bundles', 'apk']) {
+      const { data, error } = await supabase.storage.from('app-updates').list(folder, { limit: 1000, sortBy: { column: 'created_at', order: 'desc' } });
+      if (error) throw error;
+      const stale = (data || []).filter((f: any) => f.id).map((f: any) => `${folder}/${f.name}`).slice(2).filter((path: string) => !keep.has(path));
+      if (stale.length === 0) continue;
+      const { error: removeError } = await supabase.storage.from('app-updates').remove(stale);
+      if (removeError) throw removeError;
+      removed.push(...stale);
+    }
+    console.log('App update cleanup removed:', removed);
+    return c.json({ success: true, removed });
+  } catch (error) {
+    console.log('Error cleaning up app update files:', error);
+    return c.json({ error: 'Failed to clean up update files' }, 500);
+  }
+});
+
 // Debug endpoint to check user metadata
 app.get('/make-server-c2dd9b9d/debug/user', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));

@@ -14,7 +14,9 @@
 // Files go to the app-updates storage folder, named with a fingerprint of their contents, as
 // `supabase storage cp` can't replace a file: a rebuilt file gets a new name. The manifest - both halves, the other one kept -
 // is the kv row app-update-manifest, which GET /app-version hands out. Both go through the
-// Supabase CLI, signed in as the project owner.
+// Supabase CLI, signed in as the project owner. Afterwards the server deletes files no phone
+// needs any more (POST /app-updates/cleanup, asked through the database so the cron secret
+// never leaves it).
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -139,6 +141,11 @@ console.log(JSON.stringify(manifest, null, 2));
 const sql = join(work, 'manifest.sql');
 writeFileSync(sql, `insert into kv_store_c2dd9b9d (key, value) values ('app-update-manifest', $manifest$${JSON.stringify(manifest)}$manifest$::jsonb)
 on conflict (key) do update set value = excluded.value;
+select net.http_post(
+  url := 'https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/app-updates/cleanup',
+  headers := jsonb_build_object('X-Cron-Secret', (select decrypted_secret from vault.decrypted_secrets where name = 'cron_sync_secret' limit 1), 'Content-Type', 'application/json'),
+  body := '{}'::jsonb
+);
 `);
 if (dry) console.log(`(dry) would run ${sql}`);
 else {

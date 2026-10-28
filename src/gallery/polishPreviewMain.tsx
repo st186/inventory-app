@@ -5,6 +5,7 @@
 //   /polish-preview.html?screen=salesdata            Insights > Items > daily sales data
 //   /polish-preview.html?screen=sync                 the status line under the top bar, every state
 //   /polish-preview.html?screen=production           Insights > Production alone (&period=lastMonth, &house=PH-1)
+//   /polish-preview.html?screen=expenses             Audit > Expenses (InventoryView, read-only; &role=auditor)
 //     &role=owner|store-incharge   &lang=en|bn|hi   &empty=1 (no sales records)
 //
 // Requests to the app's server are answered here from src/gallery/insightsMock.ts; nothing leaves
@@ -84,12 +85,14 @@ const SalesData = lazy<ComponentType<any>>(() =>
 );
 const SyncStatusDemo = lazy(() => import('./polishSyncDemo').then((m) => ({ default: m.SyncStatusDemo })));
 const ProductionDemo = lazy(() => import('./polishProductionDemo').then((m) => ({ default: m.ProductionDemo })));
+const InventoryView = lazy(() => import('../components/InventoryView').then((m) => ({ default: m.InventoryView })));
 
 const owner = mock.context.user!;
 const USERS: Record<string, InventoryContextType['user']> = {
   owner,
   'store-incharge': { ...owner, email: 'store@example.test', name: 'Store Incharge Demo', role: 'employee', designation: 'store_incharge', storeId: 'STORE-1' },
   ops: { ...owner, email: 'ops@example.test', name: 'Ops Manager Demo', role: 'manager', designation: null },
+  auditor: { ...owner, email: 'audit@example.test', name: 'Audit Desk', role: 'audit', designation: null, storeId: null },
 };
 
 function Preview() {
@@ -101,10 +104,10 @@ function Preview() {
   return (
     <LanguageOverride lang={lang}>
       <div className="min-h-dvh bg-bg text-text" lang={lang}>
-        <PageHeader title={screen === 'sync' ? 'Status line' : lang === 'bn' ? 'বিশ্লেষণ' : lang === 'hi' ? 'विश्लेषण' : 'Insights'} />
+        <PageHeader title={screen === 'sync' ? 'Status line' : screen === 'expenses' ? 'Expenses' : lang === 'bn' ? 'বিশ্লেষণ' : lang === 'hi' ? 'विश्लेषण' : 'Insights'} />
         <main className="mx-auto w-full max-w-6xl px-4 py-4 lg:px-8">
           <Suspense fallback={null}>
-            {screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
+            {screen === 'expenses' ? <InventoryView context={context} selectedStoreId={storeId} /> : screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
           </Suspense>
         </main>
       </div>
