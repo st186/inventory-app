@@ -6,8 +6,10 @@
 //   goes to Capgo's servers). A bundle that fails to start is rolled back by the updater and
 //   not tried again.
 // - apk: a new Android app, for the rare change a bundle can't carry (a new phone permission
-//   or plugin). The update banner offers the download and Android asks to install it.
-import { Capacitor } from '@capacitor/core';
+//   or plugin). The update banner offers the download and Android asks to install it. A copy
+//   installed from the Play Store is sent to its Play listing instead (Play policy: no other
+//   way of replacing the app); the bundles above work the same there.
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { APP_VERSION, isNewerVersion } from './appVersion';
@@ -16,6 +18,12 @@ import { projectId } from './supabase/info';
 const APP_VERSION_URL = `https://${projectId}.supabase.co/functions/v1/make-server-c2dd9b9d/app-version`;
 const FAILED_KEY = 'live-update-failed-versions';
 const CHECK_EVERY_MS = 30 * 60 * 1000;
+export const PLAY_LISTING = 'https://play.google.com/store/apps/details?id=com.bunnymomos.inventory';
+
+// InstallSourcePlugin.java (from 1.18.0); on older apps the call fails and the APK route stays.
+const InstallSource = registerPlugin<{ get(): Promise<{ installer: string | null; fromPlay: boolean }> }>('InstallSource');
+let fromPlay: Promise<boolean> | null = null;
+const installedFromPlay = () => (fromPlay ??= InstallSource.get().then((r) => !!r.fromPlay).catch(() => false));
 
 export type UpdateManifest = {
   /** Screens and code; needs at least minNativeBuild (the APK's versionCode) on the phone. */
@@ -25,8 +33,8 @@ export type UpdateManifest = {
 };
 
 export type LiveUpdateState = {
-  /** A newer APK to download, when this phone's app is older. */
-  apk: { version: string; url: string } | null;
+  /** A newer APK to download, when this phone's app is older - or its Play listing (store). */
+  apk: { version: string; url: string; store?: boolean } | null;
   /** A downloaded bundle that switches in on the next open. */
   readyVersion: string | null;
 };
@@ -82,7 +90,8 @@ async function check(): Promise<void> {
     if (!res.ok) return;
     const manifest = ((await res.json()).updates || {}) as UpdateManifest;
     const build = Number((await App.getInfo()).build) || 0;
-    update({ apk: manifest.apk && manifest.apk.build > build ? { version: manifest.apk.version, url: manifest.apk.url } : null });
+    const store = await installedFromPlay();
+    update({ apk: manifest.apk && manifest.apk.build > build ? { version: manifest.apk.version, url: store ? PLAY_LISTING : manifest.apk.url, store } : null });
 
     const bundle = manifest.bundle;
     if (!bundle || !isNewerVersion(bundle.version, APP_VERSION)) return;

@@ -33,7 +33,8 @@ const ACTION = 'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full 
 
 // A soft, dismissible nudge - never blocks using the app.
 // - Android app: from the live-update manifest (utils/liveUpdate.ts). A newer APK gets a
-//   Download button (the phone's browser downloads it and Android asks to install); a live
+//   Download button (the phone's browser downloads it and Android asks to install; a copy from
+//   the Play Store gets an Update button to its Play listing instead); a live
 //   update that has downloaded says it switches in on the next open, with Restart now.
 // - Browser: GET /app-version, checked once per load (a reload already brings the new site).
 export function UpdateAvailableBanner() {
@@ -62,8 +63,8 @@ export function UpdateAvailableBanner() {
         <UpdateBanner
           version={live.apk.version}
           onDismiss={() => dismiss(live.apk!.version)}
-          text={t('update.apkReady', { version: live.apk.version })}
-          action={<a href={live.apk.url} target="_blank" rel="noreferrer" className={ACTION}><Download className="size-4" aria-hidden="true" />{t('update.download')}</a>}
+          text={t(live.apk.store ? 'update.playReady' : 'update.apkReady', { version: live.apk.version })}
+          action={<a href={live.apk.url} target="_blank" rel="noreferrer" className={ACTION}><Download className="size-4" aria-hidden="true" />{t(live.apk.store ? 'update.openPlay' : 'update.download')}</a>}
         />
       );
     }

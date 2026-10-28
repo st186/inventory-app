@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(RiderAlertPlugin.class);
         registerPlugin(VoicePlugin.class);
         registerPlugin(FilePlugin.class);
+        registerPlugin(InstallSourcePlugin.class);
         super.onCreate(savedInstanceState);
         showOverLockScreenForRideRequest(getIntent());
     }

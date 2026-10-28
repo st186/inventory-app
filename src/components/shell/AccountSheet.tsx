@@ -122,7 +122,8 @@ export function AccountSheet(props: AccountSheetProps) {
               title={t('account.version', { v: APP_VERSION })}
               subtitle={updateAvailable ? t('account.updateAvailable', { v: newVersion! }) : t('account.upToDate')}
               trailing={updateAvailable ? <StatusChip tone="info">{t('account.update')}</StatusChip> : undefined}
-              // A newer APK downloads in the phone's browser; a downloaded live update switches in.
+              // A newer APK downloads in the phone's browser (or opens the Play listing for a Play copy);
+              // a downloaded live update switches in.
               href={live?.apk?.url}
               onClick={!live?.apk && live?.readyVersion ? applyUpdateNow : undefined}
             />
