@@ -7,8 +7,10 @@ import { Field } from '../ui/field';
 import { Input } from '../ui/input';
 import { useT } from '../../utils/i18n';
 import { ALL_POOL_IDS, getPoolLabel } from '../../constants/momoTypes';
-import type { ProductionLedgerPoolState } from '../../utils/api';
+import type { LedgerDayContext, LeftoverReport, ProductionLedgerPoolState } from '../../utils/api';
+import { toast } from '../ui/sonner';
 import { looksLikeGrams } from './ledgerKg';
+import { LeftoverReasons, LeftoverReportView, emptyLeftoverDraft, leftoverPayload, leftoverProblem, type LeftoverDraft } from './LeftoverReasons';
 
 type Props = {
   pools: Record<string, ProductionLedgerPoolState>;
@@ -19,13 +21,18 @@ type Props = {
   closed?: boolean;
   disabled?: boolean;
   submitting?: boolean;
-  onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>) => void | Promise<void>;
+  // Staff check-ins and machines for the leftover reasons, and the reasons already saved.
+  dayContext?: LedgerDayContext | null;
+  savedReport?: LeftoverReport | null;
+  onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport) => void | Promise<void>;
 };
+const LEFTOVER_REASON_MIN_KG = 0.5; // the server says the same (minKg)
 
 // The directly-reported leftover snapshot per pool - counted/weighed at day's end, not
 // computed from a yield formula (confirmed requirement).
-export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, onSubmit }: Props) {
+export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, onSubmit }: Props) {
   const { t, lang } = useT();
+  const [leftover, setLeftover] = useState<LeftoverDraft>(emptyLeftoverDraft);
   const [closingInputs, setClosingInputs] = useState<Record<string, string>>({});
   const [openingOverrideInputs, setOpeningOverrideInputs] = useState<Record<string, string>>({});
   // Wastage is never assumed - the starting-stock-minus-closing gap is only ever offered as
@@ -59,8 +66,19 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
 
   const grams = [closingInputs, wastageInputs, openingOverrideInputs].some((inputs) => Object.values(inputs).some(looksLikeGrams));
 
+  // Stuffing or coating left at the close: more than a little needs a reason (owner, 28 Oct 2026).
+  const leftoverKg = relevantPoolIds
+    .filter((id) => /^(stuffing|coating):/.test(id))
+    .reduce((sum, id) => sum + Math.max(0, parseFloat(closingInputs[id] ?? '') || 0), 0);
+  const needsReason = !closed && leftoverKg >= (dayContext?.minKg ?? LEFTOVER_REASON_MIN_KG);
+
   const handleSubmit = () => {
     if (grams) return;
+    const problem = needsReason ? leftoverProblem(leftover, t) : null;
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
     const closingActuals: Record<string, number> = {};
     for (const id of ALL_POOL_IDS) {
       const raw = closingInputs[id];
@@ -79,7 +97,7 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
       const raw = wastageInputs[id];
       if (raw !== undefined && raw !== '') wastageOverrides[id] = parseFloat(raw) || 0;
     }
-    onSubmit(closingActuals, manualOpeningOverride, wastageOverrides);
+    onSubmit(closingActuals, manualOpeningOverride, wastageOverrides, needsReason ? leftoverPayload(leftover, dayContext || null) : undefined);
   };
 
   return (
@@ -132,6 +150,9 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
           })}
         </div>
       )}
+
+      {needsReason && <LeftoverReasons leftoverKg={leftoverKg} ctx={dayContext || null} value={leftover} onChange={setLeftover} disabled={disabled || submitting} />}
+      {closed && savedReport?.reasons?.length ? <LeftoverReportView report={savedReport} /> : null}
 
       {!closed && relevantPoolIds.length > 0 && (
         <Button variant="secondary" className="self-start" leadingIcon={<Lock />} loading={submitting} disabled={disabled || grams} onClick={handleSubmit}>

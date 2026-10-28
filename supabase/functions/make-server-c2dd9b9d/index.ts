@@ -9,6 +9,8 @@ import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.t
 import { registerInsightsRoutes } from './insights.ts';
 import { registerExpenseReviewRoutes, reviewExpense, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
+import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
+import { DEFAULT_GRACE_MIN, DEFAULT_SHIFTS, parseHHMM } from './kpiCore.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
@@ -5939,6 +5941,121 @@ app.delete('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
   }
 });
 
+// ---- Why stuffing was left over (owner, 28 Oct 2026) ----
+// When the day closes with stuffing or coating left over, the incharge says why: a power cut
+// (from when to when), a late start (when work began, who was late, why, and whether that was
+// genuine), a machine breakdown (which machine, down from when to when, what was used instead -
+// raising a repair alarm, repairs.ts), fewer orders, made ahead for tomorrow, short of staff or
+// something else. Kept on the day's ledger record as leftoverReport.
+const LEFTOVER_REASON_MIN_KG = 0.5; // the app asks for a reason from this much stuffing/coating left
+const LEFTOVER_KINDS = ['power_cut', 'late_start', 'machine', 'low_demand', 'planned', 'short_staff', 'other'];
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const leftoverKgOf = (pools: Record<string, any>) => Object.entries(pools || {})
+  .filter(([id, p]) => /^(stuffing|coating):/.test(id) && typeof p?.closingActual === 'number')
+  .reduce((sum, [, p]) => sum + Math.max(0, p.closingActual), 0);
+
+// Active staff who work at a production house (a production person's storeId is sometimes the
+// store that house supplies).
+async function houseStaff(productionHouseId: string): Promise<any[]> {
+  const [employees, stores] = await Promise.all([getAllByPrefixWithRetry('unified-employee:'), kv.getByPrefix('store:')]);
+  const storeHouse = new Map((stores || []).filter((st: any) => st?.id).map((st: any) => [String(st.id), String(st.productionHouseId || '')]));
+  return (employees || []).filter((e: any) => {
+    if (!e?.employeeId || e.status === 'inactive' || ['cluster_head', 'audit'].includes(e.role) || e.designation === 'rider') return false;
+    const ids = [e.storeId, e.productionHouseId, ...(e.assignedProductionHouseIds || []), ...(e.assignedStoreIds || [])].filter(Boolean).map(String);
+    if (ids.includes(productionHouseId)) return true;
+    const productionPerson = e.department === 'production' || /^production_/.test(String(e.designation || ''));
+    return productionPerson && ids.some((id) => storeHouse.get(id) === productionHouseId);
+  });
+}
+
+// Checks and tidies a leftover report from the app. Returns an error message for the first problem.
+function cleanLeftoverReport(raw: any, staff: any[]): { report?: any; error?: string } {
+  const reasons = Array.isArray(raw?.reasons) ? raw.reasons : null;
+  if (!reasons || !reasons.length) return { error: 'Say why stuffing was left over' };
+  const names = new Map(staff.map((e: any) => [String(e.employeeId), String(e.name || e.employeeId)]));
+  const text = (v: any, max = 300) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  const people = (v: any) => (Array.isArray(v) ? [...new Set(v.map(String))].filter((id) => names.has(id)).slice(0, 12).map((id) => ({ id, name: names.get(id)! })) : []);
+  const out: any[] = [];
+  for (const x of reasons.slice(0, LEFTOVER_KINDS.length)) {
+    const kind = String(x?.kind || '');
+    if (!LEFTOVER_KINDS.includes(kind) || out.some((o) => o.kind === kind)) continue;
+    if (kind === 'power_cut') {
+      const periods = (Array.isArray(x.periods) ? x.periods : []).slice(0, 3)
+        .map((pd: any) => ({ from: String(pd?.from || ''), to: String(pd?.to || '') }))
+        .filter((pd: any) => HHMM.test(pd.from) && HHMM.test(pd.to));
+      if (!periods.length) return { error: 'Power cut: give the time it went and came back' };
+      if (periods.some((pd: any) => pd.from >= pd.to)) return { error: 'Power cut: the power must come back after it went' };
+      out.push({ kind, periods, note: text(x.note) });
+    } else if (kind === 'late_start') {
+      const why = text(x.why);
+      if (why.length < 3) return { error: 'Late start: say why work started late' };
+      const genuine = ['yes', 'no', 'unsure'].includes(x.genuine) ? x.genuine : null;
+      if (!genuine) return { error: 'Late start: say whether the reason was genuine' };
+      out.push({ kind, startedAt: HHMM.test(String(x.startedAt || '')) ? x.startedAt : null, people: people(x.people), why, genuine });
+    } else if (kind === 'machine') {
+      const machine = text(x.machine, 80);
+      if (!machine) return { error: 'Machine breakdown: say which machine' };
+      const downFrom = HHMM.test(String(x.downFrom || '')) ? x.downFrom : null;
+      if (!downFrom) return { error: 'Machine breakdown: give the time it stopped' };
+      const stillDown = !!x.stillDown;
+      const downTo = !stillDown && HHMM.test(String(x.downTo || '')) ? x.downTo : null;
+      if (!stillDown && !downTo) return { error: 'Machine breakdown: give the time it worked again, or tick "Still not working"' };
+      if (downTo && downTo <= downFrom) return { error: 'Machine breakdown: it must work again after it stopped' };
+      const alternative = text(x.alternative);
+      if (!alternative) return { error: 'Machine breakdown: say what was used instead (or "nothing")' };
+      out.push({ kind, assetId: x.assetId ? text(x.assetId, 80) : null, machine, downFrom, downTo, stillDown, alternative, raiseRepair: x.raiseRepair !== false });
+    } else {
+      const note = text(x.note);
+      if ((kind === 'other' || kind === 'short_staff') && note.length < 3) return { error: kind === 'other' ? 'Other: write the reason' : 'Short of staff: say who was missing or why' };
+      out.push({ kind, note, ...(kind === 'short_staff' ? { people: people(x.people) } : {}) });
+    }
+  }
+  if (!out.length) return { error: 'Say why stuffing was left over' };
+  return { report: { reasons: out } };
+}
+
+// What the leftover form needs: the house's staff with today's check-in and lateness, and its
+// machines from the equipment register.
+app.get('/make-server-c2dd9b9d/production-ledger/:houseId/:date/day-context', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    if (designation !== 'production_incharge' && !isOperationsManager && role !== 'cluster_head') {
+      return c.json({ error: 'Only production incharges, operations managers and the owner see this' }, 403);
+    }
+    const productionHouseId = await canonicalProductionHouseId(c.req.param('houseId'));
+    const date = c.req.param('date');
+    if (!productionHouseId || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return c.json({ error: 'Pick a production house and date' }, 400);
+    const [staff, assets] = await Promise.all([houseStaff(productionHouseId), getAllByPrefixWithRetry('asset:')]);
+    const people = await Promise.all(staff.map(async (e: any) => {
+      const id = String(e.employeeId);
+      const [punch, settings, leaves] = await Promise.all([
+        kv.get(`punch:${id}:${date}`).catch(() => null),
+        kv.get(`kpi-settings:${id}`).catch(() => null),
+        kv.getByPrefix(`leave:${id}:`).catch(() => []),
+      ]);
+      const shiftStart = parseHHMM(settings?.shiftStart) !== null ? settings.shiftStart : DEFAULT_SHIFTS.production.start;
+      const grace = Number.isFinite(settings?.graceMin) ? settings.graceMin : DEFAULT_GRACE_MIN;
+      const inAt = punch?.in?.at || null;
+      const inMin = inAt ? Math.round(((Date.parse(inAt) + IST_OFFSET_MS) % 86400000) / 60000) : null;
+      const late = inMin !== null ? inMin - (parseHHMM(shiftStart) as number) : null;
+      const onLeave = (leaves || []).some((l: any) => l?.status === 'approved' && String(l.leaveDate).slice(0, 10) === date && l.leaveType !== 'half');
+      return { id, name: e.name || id, shiftStart, checkInAt: inAt, lateMin: late !== null && late > grace ? late : 0, onLeave };
+    }));
+    const machines = (assets || [])
+      .filter((a: any) => a?.id && a.locationKind === 'production' && a.locationId === productionHouseId && !a.dismissed && a.condition !== 'disposed')
+      .map((a: any) => ({ id: a.id, name: a.name, condition: a.condition }))
+      .sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
+    return c.json({ date, staff: people.sort((a, b) => a.name.localeCompare(b.name)), machines, minKg: LEFTOVER_REASON_MIN_KG });
+  } catch (error) {
+    console.log('Error loading the production day context:', error);
+    return c.json({ error: 'Could not load the day' }, 500);
+  }
+});
+
 // Closes a production day: writes the directly-reported closingActual per pool (counted/
 // weighed, not derived from a yield formula - confirmed requirement) and derives wastage
 // from it. Does NOT gate on production: approval status - tomorrow's opening balance must
@@ -5963,7 +6080,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) {
       return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
     }
-    const { closingActuals, manualOpeningOverride, wastageOverrides } = await c.req.json();
+    const { closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport: rawLeftover } = await c.req.json();
     if (!closingActuals || typeof closingActuals !== 'object') {
       return c.json({ error: 'closingActuals (per pool) is required' }, 400);
     }
@@ -6009,9 +6126,32 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
       pools[id] = { opening: opening[id], prepared: prepared[id], closingActual, wastage, wastageOverride };
     }
 
+    // Why stuffing was left over (sent by app 1.16.9+; older apps close without it).
+    const leftoverKg = Math.round(leftoverKgOf(pools) * 100) / 100;
+    let leftoverReport: any = existing?.leftoverReport || null;
+    if (rawLeftover) {
+      const clean = cleanLeftoverReport(rawLeftover, await houseStaff(productionHouseId));
+      if (clean.error) return c.json({ error: clean.error }, 400);
+      const houseName = (await kv.get(`production_house_${productionHouseId}`).catch(() => null))?.name || 'Production';
+      // A machine breakdown raises one repair alarm; closing the day again keeps the same one.
+      for (const reason of clean.report.reasons) {
+        if (reason.kind !== 'machine' || !reason.raiseRepair) continue;
+        const before = (existing?.leftoverReport?.reasons || []).find((x: any) => x.kind === 'machine' && x.machine === reason.machine && x.repairAlertId);
+        if (before) { reason.repairAlertId = before.repairAlertId; continue; }
+        const alert = await raiseRepairAlert(expenseReviewDeps, {
+          locationKind: 'production', locationId: productionHouseId, locationName: houseName,
+          assetId: reason.assetId, machine: reason.machine, date, downFrom: reason.downFrom, downTo: reason.downTo, stillDown: reason.stillDown,
+          alternative: reason.alternative, source: 'leftover', reportedBy: submittedByName, reportedById: authResult.user.user_metadata?.employeeId || null,
+        });
+        reason.repairAlertId = alert.id;
+      }
+      leftoverReport = { ...clean.report, leftoverKg, by: submittedByName, at: getNowIST() };
+    }
+
     const record = {
       id: existing?.id || `${productionHouseId}-${date}`,
       productionHouseId, date, pools,
+      ...(leftoverReport ? { leftoverReport } : {}),
       closed: true,
       closedBy: submittedBy, closedByName: submittedByName, closedByUserId: authResult.user.id,
       closedAt: getNowIST(),
@@ -17245,6 +17385,7 @@ registerEventsRoutes(app, eventsDeps);
 // Expense checks: flags on new entries, and the routes to list and decide them (expenseReview.ts).
 registerExpenseReviewRoutes(app, expenseReviewDeps);
 registerProductionReviewRoutes(app, expenseReviewDeps);
+registerRepairRoutes(app, expenseReviewDeps);
 registerInsightsRoutes(app, {
   kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry },
   verifyUser,

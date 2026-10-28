@@ -3,7 +3,7 @@
 // the shift card pinned on top, today's checklist in due-time order, alerts, and two figures.
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Camera, ClipboardList, ClipboardPlus, Factory, IdCard, PackageCheck, PackageOpen, Receipt, ReceiptText, Trash2, Truck, UserCheck,
+  Camera, ClipboardList, ClipboardPlus, Factory, IdCard, PackageCheck, PackageOpen, Receipt, ReceiptText, Trash2, Truck, UserCheck, Wrench,
 } from 'lucide-react';
 import { useShell } from '../shell/ShellContext';
 import { Callout } from '../ui/callout';
@@ -27,6 +27,7 @@ import { useFocusProfile } from './HomeShortcuts';
 import { TeamLeaveRow } from './TeamLeaveRow';
 import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
+import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/RepairAlerts';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
@@ -84,8 +85,18 @@ function InchargeHome() {
   // Production entries the checks flagged for this incharge's house.
   const productionFlags = useProductionFlags(isProduction, token);
   const [productionFlagsOpen, setProductionFlagsOpen] = useState(false);
+  // Machines down at this incharge's place (server repairs.ts).
+  const repairs = useRepairAlerts(nav.perms.isAnyIncharge, token);
+  const [repairsOpen, setRepairsOpen] = useState(false);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (repairs.alerts.length) {
+      list.push({
+        key: 'repairs', icon: Wrench, title: repairs.alerts.length === 1 ? `Machine down: ${repairs.alerts[0].machine}` : `${repairs.alerts.length} machines to repair`,
+        meta: repairLine(repairs.alerts[0]), status: 'late', count: repairs.alerts.length, due: 0,
+        onOpen: () => setRepairsOpen(true),
+      });
+    }
     if (productionFlags.flags.length) {
       list.push({
         key: 'production-flags', icon: Factory, title: productionFlags.flags.length === 1 ? '1 production entry to check' : `${productionFlags.flags.length} production entries to check`,
@@ -197,7 +208,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);
@@ -271,6 +282,7 @@ function InchargeHome() {
       {profile.sheet}
       <ExpenseFlagsSheet open={flagsOpen} onOpenChange={setFlagsOpen} flags={expenseFlags.flags} onChanged={expenseFlags.reload} />
       <ProductionFlagsSheet open={productionFlagsOpen} onOpenChange={setProductionFlagsOpen} flags={productionFlags.flags} onChanged={productionFlags.reload} />
+      <RepairAlertsSheet open={repairsOpen} onOpenChange={setRepairsOpen} alerts={repairs.alerts} onChanged={repairs.reload} />
     </HomePage>
   );
 }

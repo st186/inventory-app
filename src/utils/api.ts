@@ -697,6 +697,7 @@ export interface ProductionLedgerEntry {
   closedByUserId?: string;
   closedAt?: string;
   manualOpeningOverride?: Record<string, number>;
+  leftoverReport?: LeftoverReport;
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -789,12 +790,52 @@ export async function deleteProductionWastageNote(accessToken: string, id: strin
   await fetchWithAuth(`${API_BASE}/production-wastage-notes/${id}`, accessToken, { method: 'DELETE' });
 }
 
-export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>): Promise<ProductionLedgerEntry> {
+export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport): Promise<ProductionLedgerEntry> {
   const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/close`, accessToken, {
     method: 'PUT',
-    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}) }),
+    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}), ...(leftoverReport ? { leftoverReport } : {}) }),
   });
   return data.entry;
+}
+
+// Why stuffing was left over at the day's close (server cleanLeftoverReport), and what the form
+// needs to ask it: the house's staff with today's check-in and lateness, and its machines.
+export type LeftoverKind = 'power_cut' | 'late_start' | 'machine' | 'low_demand' | 'planned' | 'short_staff' | 'other';
+export interface LeftoverReason {
+  kind: LeftoverKind;
+  periods?: { from: string; to: string }[];
+  startedAt?: string | null; people?: any[]; why?: string; genuine?: 'yes' | 'no' | 'unsure' | '';
+  assetId?: string | null; machine?: string; downFrom?: string; downTo?: string | null; stillDown?: boolean; alternative?: string; raiseRepair?: boolean; repairAlertId?: string;
+  note?: string;
+}
+export interface LeftoverReport { reasons: LeftoverReason[]; leftoverKg?: number; by?: string; at?: string }
+export interface LedgerDayContext {
+  date: string;
+  staff: { id: string; name: string; shiftStart: string; checkInAt: string | null; lateMin: number; onLeave: boolean }[];
+  machines: { id: string; name: string; condition: string }[];
+  minKg: number;
+}
+
+export async function getLedgerDayContext(accessToken: string, productionHouseId: string, date: string): Promise<LedgerDayContext> {
+  return fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/day-context`, accessToken);
+}
+
+// Machine breakdowns (server repairs.ts): open until someone marks the machine repaired.
+export interface RepairAlert {
+  id: string; status: 'open' | 'fixed';
+  locationKind: 'production' | 'store'; locationId: string; locationName?: string;
+  assetId?: string | null; machine: string; date: string;
+  downFrom?: string | null; downTo?: string | null; stillDown: boolean; alternative?: string;
+  reportedBy: string; reportedAt: string; fixedBy?: string; fixedAt?: string; fixNote?: string; repairCost?: number | null;
+}
+
+export async function getRepairAlerts(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<RepairAlert[]> {
+  const data = await fetchWithAuth(`${API_BASE}/repair-alerts?status=${status}`, await tokenOr(accessToken));
+  return data.alerts || [];
+}
+
+export async function markRepairFixed(id: string, note?: string, repairCost?: number | null, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/repair-alerts/${encodeURIComponent(id)}/fixed`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note, repairCost }) });
 }
 
 // Manually triggers today's Ciferon POS sync early, instead of waiting for the 10:30 PM

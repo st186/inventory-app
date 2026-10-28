@@ -90,6 +90,12 @@ const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, body: a
   { method: 'GET', re: /\/insights\/overview/, reply: () => ({ today, storeId: 'STORE-1', history: [], events: [], forecast: forecast(), learned: {} }) },
   { method: 'GET', re: /\/events\/momo-returns/, reply: (_m, _b, url) => ({ returns: url.searchParams.get('status') === 'sent' ? [{ id: 'mr1', eventId: 'EVENT-1', eventName: 'Durgapur Winter Fair', productionHouseId: 'PH-1', date: yesterday, returned: { chicken: 40, veg: 20 }, wasted: {}, returnedPieces: 60, wastedPieces: 0, wasteReason: null, status: 'sent' }] : [] }) },
   { method: 'GET', re: /\/production-ledger$/, reply: () => ({ entry: null, live: { pools: { dough: { opening: 1.2, prepared: 6, closingActual: null, wastage: null }, batter: { opening: 0.5, prepared: 2, closingActual: null, wastage: null }, 'stuffing:chicken': { opening: 0.8, prepared: 9, closingActual: null, wastage: 0.3 }, 'coating:chickenKurkure': { opening: 0.2, prepared: 1.5, closingActual: null, wastage: null } } }, items: [{ id: 'li1', momoKey: 'GLOBAL_DOUGH', globalPoolQty: 6, perTypePoolQty: 0, loggedByName: 'Sohel' }, { id: 'li2', momoKey: 'chickenMomos', globalPoolQty: 0, perTypePoolQty: 9, loggedByName: 'Sohel' }], hasAnyPriorRecord: true }) },
+  // The leftover reasons form at the close: who was in (and how late) and the kitchen's machines.
+  { method: 'GET', re: /\/day-context$/, reply: () => ({ date: today, minKg: 0.5, staff: [
+    { id: 'P1', name: 'Sohel', shiftStart: '08:00', checkInAt: at(today, '09:42'), lateMin: 102, onLeave: false },
+    { id: 'P2', name: 'Rina', shiftStart: '08:00', checkInAt: at(today, '07:58'), lateMin: 0, onLeave: false },
+    { id: 'P3', name: 'Bablu', shiftStart: '08:00', checkInAt: null, lateMin: 0, onLeave: true },
+  ], machines: [{ id: 'A1', name: 'Steamer (big)', condition: 'good' }, { id: 'A2', name: 'Dough kneader', condition: 'good' }] }) },
   { method: 'GET', re: /\/production-wastage-notes$/, reply: () => ({ notes: [{ id: 'wn1', description: 'Hot Garlic Sauce', quantity: 0.5, unit: 'L', reason: 'X', loggedByName: 'Sohel' }] }) },
   { method: 'GET', re: /\/production-weekly-goal$/, reply: () => ({ goal: { goals: { chickenMomos: 3200, vegMomos: 1100, chickenKurkureMomos: 900 } } }) },
   { method: 'GET', re: /\/stock-outs$/, reply: () => ({ entries: stockOuts }) },

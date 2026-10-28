@@ -117,6 +117,7 @@ const NOTIFICATION_VIEW_MAP = {
   data_entry_reminder: { view: 'inventory' },
   expense_flag: { view: 'inventory' },
   production_flag: { view: 'production' },
+  repair_alert: { view: 'production' },
   rider_called: { view: 'riders' },
   rider_ready: { view: 'riders' },
   rider_on_the_way: { view: 'riders' },

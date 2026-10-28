@@ -180,6 +180,17 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
 
   const ledgerPools = ledgerEntry?.pools ?? ledgerLive?.pools ?? {};
   const ledgerClosed = !!ledgerEntry?.closed;
+  // Who was in and when, and the house's machines, for the leftover reasons at the close.
+  const [dayContext, setDayContext] = useState<api.LedgerDayContext | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setDayContext(null);
+    if (!resolvedProductionHouseId || !context.user?.accessToken || !ledgerTrackingLive || !canEditLedger) return;
+    api.getLedgerDayContext(context.user.accessToken, resolvedProductionHouseId, selectedDate)
+      .then((ctx) => { if (!cancelled) setDayContext(ctx); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [resolvedProductionHouseId, selectedDate, context.user?.accessToken, ledgerTrackingLive, canEditLedger]);
 
   // Rolls today's per-pool ledger wastage (dough, batter, every stuffing:*/coating:* pool)
   // back up into the same 4-field shape the old manual "Wastage Tracking" inputs used to
@@ -225,11 +236,11 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     }
   };
 
-  const handleCloseLedgerDay = async (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>) => {
+  const handleCloseLedgerDay = async (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: api.LeftoverReport) => {
     if (!context.user?.accessToken || !resolvedProductionHouseId) return;
     setLedgerCloseSubmitting(true);
     try {
-      await api.closeProductionLedgerDay(context.user.accessToken, resolvedProductionHouseId, selectedDate, closingActuals, manualOpeningOverride, wastageOverrides);
+      await api.closeProductionLedgerDay(context.user.accessToken, resolvedProductionHouseId, selectedDate, closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport);
       toast.success(tSaved('stock.prod.dayClosedToast'));
       await fetchLedger();
     } catch (error: any) {
@@ -649,7 +660,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
           {canEditLedger && (
             <CollapsibleCard title={t('stock.prod.leftover')} subtitle={t('stock.prod.leftoverHint')} chip={ledgerClosed ? <StatusChip status="task.done" /> : undefined}>
               <div className="p-4">
-                <EndOfDayCloseForm pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting} onSubmit={handleCloseLedgerDay} />
+                <EndOfDayCloseForm pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting} dayContext={dayContext} savedReport={ledgerEntry?.leftoverReport || null} onSubmit={handleCloseLedgerDay} />
               </div>
             </CollapsibleCard>
           )}

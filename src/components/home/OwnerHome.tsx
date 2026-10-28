@@ -3,10 +3,11 @@
 // through the month first), what needs them, today's brief and the next days' forecast.
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, ReceiptText, Scale, Truck, Wallet,
+  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, ReceiptText, Scale, Truck, Wallet, Wrench,
 } from 'lucide-react';
 import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
+import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/RepairAlerts';
 import { useShell } from '../shell/ShellContext';
 import { formatINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
@@ -53,6 +54,9 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   // Production entries the checks flagged (server productionReview.ts).
   const productionFlags = useProductionFlags(nav.perms.isClusterHead || nav.perms.isOperationsManager, token);
   const [productionFlagsOpen, setProductionFlagsOpen] = useState(false);
+  // Machines down (server repairs.ts).
+  const repairs = useRepairAlerts(nav.perms.isClusterHead || nav.perms.isOperationsManager, token);
+  const [repairsOpen, setRepairsOpen] = useState(false);
   const x = home.extras;
 
   const attention = useMemo(() => {
@@ -125,6 +129,15 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         onOpen: () => setFlagsOpen(true),
       });
     }
+    if (repairs.alerts.length) {
+      items.push({
+        key: 'repairs', icon: Wrench, tone: 'danger', rank: 1.5,
+        title: repairs.alerts.length === 1 ? `Machine down: ${repairs.alerts[0].machine}` : `${repairs.alerts.length} machines to repair`,
+        meta: repairs.alerts.length === 1 ? repairLine(repairs.alerts[0]) : repairs.alerts.slice(0, 3).map((a) => a.machine).join(' · '),
+        count: repairs.alerts.length,
+        onOpen: () => setRepairsOpen(true),
+      });
+    }
     if (productionFlags.flags.length) {
       items.push({
         key: 'production-flags', icon: Factory, tone: 'warning', rank: 2.4,
@@ -153,7 +166,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       items.push({ key: 'profile', icon: IdCard, tone: 'warning', rank: 9, title: t('home.task.profile'), meta: t('home.task.profileMeta'), onOpen: profile.openSheet });
     }
     return items;
-  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags]);
+  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts]);
 
   const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
 
@@ -225,6 +238,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       {profile.sheet}
       <ExpenseFlagsSheet open={flagsOpen} onOpenChange={setFlagsOpen} flags={expenseFlags.flags} onChanged={expenseFlags.reload} />
       <ProductionFlagsSheet open={productionFlagsOpen} onOpenChange={setProductionFlagsOpen} flags={productionFlags.flags} onChanged={productionFlags.reload} />
+      <RepairAlertsSheet open={repairsOpen} onOpenChange={setRepairsOpen} alerts={repairs.alerts} onChanged={repairs.reload} />
     </HomePage>
   );
 }
