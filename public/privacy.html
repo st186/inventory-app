@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Privacy Policy · Bunny Momos</title>
-  <meta name="description" content="How the Bunny Momos staff app and its Google Drive backup handle data.">
+  <meta name="description" content="How the Bunny Momos staff app handles data: what it keeps, location, photos, voice, notifications, the Google Drive backup, AI checks, and how to have your data deleted.">
   <style>
     :root { --bg: #ffffff; --text: #1c1917; --muted: #57534e; --line: #e7e5e4; --accent: #c2410c; }
     @media (prefers-color-scheme: dark) { :root { --bg: #1c1917; --text: #f5f5f4; --muted: #a8a29e; --line: #44403c; --accent: #fb923c; } }
@@ -16,6 +16,7 @@
     p, li { color: var(--text); }
     .updated { color: var(--muted); margin: 0 0 24px; }
     ul { padding-left: 20px; }
+    li { margin-bottom: 6px; }
     a { color: var(--accent); }
     footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
   </style>
@@ -25,15 +26,30 @@
     <h1>Privacy Policy</h1>
     <p class="updated">Bunny Momos staff app · last updated 28 October 2026</p>
 
-    <p>Bunny Momos runs a momo shop and a production kitchen in West Bengal, India. This app is used only by our own staff and the owner to run the business: sales, stock, production, expenses, attendance and workplace photo checks. It is not offered to the public.</p>
+    <p>Bunny Momos runs a momo shop and a production kitchen in West Bengal, India. This app is used only by our own staff, the owner, our delivery riders and independent auditors the owner invites, to run the business: sales, stock, production, expenses, attendance, pay and workplace checks. It is not offered to the public, and accounts are created only by the owner.</p>
 
     <h2>What the app keeps</h2>
     <ul>
-      <li>Business records our staff enter: sales, stock, production, expenses and cash counts.</li>
-      <li>Staff details needed to run the team: name, role, workplace, shift times, leave and attendance check-ins.</li>
-      <li>Photos staff take of their work areas for daily cleanliness checks.</li>
+      <li><strong>Business records</strong> staff enter: sales, stock, production, expenses and their bill photos, cash counts, shopping lists and notes about supplies running low.</li>
+      <li><strong>Staff details</strong> needed to run the team and pay people: name, phone number, the email used to sign in, role, workplace, shift times, leave, attendance, pay and payouts, and, for the staff profile, identity details such as the Aadhaar number and date of birth. A full ID number is shown only to that person and the owner.</li>
+      <li><strong>Rider details</strong>: name, ID number, rates and availability.</li>
+      <li><strong>Photos</strong> taken in the app: workplace cleanliness checks, bills, and audit visits.</li>
+      <li><strong>Customer complaints</strong> that reach us through delivery apps: the complaint and the order it is about, so we can answer it.</li>
     </ul>
-    <p>These are stored on our app server and used only to run Bunny Momos. We do not sell them, show ads, or share them with anyone outside the business.</p>
+
+    <h2>Location</h2>
+    <ul>
+      <li><strong>Check-in and check-out:</strong> when someone starts or ends their shift, the phone's location at that moment is compared with the workplace. The spot, the distance from the workplace and the time are kept with the attendance record.</li>
+      <li><strong>Automatic check-in (optional):</strong> a staff member can turn this on; it needs the phone's location "all the time". The app then watches location only from an hour before the shift starts to an hour after it ends, on working days, and works out on the phone whether the person is at the workplace. Only two moments leave the phone: when they arrived and when they left (the time and the spot). The trail of positions is never sent or stored. It can be turned off at any time in the phone's settings.</li>
+      <li><strong>Riders:</strong> while a delivery ride is active, the rider's position is shared with our app server so the store can follow the delivery. A notification shows the whole time it is shared, and it stops when the ride ends.</li>
+    </ul>
+    <p>Location is used for nothing else.</p>
+
+    <h2>Microphone</h2>
+    <p>Some screens can be filled in by speaking. The phone's own speech service turns the speech into words; the app keeps only the words, never the recording. The words may be sent to the AI service below to fill in the form.</p>
+
+    <h2>Notifications</h2>
+    <p>Notifications are delivered by Google's Firebase Cloud Messaging. For this the app keeps a notification token for each phone it is signed in on.</p>
 
     <h2>Google Drive</h2>
     <p>The owner can connect their own Google Drive so the app can keep a nightly backup of the records and keep the workplace photos. For this the app asks Google only for the <strong>drive.file</strong> permission, which lets it see and change <strong>only the files and folders it creates itself</strong> in a "Bunny Momos" folder. It cannot see, read or change anything else in that Drive.</p>
@@ -41,13 +57,24 @@
     <p>The owner can disconnect the app at any time from their Google Account under Security, "Third-party apps with account access". The files already in the Bunny Momos folder stay theirs.</p>
 
     <h2>AI checks</h2>
-    <p>Some checks, such as photo cleanliness scores and spotting unusual entries, use an AI service (Anthropic's Claude). Only what a check needs is sent, such as the photo or the figures being checked; phone numbers, ID documents and salaries are never sent. The AI provider does not use this data to train its models.</p>
+    <p>Some features use an AI service (Anthropic's Claude): photo cleanliness scores, spotting unusual entries, audit reports, reading customer complaints, and filling in forms from spoken words. Only what a check needs is sent, such as the photo or the figures being checked; phone numbers, ID numbers and salaries are never sent. The AI provider does not use this data to train its models.</p>
 
-    <h2>Keeping and removing data</h2>
-    <p>Records are kept while they are needed for the business and for the law. A staff member can ask the owner to see or correct their details, or to remove them when they leave.</p>
+    <h2>Where it is stored and who sees it</h2>
+    <p>Records are stored on our app server, run for us by Supabase (a cloud database service), and travel to and from the app encrypted (HTTPS). Inside the business each person sees what their role needs; an independent auditor sees only the audits given to them.</p>
+    <p>We do not sell data, show ads, or share data with anyone outside the business. The only other companies that handle it are the services that run the app for us (Supabase, Google for notifications and the owner's Drive backup, and Anthropic for the AI checks), and they use it only to provide those services to us.</p>
 
-    <h2>Questions</h2>
-    <p>Staff can ask the owner directly or through the app. Anyone else can ask at our store.</p>
+    <h2 id="delete">Keeping and deleting data</h2>
+    <p>Records are kept while they are needed for the business and for the law, for example pay and attendance records.</p>
+    <p>Anyone with an account can ask to see or correct their details, or to have their account and personal details deleted: ask the owner in person or through the app's Inbox, or use the contact details below. The account is closed and personal details are deleted within 30 days, except records the law requires us to keep, which are kept only as long as required and then deleted.</p>
+
+    <h2>Children</h2>
+    <p>The app is not meant for children. Everyone who uses it is an adult working for or with Bunny Momos.</p>
+
+    <h2>Changes</h2>
+    <p>When this policy changes, this page is updated and the date at the top changes.</p>
+
+    <h2>Contact</h2>
+    <p>Bunny Momos, West Bengal, India. Staff can ask the owner directly or through the app. Anyone else can ask at our store or write to the contact email on our Google Play page.</p>
 
     <footer>Bunny Momos · <a href="/">Staff app</a></footer>
   </main>
