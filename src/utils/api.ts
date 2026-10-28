@@ -1259,6 +1259,7 @@ export interface Employee {
 export interface SalaryComponent {
   label: string; // e.g. "Basic", "HRA", "Conveyance", "Special Allowance"
   amount: number; // fixed monthly amount for this component
+  fromMonth?: string; // YYYY-MM it starts (e.g. the food allowance from 2026-11); unpaid before
 }
 
 export async function getAllEmployees(accessToken?: string): Promise<Employee[]> {
@@ -1736,6 +1737,8 @@ export interface Payout {
   // as its own line alongside the fixed components.
   variablePay?: number;
   variablePayLabel?: string; // defaults to "Variable Pay" if omitted
+  // A one-off bonus (festival, reward), part of `amount` like variable pay; its own payslip line.
+  bonus?: number;
   // Which balance this payout actually came out of. Only 'paytm' payouts are subtracted
   // from the store's Online Cash (Paytm) balance - 'bank' and 'cash' payouts are settled
   // from elsewhere and must NOT drain the Paytm figure. Undefined (legacy records) is

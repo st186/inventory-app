@@ -94,7 +94,7 @@ export function PayslipSheet({
     );
   } else if (view === 'payout') {
     title = t('team.pay.addPayout');
-    dirty = !!(payout.draft.amount || payout.draft.days || payout.draft.variablePay || payout.draft.transactionId);
+    dirty = !!(payout.draft.amount || payout.draft.days || payout.draft.variablePay || payout.draft.bonus || payout.draft.transactionId);
     body = <PayoutForm {...payout} kind={row.type} locked />;
     footer = (
       <Button size="lg" className="flex-1" loading={saving} onClick={onSavePayout}>

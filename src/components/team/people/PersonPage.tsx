@@ -17,6 +17,7 @@ import { StatusChip } from '../../ui/status-chip';
 import { confirm } from '../../ui/confirm';
 import { toast } from '../../ui/sonner';
 import type * as api from '../../../utils/api';
+import { partsForMonth } from '../../../utils/payslip';
 import { ForcePasswordResetButton } from '../../ForcePasswordResetButton';
 import { EmployeeDetailsModal } from '../../EmployeeDetailsModal';
 import { teamApi } from '../teamApi';
@@ -54,7 +55,9 @@ export function PersonPage({
   const chip = chipFor(person);
   const place = placeName(person, stores, productionHouses);
   const parts = person.salaryStructure || [];
-  const fixedTotal = parts.reduce((s, c) => s + (c.amount || 0), 0);
+  // This month's fixed total; a part with a start month (the food allowance) counts from then.
+  const fixedTotal = partsForMonth(parts).reduce((s, c) => s + (c.amount || 0), 0);
+  const fromLabel = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 
   const deactivate = async () => {
     const ok = await confirm({
@@ -140,7 +143,7 @@ export function PersonPage({
       {(parts.length > 0 || person.dailyRate) && (
         <ListGroup overline="Pay components" footer={parts.length > 0 ? 'Variable pay is entered with each payout.' : undefined}>
           {parts.map((c, i) => (
-            <ListRow key={i} density="compact" title={c.label || 'Part'} amount={c.amount || 0} />
+            <ListRow key={i} density="compact" title={c.label || 'Part'} subtitle={c.fromMonth ? `From ${fromLabel(c.fromMonth)}` : undefined} amount={c.amount || 0} />
           ))}
           {parts.length > 0 && <ListRow density="compact" title="Fixed total a month" trailing={<Money value={fixedTotal} className="text-body-md font-semibold" />} />}
           {person.dailyRate ? <ListRow density="compact" title="Daily rate" amount={person.dailyRate} /> : null}

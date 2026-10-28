@@ -16,6 +16,8 @@ export interface PayslipPayout {
   // salaryStructure is supplied, alongside the employee's fixed components.
   variablePay?: number;
   variablePayLabel?: string; // defaults to "Variable Pay" if omitted
+  // A one-off bonus (festival, reward), part of `amount` like variable pay, on its own line.
+  bonus?: number;
   // Salary-advance instalment(s) recovered from this payout (amount is after this).
   advanceDeduction?: number;
 }
@@ -23,6 +25,15 @@ export interface PayslipPayout {
 export interface PayslipSalaryComponent {
   label: string;
   amount: number;
+  /** YYYY-MM the part starts (e.g. the food allowance from November 2026); before it, it isn't paid. */
+  fromMonth?: string;
+}
+
+const currentMonth = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 7);
+
+/** The salary parts paid for a month (YYYY-MM): those without a start month, or started by then. */
+export function partsForMonth<T extends PayslipSalaryComponent>(parts: T[] | null | undefined, month: string = currentMonth()): T[] {
+  return (parts || []).filter((c) => !c.fromMonth || month >= c.fromMonth);
 }
 
 // Which month a payout is listed under (payslips, My Payouts): the month it is for when
@@ -50,10 +61,10 @@ export function salaryMonthOf(p: { forMonth?: string; date: string }): string {
 
 // The monthly salary an advance is capped at: the record's monthlySalary if one was ever
 // set, otherwise the fixed salary structure (Basic + HRA + ...), which is what the forms write.
-export function monthlySalaryOf(employee: { monthlySalary?: number; salaryStructure?: PayslipSalaryComponent[] } | null | undefined): number {
+export function monthlySalaryOf(employee: { monthlySalary?: number; salaryStructure?: PayslipSalaryComponent[] } | null | undefined, month?: string): number {
   if (!employee) return 0;
   if (employee.monthlySalary && employee.monthlySalary > 0) return employee.monthlySalary;
-  return (employee.salaryStructure || []).reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+  return partsForMonth(employee.salaryStructure, month).reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
 }
 
 // Every personal expense (advance cash already handed over, booked as an expense) mapped to
@@ -78,9 +89,11 @@ export function computeMonthlyPay(payouts: PayslipPayout[], personalExpenses: nu
   const paid = payouts.reduce((sum, p) => sum + (p.amount || 0), 0);
   const advanceRecovered = payouts.reduce((sum, p) => sum + (p.advanceDeduction || 0), 0);
   const variablePay = payouts.reduce((sum, p) => sum + (p.variablePay || 0), 0);
+  const bonus = payouts.reduce((sum, p) => sum + (p.bonus || 0), 0);
   return {
     gross: paid + advanceRecovered,
     variablePay,
+    bonus,
     advanceRecovered,
     personalExpenses,
     paid,
@@ -128,6 +141,12 @@ export function generatePayslip(
   const rupees = (n: number) => `${n < 0 ? '−' : ''}₹${Math.abs(n).toLocaleString('en-IN')}`;
   // True whenever this payslip had to fall back to the placeholder Basic/HRA/Special
   // split below for at least one row - drives the disclosure note under the table.
+  // Only the parts paid in this payslip's month (a part with a start month joins from then).
+  const slipMonth = (() => {
+    const d = new Date(`${month} 1, ${year}`);
+    return isNaN(d.getTime()) ? undefined : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  })();
+  salaryStructure = partsForMonth(salaryStructure, slipMonth);
   const usedPlaceholderStructure = employeeType === 'fulltime' && (!salaryStructure || salaryStructure.length === 0);
   const logoUrl = `${window.location.origin}/bunny-logo.png`;
 
@@ -357,7 +376,7 @@ export function generatePayslip(
               // "Other Adjustment".
               const structure = salaryStructure && salaryStructure.length > 0
                 ? salaryStructure
-                : getPlaceholderSalaryComponents(pay.gross - pay.variablePay);
+                : getPlaceholderSalaryComponents(pay.gross - pay.variablePay - pay.bonus);
               const fixedRows = structure.map(comp => `
                 <tr>
                   <td>${comp.label}</td>
@@ -372,17 +391,23 @@ export function generatePayslip(
                   <td class="amount-col">${rupees(pay.variablePay)}</td>
                 </tr>
               ` : '';
+              const bonusRow = pay.bonus > 0 ? `
+                <tr>
+                  <td>Bonus</td>
+                  <td class="amount-col">${rupees(pay.bonus)}</td>
+                </tr>
+              ` : '';
               // Whatever's left after the itemized components - keeps the breakdown
               // honest when the month's pay doesn't match the structure exactly (unpaid
-              // days, a raise not yet reflected in salaryStructure, a one-off bonus, etc.).
-              const remainder = pay.gross - fixedTotal - pay.variablePay;
+              // days, a raise not yet reflected in salaryStructure, etc.).
+              const remainder = pay.gross - fixedTotal - pay.variablePay - pay.bonus;
               const adjustmentRow = Math.abs(remainder) >= 1 ? `
                 <tr>
                   <td>Other Adjustment</td>
                   <td class="amount-col">${rupees(remainder)}</td>
                 </tr>
               ` : '';
-              return fixedRows + variableRow + adjustmentRow;
+              return fixedRows + variableRow + bonusRow + adjustmentRow;
             })()}
             <tr>
               <td><strong>Gross Earnings</strong></td>

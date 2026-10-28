@@ -24,6 +24,7 @@ export type PayoutDraft = {
   forMonth: string;
   transactionId: string;
   variablePay: string;
+  bonus: string;
   paidFrom: 'paytm' | 'bank' | 'cash';
 };
 
@@ -37,6 +38,7 @@ export const blankPayout = (selectedDate: string): PayoutDraft => ({
   forMonth: selectedDate.slice(0, 7),
   transactionId: '',
   variablePay: '',
+  bonus: '',
   paidFrom: 'paytm',
 });
 
@@ -182,6 +184,9 @@ export function PayoutForm({
 
       <Field label={t('team.payout.variablePay')} optional helper={t('team.payout.variableHelp')}>
         <MoneyInput value={draft.variablePay} onValueChange={(_, raw) => set('variablePay', raw)} />
+      </Field>
+      <Field label={t('team.payout.bonus')} optional helper={t('team.payout.bonusHelp')}>
+        <MoneyInput value={draft.bonus} onValueChange={(_, raw) => set('bonus', raw)} />
       </Field>
       {approvedVariablePay !== null && (
         <p className="num -mt-2 text-label font-medium text-success">{t('team.payout.approvedKpi', { amount: formatINR(approvedVariablePay) })}</p>

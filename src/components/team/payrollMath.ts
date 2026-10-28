@@ -45,6 +45,7 @@ export interface PayPayout {
   transactionId?: string;
   variablePay?: number;
   variablePayLabel?: string;
+  bonus?: number;
   advanceDeduction?: number;
   advanceRecovery?: { advanceId: string; month: string; amount: number }[];
   paidFrom?: 'paytm' | 'bank' | 'cash';
@@ -331,8 +332,10 @@ export function monthlySlips(personPayouts: PayPayout[], overheads: PayOverhead[
 
 export type PayStatus = 'paid' | 'partlyPaid' | 'due' | 'noSalary';
 
+// What went toward the fixed salary: variable pay and bonus are paid on top of it (owner, 28 Oct
+// 2026), so a month with only an incentive or a bonus paid still shows the salary as due.
 export function salaryCovered(empPayouts: PayPayout[]): number {
-  return empPayouts.reduce((sum, p) => sum + (p.amount || 0) + (p.advanceDeduction || 0), 0);
+  return empPayouts.reduce((sum, p) => sum + (p.amount || 0) - (p.variablePay || 0) - (p.bonus || 0) + (p.advanceDeduction || 0), 0);
 }
 
 export function payStatusOf(salary: number, covered: number): PayStatus {

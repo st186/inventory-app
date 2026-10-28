@@ -19,7 +19,7 @@ import { teamApi } from '../teamApi';
 import { DetailList, errorText } from '../shared';
 import type { Employee } from './peopleUtils';
 
-type Part = { label: string; amount: number };
+type Part = { label: string; amount: number; fromMonth?: string };
 
 /** Fixed monthly salary parts (Basic, HRA, ...): they drive the payslip's breakdown. */
 export function SalaryStructureEditor({ value, onChange, help }: { value: Part[]; onChange: (next: Part[]) => void; help?: string }) {
@@ -33,7 +33,8 @@ export function SalaryStructureEditor({ value, onChange, help }: { value: Part[]
         </Button>
       </div>
       {value.map((part, idx) => (
-        <div key={idx} className="flex items-center gap-2">
+        <div key={idx} className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
           <Input
             aria-label={`Part ${idx + 1} name`}
             value={part.label}
@@ -49,6 +50,8 @@ export function SalaryStructureEditor({ value, onChange, help }: { value: Part[]
             decimals={0}
           />
           <IconButton label={`Remove part ${idx + 1}`} icon={<Trash2 />} variant="danger-ghost" onClick={() => onChange(value.filter((_, i) => i !== idx))} />
+        </div>
+        {part.fromMonth && <p className="text-caption text-text-3">From {new Date(`${part.fromMonth}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}</p>}
         </div>
       ))}
       {value.length > 0 && <p className="num text-body-sm font-medium text-text">Fixed total {formatINR(total)} a month</p>}

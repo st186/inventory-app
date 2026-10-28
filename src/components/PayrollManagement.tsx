@@ -220,7 +220,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
       toast.error(t('team.payout.pickPeople'));
       return;
     }
-    if (payingByDays ? !payoutData.days : !payoutData.amount && !payoutData.variablePay) {
+    if (payingByDays ? !payoutData.days : !payoutData.amount && !payoutData.variablePay && !payoutData.bonus) {
       toast.error(payingByDays ? t('team.payout.needDays') : t('team.payout.needAmount'));
       return;
     }
@@ -237,8 +237,8 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
     if (submitting) return; // no double submission
     try {
       setSubmitting(true);
-      // A blank amount falls back to the variable pay figure (a pure incentive payout).
-      const grossAmount = parseFloat(payoutData.amount) || parseFloat(payoutData.variablePay) || 0;
+      // A blank amount falls back to the variable pay and bonus (a pure incentive or bonus payout).
+      const grossAmount = parseFloat(payoutData.amount) || ((parseFloat(payoutData.variablePay) || 0) + (parseFloat(payoutData.bonus) || 0));
       const days = parseFloat(payoutData.days) || 0;
       const advanceUpdates: ReturnType<typeof advanceUpdatesFor> = [];
       const newPayouts: PayPayout[] = payoutData.employeeIds.map((empId) => {
@@ -260,6 +260,7 @@ export function PayrollManagement({ userRole, selectedDate, userEmployeeId, user
           forMonth,
           transactionId: payoutData.transactionId || undefined,
           variablePay: payoutData.variablePay ? parseFloat(payoutData.variablePay) : undefined,
+          bonus: payoutData.bonus ? parseFloat(payoutData.bonus) : undefined,
           paidFrom: payoutData.paidFrom,
           advanceDeduction: recovery.total > 0 ? recovery.total : undefined,
           advanceRecovery: recovery.items.length > 0 ? recovery.items : undefined,
