@@ -332,7 +332,9 @@ const VOICE_PROMPT = `You turn one spoken sentence from staff at Bunny Momos, a 
 
 Numbers: Bengali digits ০১২৩৪৫৬৭৮৯ are 0-9. Number words: এক 1, দুই/দু 2, তিন 3, চার 4, পাঁচ 5, ছয় 6, সাত 7, আট 8, নয় 9, দশ 10, বিশ 20, পঞ্চাশ 50, একশো/শো 100, হাজার 1000 (তিন হাজার চারশো = 3400); দেড় 1.5, আড়াই 2.5, সাড়ে = plus a half (সাড়ে তিন = 3.5, সাড়ে তিনশো = 350); পোয়া = 250 g. টাকা / taka / rupees = rupees. কেজি/kilo = kg, গ্রাম = g, লিটার = L, পিস/টা = pieces, আঁটি/bundle = bundle, প্যাকেট = packet.
 
-Packs: "5 burger packs each having 4 burgers at 200" means packs 5, perPack 4, unit pcs, quantity 20. A price said after the whole line ("at 200", "200 taka diye") is the TOTAL for the line; it is per pack only when they say each / per / প্রতি / করে / "packet 200 kore".
+Packs: "5 burger packs each having 4 burgers at 200" means packs 5, perPack 4, unit pcs, quantity 20.
+
+Size of each piece or pack: "each piece 500 g", "এক পিসের ওয়েট ৫০০ গ্রাম", "500 gram er packet", "1 kg er packet", "1 litre each" go in weightEachGrams (grams; 1 kg = 1000; for liquids 1 L = 1000). It is the size of ONE, not the total. A price said after the whole line ("at 200", "200 taka diye") is the TOTAL for the line; it is per pack only when they say each / per / প্রতি / করে / "packet 200 kore".
 
 Only fill what was actually said; leave everything else null. Apart from quantity = packs x perPack, never calculate one value from another.`;
 
@@ -1088,7 +1090,7 @@ ${JSON.stringify({
             type: 'array',
             items: {
               type: 'object', additionalProperties: false,
-              required: ['name', 'quantity', 'unit', 'packs', 'perPack', 'amount', 'pricePerPack'],
+              required: ['name', 'quantity', 'unit', 'packs', 'perPack', 'amount', 'pricePerPack', 'weightEachGrams'],
               properties: {
                 name: { type: 'string', description: 'The item in plain English as a shop list would name it: Chicken, Onion, Coriander Leaves, Maida, Coke, Burger' },
                 quantity: { ...num, description: 'Total quantity in `unit` (for packs: packs x pieces per pack)' },
@@ -1097,6 +1099,7 @@ ${JSON.stringify({
                 perPack: { ...num, description: 'Pieces in each pack ("each having 4 burgers" -> 4), else null' },
                 amount: { ...num, description: 'Total rupees paid for this line. If only a per-pack or per-piece price was said, null' },
                 pricePerPack: { ...num, description: 'Price of ONE pack or piece, only when they said each / per / প্রতি / করে / ta ("200 each"), else null' },
+                weightEachGrams: { ...num, description: 'Weight (or volume) of ONE piece or pack in grams, only when said ("each piece 500 g", "এক পিসের ওয়েট ৫০০ গ্রাম" -> 500, "1 kg er packet" -> 1000, "1 litre each" -> 1000), else null' },
               },
             },
           },

@@ -582,7 +582,7 @@ export async function updateMyProfile(accessToken: string, updates: { phone?: st
 
 // Voice entry: one spoken sentence read into form fields (server /ai/voice-fill, Haiku).
 export interface VoiceSalesFields { paytm: number | null; cash: number | null; cashInHand: number | null; unclear: string }
-export interface VoiceExpenseItem { name: string; quantity: number | null; unit: string | null; packs?: number | null; perPack?: number | null; amount: number | null; pricePerPack?: number | null }
+export interface VoiceExpenseItem { name: string; quantity: number | null; unit: string | null; packs?: number | null; perPack?: number | null; amount: number | null; pricePerPack?: number | null; weightEachGrams?: number | null }
 export interface VoiceExpenseFields { items: VoiceExpenseItem[]; paidWith: 'cash' | 'online' | 'unknown'; unclear: string }
 
 export async function voiceFill(accessToken: string, kind: 'sales', text: string): Promise<VoiceSalesFields>;

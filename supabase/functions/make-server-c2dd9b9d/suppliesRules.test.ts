@@ -84,7 +84,7 @@ test('pack sizes: labels and remembering how an item was written', () => {
 });
 
 test('expense amounts that do not say how much', () => {
-  const e = (name: string, qty: number, unit: string, category = 'staples', piecesPerCarton?: number) => amountIssue({ name, qty, unit, category, piecesPerCarton });
+  const e = (name: string, qty: number, unit: string, category = 'staples', piecesPerCarton?: number, weightEachGrams?: number) => amountIssue({ name, qty, unit, category, piecesPerCarton, weightEachGrams });
   assert.match(e('Butter', 8, 'pcs', 'dairy') || '', /doesn't say how big each pack is/);
   assert.match(e('Chicken 65 masala', 3, 'pcs', 'spices_seasonings') || '', /each pack/);
   assert.match(e('Oil', 2, 'packet') || '', /how big each packet is/);
@@ -94,7 +94,8 @@ test('expense amounts that do not say how much', () => {
   // Clear amounts.
   for (const ok of [e('Butter', 2, 'kg', 'dairy'), e('Oil', 2, 'L'), e('Coriander Leaves', 2, 'bundle', 'fresh_produce'), e('Coriander Leaves', 400, 'g', 'fresh_produce'),
     e('Lemon', 6, 'pcs', 'fresh_produce'), e('Maida', 10, 'kg'), e('Burger buns', 2, 'pcs', 'bread_buns'), e('Butter Paper', 2, 'pcs', 'packaging'),
-    e('Foil', 1, 'pcs', 'packaging'), e('Cheese slices', 2, 'pcs', 'dairy', 20)]) assert.equal(ok, null);
+    e('Foil', 1, 'pcs', 'packaging'), e('Cheese slices', 2, 'pcs', 'dairy', 20),
+    e('Aromatic Powder', 10, 'pcs', 'spices_seasonings', undefined, 500), e('Butter', 8, 'pcs', 'dairy', undefined, 500)]) assert.equal(ok, null);
   // The fix, from how the item was last written on a shopping list.
   assert.deepEqual(amountFix(8, 840, { item: 'Butter', qty: 2, unit: 'packet', packSize: 500, packUnit: 'g', at: '' }), { quantity: 4, unit: 'kg', costPerUnit: 210, text: '8 × 500 g = 4 kg' });
   assert.equal(amountFix(8, 840, null), null);

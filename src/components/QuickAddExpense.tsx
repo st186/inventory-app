@@ -347,11 +347,19 @@ export function QuickAddExpense({
         setCartonCount(String(packs));
         setPiecesPerCarton(String(perPack));
       } else {
-        if (unitSaid && UNIT_PILLS.includes(unitSaid)) { setUnit(unitSaid); setIsBundleMode(false); }
+        // "10 pieces, each 500 g": pieces with the weight of each (the form's "Add the weight of each piece").
+        const each = first.weightEachGrams && first.weightEachGrams > 0 ? first.weightEachGrams : null;
+        const pieceUnit = unitSaid === 'pcs' || (!unitSaid && each);
+        if (pieceUnit) { setUnit('pcs'); setIsBundleMode(false); } else if (unitSaid && UNIT_PILLS.includes(unitSaid)) { setUnit(unitSaid); setIsBundleMode(false); }
         if (first.quantity !== null) setQuantity(String(first.quantity));
+        if (each && pieceUnit) {
+          setShowWeightField(true);
+          if (each >= 1000 && each % 100 === 0) { setWeightUnit('kg'); setWeightPerUnit(String(each / 1000)); } else { setWeightUnit('g'); setWeightPerUnit(String(each)); }
+        }
       }
       if (f.paidWith === 'online' && ownerPaymentOption) setPaidFrom('online');
-      const what = packs && perPack ? `${packs} packs × ${perPack} ${first.name}` : `${first.quantity ?? ''} ${unitSaid ?? ''} ${first.name}`;
+      const eachText = first.weightEachGrams && first.weightEachGrams > 0 && !(packs && perPack) ? ` × ${first.weightEachGrams >= 1000 ? `${first.weightEachGrams / 1000} kg` : `${first.weightEachGrams} g`} each` : '';
+      const what = packs && perPack ? `${packs} packs × ${perPack} ${first.name}` : `${first.quantity ?? ''} ${unitSaid ?? (eachText ? 'pcs' : '')}${eachText} ${first.name}`;
       toast.success(`Filled ${what}${total !== null ? ` · ₹${total.toLocaleString('en-IN')}` : ''} - check, then save`.replace(/\s+/g, ' '));
     } catch (e: any) {
       toast.error(e?.message || 'Could not read that');

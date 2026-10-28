@@ -175,17 +175,18 @@ const PIECES = new Set(['', 'pcs', 'pc', 'piece', 'pieces', 'nos', 'no']);
 /** An expense amount that doesn't say how much (owner, 29 Oct 2026), in one sentence; null when it is clear.
  *  A packed food counted in pieces with no pack size ("Butter 8 pcs"), a pack with no size, a
  *  vegetable counted in pieces, a bundle of something that isn't a leafy herb. */
-export function amountIssue(e: { name: string; qty: number; unit: string; category?: string; piecesPerCarton?: number }): string | null {
+export function amountIssue(e: { name: string; qty: number; unit: string; category?: string; piecesPerCarton?: number; weightEachGrams?: number }): string | null {
   const unit = String(e.unit || '').trim().toLowerCase();
   const name = String(e.name || '').trim() || 'This item';
   const qty = Number(e.qty) || 0;
-  const sized = Number(e.piecesPerCarton) > 0;
+  // Pieces in a pack, or the weight of each piece (the expense form's "Add the weight of each piece").
+  const sized = Number(e.piecesPerCarton) > 0 || Number(e.weightEachGrams) > 0;
   const food = !e.category || FOOD_CATEGORIES.has(e.category);
   if (unit === 'bundle') return LEAFY.test(name) ? null : `${name} by the bundle doesn't say how much - only leafy herbs like coriander and pudina go by the bundle. Write the weight.`;
   if (PACK_UNITS.has(unit) && !sized) return `${name}: "${qty} ${unitWord(unit, qty)}" doesn't say how big each ${unit} is. Write the total weight or volume (e.g. 2 L), or the size of each.`;
   if (!PIECES.has(unit) || sized || !food) return null;
   if (LEAFY.test(name)) return `${name} in pieces doesn't say how much - write the bundles or the weight.`;
-  if (PACKED.test(name) && !NOT_PACKED.test(name)) return `${name}: "${qty} pcs" doesn't say how big each pack is. Write the total weight or volume (e.g. 8 × 500 g = 4 kg).`;
+  if (PACKED.test(name) && !NOT_PACKED.test(name)) return `${name}: "${qty} pcs" doesn't say how big each pack is. Add the weight of each piece (e.g. 8 pcs × 500 g), or write the total weight.`;
   if (e.category === 'fresh_produce' && !COUNTED_VEG.test(name)) return `${name} goes by weight (g or kg), not pieces.`;
   return null;
 }

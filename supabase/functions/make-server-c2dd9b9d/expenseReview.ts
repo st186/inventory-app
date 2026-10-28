@@ -158,7 +158,7 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
     // An amount that doesn't say how much. The fix comes from how the item was last written on a
     // shopping list (2 packets × 1 L), when there is one.
     if (source === 'inventory') {
-      const issue = amountIssue({ name, qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton });
+      const issue = amountIssue({ name, qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton, weightEachGrams: item.weightPerUnitGrams });
       if (issue) {
         const specs: Record<string, ItemSpec> | null = await deps.kv.get('supply-item-specs').catch(() => null);
         const fix = amountFix(Number(item.quantity) || 0, amount, specs?.[itemKey(name)]);
@@ -284,7 +284,7 @@ export async function recheckAmount(deps: Pick<ExpenseReviewDeps, 'kv'>, item: a
     const id = `${item?.id}:amount`;
     const flag: Flag | null = await deps.kv.get(`expense-flag:${id}`);
     if (!flag || flag.status !== 'open') return;
-    if (amountIssue({ name: nameOf(item), qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton })) return;
+    if (amountIssue({ name: nameOf(item), qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton, weightEachGrams: item.weightPerUnitGrams })) return;
     await deps.kv.set(`expense-flag:${id}`, { ...flag, status: 'fixed', decidedBy: by, decidedAt: new Date().toISOString(), note: 'The entry was edited' });
   } catch (error) {
     console.log('Expense recheck failed:', error instanceof Error ? error.message : String(error));
