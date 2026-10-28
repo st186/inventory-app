@@ -39,6 +39,7 @@ export type HomeData = {
   getTimesheets: typeof api.getTimesheets;
   // Stock
   getStockOuts: typeof api.getStockOuts;
+  getProductionCashEntry: typeof api.getProductionCashEntry;
   getStockWastageEntry: typeof api.getStockWastageEntry;
   /** The rider's rides screen; the preview swaps in a placeholder (it polls the server). */
   renderRiderTrips?: (props: { stockRequests: api.ProductionRequest[]; canDispatch: boolean; stores: { id: string; name: string }[]; defaultStoreId: string | null }) => ReactNode;
@@ -71,6 +72,7 @@ export const realHomeData: HomeData = {
   getEmployeesByIncharge: api.getEmployeesByIncharge,
   getTimesheets: api.getTimesheets,
   getStockOuts: api.getStockOuts,
+  getProductionCashEntry: api.getProductionCashEntry,
   getStockWastageEntry: api.getStockWastageEntry,
 };
 

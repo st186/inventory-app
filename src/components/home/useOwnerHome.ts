@@ -26,6 +26,8 @@ export type OwnerExtras = {
   variablePay: { month: string; count: number } | null;
   stockOuts: StockOutEntry[];
   photosToReview: ReviewItem[];
+  /** Production's cash today (counted, else expected) for the scoped stores' production houses; null without one. */
+  productionCash: { amount: number; counted: boolean } | null;
   loading: boolean;
 };
 
@@ -36,7 +38,7 @@ export function useOwnerHome(today: string) {
   const perms = nav.perms;
   const [attempt, setAttempt] = useState(0);
   const [extras, setExtras] = useState<OwnerExtras>({
-    money: pending(), topups: [], leaves: null, recalibrations: null, variablePay: null, stockOuts: [], photosToReview: [], loading: true,
+    money: pending(), topups: [], leaves: null, recalibrations: null, variablePay: null, stockOuts: [], photosToReview: [], productionCash: null, loading: true,
   });
 
   // Sales and cash scope: Money > Sales' store list for this login.
@@ -86,7 +88,19 @@ export function useOwnerHome(today: string) {
         .catch(() => undefined)
       : Promise.resolve();
 
-    Promise.allSettled([money, topups, leaves, recal, variable, stockOuts, photos]).then(() => set({ loading: false }));
+    // The store hands its cash to production every night, so the business's cash sits mostly with
+    // production: the same figure Money > Sales' "Right now" adds to the store's (owner, 28 Oct).
+    const houseIds = [...new Set(stores.filter((s) => scopeStoreIds.includes(s.id) && s.productionHouseId).map((s) => s.productionHouseId as string))];
+    const productionCash = houseIds.length === 0 ? Promise.resolve() : Promise.all(houseIds.map((id) => data.getProductionCashEntry(token, id, today)))
+      .then((rows) => set({
+        productionCash: {
+          amount: rows.reduce((sum, { entry, live }) => sum + (entry?.actualCashInHand ?? entry?.expectedClosingCashInHand ?? live?.expectedClosingCashInHand ?? 0), 0),
+          counted: rows.every(({ entry }) => entry?.actualCashInHand !== null && entry?.actualCashInHand !== undefined),
+        },
+      }))
+      .catch(() => undefined);
+
+    Promise.allSettled([money, topups, leaves, recal, variable, stockOuts, photos, productionCash]).then(() => set({ loading: false }));
     return () => { cancelled = true; };
     // Re-read after the top bar's "Refresh" (App bumps dataRefreshedAt).
     // eslint-disable-next-line react-hooks/exhaustive-deps

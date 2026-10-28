@@ -156,6 +156,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
             onRetryProfit={home.retry}
             spent={home.spentToday}
             cash={home.cash}
+            productionCash={home.extras.productionCash}
             paytm={home.paytm}
             canOpenInsights={has('insights')}
             onOpen={(what) => {

@@ -18,6 +18,8 @@ export type OwnerKpisProps = {
   onRetryProfit: () => void;
   spent: DaySpend;
   cash: { cash: number; counted: boolean; storeCount: number };
+  /** Production's cash today (counted, else expected); null when the stores have no production house. */
+  productionCash: { amount: number; counted: boolean } | null;
   paytm: { balance: number; asOf: string | null; known: boolean };
   onOpen: (what: 'insights' | 'expenses' | 'cash' | 'paytm') => void;
   canOpenInsights: boolean;
@@ -68,7 +70,7 @@ function ProfitSheet({ open, onOpenChange, profit, monthWord, onInsights }: {
   );
 }
 
-export function OwnerKpis({ today, profit, onRetryProfit, spent, cash, paytm, onOpen, canOpenInsights }: OwnerKpisProps) {
+export function OwnerKpis({ today, profit, onRetryProfit, spent, cash, productionCash, paytm, onOpen, canOpenInsights }: OwnerKpisProps) {
   const { t } = useT();
   const words = useDateWords();
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -93,12 +95,15 @@ export function OwnerKpis({ today, profit, onRetryProfit, spent, cash, paytm, on
           caption={spent.count === 0 ? t('home.noEntries') : spent.count === 1 ? t('home.entry') : t('home.entries', { n: spent.count })}
           onClick={() => onOpen('expenses')}
         />
+        {/* The store's till plus production's cash (the store hands its cash over every night):
+            an estimate until the day close and production have both counted. */}
         <StatTile
           label={t('home.cashInHand')}
-          value={<Money value={cash.cash} />}
-          chip={cash.storeCount > 0 ? (cash.counted
+          value={<Money value={cash.cash + (productionCash?.amount ?? 0)} />}
+          chip={cash.storeCount > 0 ? (cash.counted && (productionCash?.counted ?? true)
             ? <StatusChip tone="success">{t('home.counted')}</StatusChip>
-            : <StatusChip tone="warning">{t('home.notCounted')}</StatusChip>) : undefined}
+            : <StatusChip tone="neutral">{t('home.cashEstimate')}</StatusChip>) : undefined}
+          caption={productionCash ? t('home.cashSplit', { store: formatINR(cash.cash), production: formatINR(productionCash.amount) }) : undefined}
           onClick={() => onOpen('cash')}
         />
         <StatTile

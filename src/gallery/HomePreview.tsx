@@ -140,6 +140,7 @@ function mockHomeData(personaId: string, params: Params, sample: ReturnType<type
     getTimesheets: () => later(params.empty ? [] : [{ id: 'ts1', status: 'pending' }, { id: 'ts2', status: 'approved' }] as any),
     getStockOuts: () => later(params.empty ? [] : [{ id: 'so1', storeId: 'STORE-1', item: 'Chicken Cheese momos', category: 'momo', reason: 'sold_out', startAt: istIso(today, '18:40'), endAt: null, offOnline: true, createdBy: 'x', createdByName: 'Counter Crew Demo', createdAt: '', updatedAt: '' }] as any),
     getStockWastageEntry: () => later(null),
+    getProductionCashEntry: () => later({ entry: null, live: { expectedClosingCashInHand: 1300 } as api.ProductionCashLive }),
     renderRiderTrips: () => (
       <div className="mx-auto max-w-[720px] px-4 pb-6 sm:px-6 lg:px-8">
         <Callout tone="info" title="RiderTrips (rider mode)">The rides screen: current ride with its next-step button, availability and earnings. It talks to the server, so the preview shows this box.</Callout>
