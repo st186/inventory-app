@@ -5507,6 +5507,13 @@ app.post('/make-server-c2dd9b9d/production-cash/:id/reject-discrepancy', async (
 // number. `production:` itself (the finished-pieces/wastage/sauces record) is untouched -
 // this is a second, parallel record.
 const PRODUCTION_LEDGER_GO_LIVE_DATE = '2026-08-23';
+// No day's dough, stuffing, batter or coating comes near 100 kg, so a bigger figure is grams
+// typed in a kg box (seven ledger entries by Oct 2026, corrected 28 Oct). Refused, not saved.
+const LEDGER_MAX_KG = 100;
+function ledgerGramsError(values: any[]): string | null {
+  const big = values.map((v) => Number(v) || 0).find((v) => v > LEDGER_MAX_KG);
+  return big === undefined ? null : `${big} kg is more than a day's production - it looks like grams. Type kilograms: ${big / 1000} for ${big} g.`;
+}
 
 // One pool id per row of a production-ledger record: the two global pools ('dough',
 // 'batter', shared across every momo type in that group) plus one per-type pool per momo
@@ -5814,6 +5821,8 @@ app.post('/make-server-c2dd9b9d/production-ledger-item', async (c) => {
     if (!isSentinel && !momoType) {
       return c.json({ error: 'Unknown momo type' }, 400);
     }
+    const gramsError = ledgerGramsError([globalPoolQty, perTypePoolQty]);
+    if (gramsError) return c.json({ error: gramsError }, 400);
 
     const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const loggedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
@@ -5863,6 +5872,8 @@ app.put('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
     }
 
     const { globalPoolQty, perTypePoolQty } = await c.req.json();
+    const gramsError = ledgerGramsError([globalPoolQty, perTypePoolQty]);
+    if (gramsError) return c.json({ error: gramsError }, 400);
     const updated = {
       ...existing,
       globalPoolQty: typeof globalPoolQty === 'number' ? globalPoolQty : existing.globalPoolQty,
@@ -5942,6 +5953,12 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     if (!closingActuals || typeof closingActuals !== 'object') {
       return c.json({ error: 'closingActuals (per pool) is required' }, 400);
     }
+    const gramsError = ledgerGramsError([
+      ...Object.values(closingActuals),
+      ...Object.values(wastageOverrides && typeof wastageOverrides === 'object' ? wastageOverrides : {}),
+      ...Object.values(manualOpeningOverride && typeof manualOpeningOverride === 'object' ? manualOpeningOverride : {}),
+    ]);
+    if (gramsError) return c.json({ error: gramsError }, 400);
 
     const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
 

@@ -8,6 +8,7 @@ import { Input } from '../ui/input';
 import { useT } from '../../utils/i18n';
 import { ALL_POOL_IDS, getPoolLabel } from '../../constants/momoTypes';
 import type { ProductionLedgerPoolState } from '../../utils/api';
+import { looksLikeGrams } from './ledgerKg';
 
 type Props = {
   pools: Record<string, ProductionLedgerPoolState>;
@@ -56,7 +57,10 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
     setWastageInputs(seededWastage);
   }, [pools]);
 
+  const grams = [closingInputs, wastageInputs, openingOverrideInputs].some((inputs) => Object.values(inputs).some(looksLikeGrams));
+
   const handleSubmit = () => {
+    if (grams) return;
     const closingActuals: Record<string, number> = {};
     for (const id of ALL_POOL_IDS) {
       const raw = closingInputs[id];
@@ -107,14 +111,14 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
                 </div>
                 <div className={`grid gap-3 ${isFirstEverDay && !closed ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   {isFirstEverDay && !closed && (
-                    <Field label={t('stock.prod.alreadyThere')}>
+                    <Field label={t('stock.prod.alreadyThere')} error={looksLikeGrams(openingOverrideInputs[id]) ? t('stock.prod.looksLikeGrams') : undefined}>
                       <Input type="text" inputMode="decimal" className="num" value={openingOverrideInputs[id] ?? ''} onChange={(e) => setOpeningOverrideInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled} placeholder="0.00" />
                     </Field>
                   )}
-                  <Field label={t('stock.prod.closingCount')}>
+                  <Field label={t('stock.prod.closingCount')} error={looksLikeGrams(closingRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
                     <Input type="text" inputMode="decimal" className="num" value={closingRaw} onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled || closed} placeholder="0.00" />
                   </Field>
-                  <Field label={t('stock.prod.wastageKg')}>
+                  <Field label={t('stock.prod.wastageKg')} error={looksLikeGrams(wastageRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
                     <Input type="text" inputMode="decimal" className="num" value={wastageRaw} onChange={(e) => setWastageInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.-]/g, '') }))} disabled={disabled || closed} placeholder="-" />
                   </Field>
                 </div>
@@ -130,7 +134,7 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
       )}
 
       {!closed && relevantPoolIds.length > 0 && (
-        <Button variant="secondary" className="self-start" leadingIcon={<Lock />} loading={submitting} disabled={disabled} onClick={handleSubmit}>
+        <Button variant="secondary" className="self-start" leadingIcon={<Lock />} loading={submitting} disabled={disabled || grams} onClick={handleSubmit}>
           {t('stock.prod.closeDay')}
         </Button>
       )}

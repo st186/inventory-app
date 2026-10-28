@@ -8,6 +8,7 @@ import { Input } from '../ui/input';
 import { NativeSelect } from '../ui/select';
 import { useT } from '../../utils/i18n';
 import { momoName } from '../stock/stockShared';
+import { looksLikeGrams } from './ledgerKg';
 
 type Props = {
   disabled?: boolean;
@@ -37,7 +38,10 @@ export function PrepareLineItemForm({ disabled, submitting, onAdd }: Props) {
     setUniqueGlobalQty('');
   }, [momoKey]);
 
+  const grams = looksLikeGrams(perTypeQty) || (hasUniqueGlobal && looksLikeGrams(uniqueGlobalQty));
+
   const handleAdd = async () => {
+    if (grams) return;
     const p = parseFloat(perTypeQty) || 0;
     const g = hasUniqueGlobal ? (parseFloat(uniqueGlobalQty) || 0) : 0;
     if (p <= 0 && g <= 0) return;
@@ -55,7 +59,7 @@ export function PrepareLineItemForm({ disabled, submitting, onAdd }: Props) {
             {MOMO_TYPES.map((m) => <option key={m.key} value={m.key}>{momoName(lang, m.inventoryKey, m.label)}</option>)}
           </NativeSelect>
         </Field>
-        <Field label={perTypeLabel}>
+        <Field label={perTypeLabel} error={looksLikeGrams(perTypeQty) ? t('stock.prod.looksLikeGrams') : undefined}>
           <Input type="text" inputMode="decimal" className="num" value={perTypeQty} onChange={(e) => setPerTypeQty(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
         </Field>
       </div>
@@ -64,11 +68,11 @@ export function PrepareLineItemForm({ disabled, submitting, onAdd }: Props) {
         <span className="text-body-sm text-text">{t('stock.prod.uniqueDough', { pool: globalWord.toLowerCase() })}</span>
       </label>
       {hasUniqueGlobal && (
-        <Field label={t('stock.prod.uniqueDoughKg', { pool: globalWord, type: typeName })} helper={t('stock.prod.uniqueDoughHint')}>
+        <Field label={t('stock.prod.uniqueDoughKg', { pool: globalWord, type: typeName })} helper={t('stock.prod.uniqueDoughHint')} error={looksLikeGrams(uniqueGlobalQty) ? t('stock.prod.looksLikeGrams') : undefined}>
           <Input type="text" inputMode="decimal" className="num" value={uniqueGlobalQty} onChange={(e) => setUniqueGlobalQty(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" autoFocus />
         </Field>
       )}
-      <Button variant="secondary" className="self-start" leadingIcon={<PlusCircle />} loading={submitting} disabled={disabled || (!perTypeQty && !(hasUniqueGlobal && uniqueGlobalQty))} onClick={handleAdd}>
+      <Button variant="secondary" className="self-start" leadingIcon={<PlusCircle />} loading={submitting} disabled={disabled || grams || (!perTypeQty && !(hasUniqueGlobal && uniqueGlobalQty))} onClick={handleAdd}>
         {t('stock.prod.addToBatches')}
       </Button>
     </section>
