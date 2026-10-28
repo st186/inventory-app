@@ -9,6 +9,14 @@ const config: CapacitorConfig = {
     // five minutes after the app is backgrounded (rider live tracking).
     useLegacyBridge: true,
   },
+  plugins: {
+    // Live updates (src/utils/liveUpdate.ts), self-hosted: the app checks our own manifest, so
+    // automatic checks against Capgo's servers stay off and no stats are sent to them.
+    CapacitorUpdater: {
+      autoUpdate: false,
+      statsUrl: '',
+    },
+  },
 };
 
 export default config;

@@ -12,19 +12,10 @@ import { Button } from '../ui/button';
 import { InitialsAvatar } from '../ui/avatar';
 import { LanguagePicker } from '../BunnyLanguagePicker';
 import { PushNotificationStatus, pushStateChip, usePushStatus } from '../PushNotificationStatus';
-import { APP_VERSION } from '../../utils/appVersion';
+import { APP_VERSION, isNewerVersion } from '../../utils/appVersion';
+import { applyUpdateNow, getLiveUpdateState, liveUpdatesOn } from '../../utils/liveUpdate';
 import * as api from '../../utils/api';
 import { useT } from '../../utils/i18n';
-
-function isNewer(latest: string, current: string): boolean {
-  const a = latest.split('.').map((n) => parseInt(n, 10) || 0);
-  const b = current.split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const diff = (a[i] || 0) - (b[i] || 0);
-    if (diff !== 0) return diff > 0;
-  }
-  return false;
-}
 
 export type AccountSheetProps = {
   open: boolean;
@@ -64,12 +55,16 @@ export function AccountSheet(props: AccountSheetProps) {
     if (props.showProfile && props.accessToken) {
       api.getMyProfile(props.accessToken).then((s) => { if (!cancelled) setProfile(s); }).catch(() => undefined);
     }
-    api.getLatestAppVersion().then((v) => { if (!cancelled) setLatest(v); });
+    // The Android app reads its updates from the live-update manifest instead (below).
+    if (!liveUpdatesOn()) api.getLatestAppVersion().then((v) => { if (!cancelled) setLatest(v); });
     return () => { cancelled = true; };
   }, [open, preview, props.showProfile, props.accessToken]);
 
   const close = () => onOpenChange(false);
-  const updateAvailable = !!latest && isNewer(latest, APP_VERSION);
+  const live = liveUpdatesOn() && !preview ? getLiveUpdateState() : null;
+  const liveVersion = live?.apk?.version ?? live?.readyVersion ?? null;
+  const newVersion = live ? liveVersion : latest && isNewerVersion(latest, APP_VERSION) ? latest : null;
+  const updateAvailable = !!newVersion;
   const days = props.passwordDaysLeft;
 
   return (
@@ -123,8 +118,11 @@ export function AccountSheet(props: AccountSheetProps) {
             <ListRow
               icon={Smartphone}
               title={t('account.version', { v: APP_VERSION })}
-              subtitle={updateAvailable ? t('account.updateAvailable', { v: latest! }) : t('account.upToDate')}
+              subtitle={updateAvailable ? t('account.updateAvailable', { v: newVersion! }) : t('account.upToDate')}
               trailing={updateAvailable ? <StatusChip tone="info">{t('account.update')}</StatusChip> : undefined}
+              // A newer APK downloads in the phone's browser; a downloaded live update switches in.
+              href={live?.apk?.url}
+              onClick={!live?.apk && live?.readyVersion ? applyUpdateNow : undefined}
             />
           </ListGroup>
 

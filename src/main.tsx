@@ -7,6 +7,10 @@
   // download only when that script is on screen; in the APK they ship inside the bundle.
   import "./styles/fonts.css";
   import "./index.css";
+  import { startLiveUpdates } from "./utils/liveUpdate";
+
+  // Android app: confirm this version started, then look for an update (utils/liveUpdate.ts).
+  startLiveUpdates();
 
   // The host for confirm() / promptText() (components/ui/confirm.tsx), mounted once. Loaded just
   // after the first frame - the dialog code isn't needed to start - and if a confirm is asked for
