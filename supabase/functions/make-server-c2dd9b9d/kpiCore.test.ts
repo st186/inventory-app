@@ -339,6 +339,20 @@ test('crates and containers: a day per check, half marks when it needed cleaning
   assert.equal(isCratesCheck({ id: 'walls-92cg', name: 'Walls' }), false);
 });
 
+test('photo checks in one: half on time, half clean', () => {
+  const base = crewMonth();
+  const settings = resolveSettings({ weeklyOff: [2], kpis: ['attendance', 'photoChecks'] }, 'BM002', 'production', 'production_incharge');
+  const workplaceChecks = [
+    { date: '2026-10-01', row: { required: 2, done: 2, onTime: 2, items: { a: { aiScore: 8 }, b: { aiScore: 6 } } } },
+    { date: '2026-10-02', row: { required: 2, done: 1, onTime: 1, items: { a: { aiScore: 10 } } } },
+  ];
+  const r = computeMonthKpis({ ...base, group: 'production_incharge', settings, workplaceChecks });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.photoChecks.score, 77.5); // on time 3 of 4 = 75, clean (8 + 6 + 10) / 3 = 8 of 10 = 80
+  assert.match(k.photoChecks.explanation, /^Half for on time, half for clean\. Photo checks done on time: 3 of 4/);
+  assert.equal(computeMonthKpis({ ...base, group: 'production_incharge', settings, workplaceChecks: [] }).kpis.find((x) => x.id === 'photoChecks')!.score, null);
+});
+
 test('cash KPIs: POS cash for the cashier, production cash', () => {
   const base = crewMonth();
   const settings = resolveSettings({ weeklyOff: [2], kpis: ['posCash', 'productionCash', 'cashAccuracy'] }, 'BM003', 'store', 'store_staff');

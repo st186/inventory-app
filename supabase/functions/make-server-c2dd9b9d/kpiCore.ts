@@ -80,7 +80,7 @@ export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted' | 'cratesClean';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -109,6 +109,7 @@ export const KPI_LABELS: Record<KpiId, string> = {
   storeCover: 'Store cover kept',
   requestAccepted: 'Requests accepted by 9 AM',
   cratesClean: 'Crates and containers clean',
+  photoChecks: 'Photo checks (on time and clean)',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -521,6 +522,7 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'timesheet': return 'Send each day\'s timesheet by the end of the next day.';
     case 'workplace': return 'Do every photo check on time and fix anything that needs cleaning straight away.';
     case 'hygiene': return 'Clean before the photo - counters, floor, utensils and storage. Cleaner photos score higher.';
+    case 'photoChecks': return 'Send every photo on time, and clean before you take it: half the marks are for on time, half for how clean the photos score.';
     case 'cashCount': return 'Save the cash count every working day before you close.';
     case 'cashAccuracy': return `Count carefully and record every cash expense so the cash matches within ${inr(CASH_TOLERANCE_INR)}.`;
     case 'posCash': return `Take the right amount for every bill and ring up everything on the POS, so cash and Paytm match the POS within ${inr(CASH_TOLERANCE_INR)}.`;
@@ -719,6 +721,11 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       `Photo checks done on time: ${Math.min(onTimeChecks, required)} of ${required} (${done} done in all).${needsCleaning ? ` ${plural(needsCleaning, 'photo')} showed something needing cleaning (${PHOTO_FLAG_PENALTY} points off each).` : ''}`);
     if (!scored) set('hygiene', null, 'No photos with a hygiene score yet.');
     else set('hygiene', (scoreSum / scored) * 10, `Average hygiene score ${Math.round((scoreSum / scored) * 10) / 10} out of 10 across ${plural(scored, 'scored photo')}.`);
+    // The two as one (owner, 28 Oct 2026, for the production incharge): half on time, half clean.
+    const parts = [results.workplace, results.hygiene].filter((r) => r && r.score !== null) as { score: number; explanation: string }[];
+    if (!parts.length) set('photoChecks', null, 'No photo checks yet.');
+    else set('photoChecks', parts.reduce((sum, r) => sum + r.score, 0) / parts.length,
+      `Half for on time, half for clean. ${[results.workplace, results.hygiene].map((r) => r?.explanation).filter(Boolean).join(' ')}`);
   }
 
   // Store incharge: the day's cash count and how well it matched; items running out.
