@@ -1,6 +1,6 @@
 // Home for the owner and - as the "ops" variant - the operations manager (design review d2, d3;
-// wireframe Main): sales today, the four tiles (profit with rent and salaries spread through the
-// month first), what needs them, today's brief, the next days' forecast and the team.
+// wireframe Main): the team, sales today, the four tiles (profit with rent and salaries spread
+// through the month first), what needs them, today's brief and the next days' forecast.
 import { useEffect, useMemo } from 'react';
 import {
   AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Factory, IdCard, PackageCheck, Scale, Truck, Users, Wallet,
@@ -137,6 +137,19 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   return (
     <HomePage wide>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        {/* The team first (owner, 28 Oct 2026): who's in today before the money. */}
+        {teamPath && (
+          <div className="lg:col-span-12">
+            <div className="overflow-hidden rounded-lg border border-border bg-surface">
+              <ListRow
+                icon={Users}
+                title={t('home.team.people', { n: people })}
+                subtitle={leaveToday !== null && leaveMonth !== null ? t('home.team.leave', { today: leaveToday, month: leaveMonth }) : undefined}
+                onClick={() => open(teamPath)}
+              />
+            </div>
+          </div>
+        )}
         <div className="lg:col-span-8">
           <SalesTodayHero
             today={clock.today}
@@ -191,18 +204,6 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
               onRetry={overview.reload}
               onSeeAll={has('insights') ? () => open('insights', { tab: 'trends' }) : undefined}
             />
-          </div>
-        )}
-        {teamPath && (
-          <div className="lg:col-span-12">
-            <div className="overflow-hidden rounded-lg border border-border bg-surface">
-              <ListRow
-                icon={Users}
-                title={t('home.team.people', { n: people })}
-                subtitle={leaveToday !== null && leaveMonth !== null ? t('home.team.leave', { today: leaveToday, month: leaveMonth }) : undefined}
-                onClick={() => open(teamPath)}
-              />
-            </div>
           </div>
         )}
       </div>
