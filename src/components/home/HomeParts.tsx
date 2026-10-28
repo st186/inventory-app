@@ -65,6 +65,14 @@ export function timeOf(iso: string | null | undefined): string {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'pm' : 'am'}`;
 }
 
+/** The POS sync time. The sync writes syncedAt with IST digits and a "Z", so it is read as written
+ *  (timeOf would add 5:30 again: 4:34 pm showed as 10:04 pm - owner, 28 Oct 2026). */
+export function posSyncTimeOf(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? '' : timeOf(new Date(ms - 330 * 60000).toISOString());
+}
+
 /** "3:00 pm" for "15:00". */
 export function clockOf(hhmm: string | null | undefined): string {
   if (!hhmm) return '';

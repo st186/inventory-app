@@ -24,7 +24,7 @@ import { countedCashInHand, isPlaceholderSale } from '../../utils/paytmRules';
 import type { StockOutEntry } from '../../utils/stockOuts';
 import { OwnerHome } from './OwnerHome';
 import { TodayChecklist, type ChecklistTask } from './TodayChecklist';
-import { HomePage, istMinutes, timeOf, toMinutes, useClock, useDateWords, useFirstPath, useLoad, useOpen } from './HomeParts';
+import { HomePage, istMinutes, posSyncTimeOf, timeOf, toMinutes, useClock, useDateWords, useFirstPath, useLoad, useOpen } from './HomeParts';
 import { useHomeData } from './homeData';
 import { useFocusProfile } from './HomeShortcuts';
 import { TeamLeaveRow } from './TeamLeaveRow';
@@ -297,7 +297,7 @@ function InchargeHome() {
             <StatTile
               label={t('home.salesSoFar')}
               value={<Money value={salesSoFar.total} />}
-              caption={salesSoFar.syncedAt ? t('home.posSynced', { time: timeOf(salesSoFar.syncedAt) }) : !salesSoFar.hasEntry ? t('home.noSalesYet') : undefined}
+              caption={salesSoFar.syncedAt ? t('home.posSynced', { time: posSyncTimeOf(salesSoFar.syncedAt) }) : !salesSoFar.hasEntry ? t('home.noSalesYet') : undefined}
               onClick={has('money/sales') ? () => open('money/sales') : undefined}
             />
             <StatTile

@@ -7,7 +7,7 @@ import { Money, formatCompactINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
 import type { InsightsOverview } from '../../utils/api';
 import type { DaySales } from './homeFigures';
-import { timeOf, useDateWords } from './HomeParts';
+import { posSyncTimeOf, useDateWords } from './HomeParts';
 
 const STORE_OPENS_MIN = 15 * 60; // stores open at 3 PM IST (SalesView STORE_OPENING_HOUR_IST)
 const STORE_CLOSES_MIN = 22 * 60 + 30;
@@ -50,7 +50,7 @@ export function SalesTodayHero({ today, nowMinutes, sales, yesterdaySales, overv
     } else if (!sales.hasEntry && sales.total === 0) {
       caption = t('home.noSalesYet');
     }
-    if (sales.syncedAt) caption = caption ? <>{caption}<br />{t('home.posSynced', { time: timeOf(sales.syncedAt) })}</> : t('home.posSynced', { time: timeOf(sales.syncedAt) });
+    if (sales.syncedAt) caption = caption ? <>{caption}<br />{t('home.posSynced', { time: posSyncTimeOf(sales.syncedAt) })}</> : t('home.posSynced', { time: posSyncTimeOf(sales.syncedAt) });
   }
 
   return (
