@@ -12,6 +12,8 @@ import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
 import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
 import { StoreCoverCard, StoreCoverNotice } from '../kpi/StoreCover';
 import { OpeningChecklistCard, OpeningOverview } from '../opening/OpeningChecklist';
+import { RunningLowCard } from '../supplies/RunningLow';
+import { ShoppingCard } from '../supplies/Shopping';
 import { ExplainComplaintSheet, useComplaintsToDecide, useComplaintsToExplain } from '../complaints/ExplainComplaint';
 import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
@@ -230,6 +232,9 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
           {/* The store opening checklist: theirs to tick on a cover day; every store's progress. */}
           <OpeningChecklistCard />
           <OpeningOverview />
+          {/* Running low (anyone can flag) and the shopping lists (written here, bought by the production incharge). */}
+          <RunningLowCard />
+          <ShoppingCard />
           <TeamLeaveRow onOpenAttendance={teamPath ? () => open(teamPath) : undefined} />
         </div>
         <div className="lg:col-span-8">

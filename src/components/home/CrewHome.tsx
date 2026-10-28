@@ -23,6 +23,7 @@ import { HomePage, toMinutes, useClock, useFirstPath, useLoad, useOpen } from '.
 import { useHomeData } from './homeData';
 import { useFocusProfile } from './HomeShortcuts';
 import { OpeningChecklistCard } from '../opening/OpeningChecklist';
+import { RunningLowCard } from '../supplies/RunningLow';
 
 /** This month's net pay so far - the same sum as the current month on the Pay tab (EmployeeDashboard). */
 function useMonthPay(employeeId: string | null, month: string, enabled: boolean) {
@@ -95,6 +96,7 @@ export function CrewHome() {
       {has('events') && <EventHomeCard onOpen={(id, tab) => router.push('events', tab ? { id, tab } : { id })} />}
       <ShiftClockCard isLead={false} framed={false} />
       <OpeningChecklistCard />
+      <RunningLowCard />
       <TeamLeaveRow />
       <TodayChecklist title={t('home.todo')} tasks={tasks} loading={!photos.loaded || !profile.loaded} />
       {payPath && (

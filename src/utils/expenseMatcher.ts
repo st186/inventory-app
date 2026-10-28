@@ -167,7 +167,7 @@ export function buildExpenseCandidates(customItems: CustomItem[]): ExpenseCandid
     candidates.push({ label: stripEmoji(meta.label), entryType: 'overhead', category, entity });
   }
   for (const synonym of OVERHEAD_SYNONYMS) {
-    candidates.push({ label: synonym.label, entryType: 'overhead', category: synonym.category, entity: synonym.entity });
+    candidates.push({ label: synonym.label, entryType: 'overhead', category: synonym.category, entity: synonym.entity, bengali: BUILT_IN_ITEM_BENGALI[synonym.label] });
   }
 
   // Fixed costs, usable by either entity.

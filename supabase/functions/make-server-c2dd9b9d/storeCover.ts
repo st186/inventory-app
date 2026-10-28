@@ -14,6 +14,7 @@ import {
 } from './kpiCore.ts';
 import { P, actorOf, loadConfig, loadPlaces, profileOf, type KpiDeps } from './attendance.ts';
 import { openingChecklistTick } from './openingChecklist.ts';
+import { shoppingListTick } from './supplies.ts';
 
 const istMinutesNow = () => {
   const d = new Date(Date.now() + 330 * 60000);
@@ -149,6 +150,8 @@ export function registerStoreCoverRoutes(app: any, deps: KpiDeps) {
     if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
     if (!deps.notifyUser) return c.json({ success: true, sent: 0 });
     await openingChecklistTick(deps).catch((err) => console.log('[opening-checklist] reminders failed:', err?.message || 'error'));
+    // Shopping lists held for the end of the shopper's quiet hours (supplies.ts).
+    await shoppingListTick(deps).catch((err) => console.log('[supplies] held lists failed:', err?.message || 'error'));
     try {
       const date = istDate(Date.now());
       const now = istMinutesNow();
