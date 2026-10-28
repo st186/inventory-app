@@ -242,10 +242,11 @@
   --shadow-2xl: 0 12px 32px rgb(0 0 0 / 0.6);
 }
 
-/* The bunny is black line art on a clear background: white lines in the dark theme, cheeks kept
-   saffron (invert, then turn the hue back round). */
+/* The bunny is black line art with a white face on a clear background. In the dark theme it is
+   swapped for public/bunny-logo-dark.png: light outline, ears and whiskers, the face still white
+   with black eyes and saffron cheeks (inverting it made the face a black hole, owner 28 Oct 2026). */
 [data-theme="dark"] img[src$="bunny-logo.png"] {
-  filter: invert(1) hue-rotate(180deg);
+  content: url("/bunny-logo-dark.png");
 }
 
 @theme {
