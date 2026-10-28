@@ -26,6 +26,49 @@ export const AI_MAX_SHIFT = 0.15; // the AI may move the formula amount by at mo
 // Until this day, a worked day with no check-in is judged from the timesheet's start and end
 // (owner, 28 Oct 2026: most staff weren't on the shift clock yet). After it, no check-in = not on time.
 export const TIMESHEET_TIMES_UNTIL = '2026-11-10';
+export const ACCEPT_BY_MIN = 9 * 60; // a stock request should be accepted (preparation started) by 9 AM on its day
+
+// Store cover (owner, 28 Oct 2026): someone who works at the production house from 8 AM goes to
+// the store for the evening on a store-cover day - a store staff member on approved leave, a
+// Saturday or Sunday, or a festival in the store calendar - and checks in there separately.
+export type StoreCover = { storeId: string; start: string; end: string; productionEnd: string; onLeave: boolean; weekends: boolean; festivals: boolean };
+export const DEFAULT_STORE_COVER = { start: '17:00', end: '22:00', productionEnd: '16:30', onLeave: true, weekends: true, festivals: true };
+
+export function cleanStoreCover(raw: any): StoreCover | null {
+  if (!raw || typeof raw !== 'object' || !raw.storeId) return null;
+  const time = (v: any, d: string) => (parseHHMM(v) !== null ? String(v) : d);
+  return {
+    storeId: String(raw.storeId),
+    start: time(raw.start, DEFAULT_STORE_COVER.start),
+    end: time(raw.end, DEFAULT_STORE_COVER.end),
+    productionEnd: time(raw.productionEnd, DEFAULT_STORE_COVER.productionEnd),
+    onLeave: raw.onLeave !== false,
+    weekends: raw.weekends !== false,
+    festivals: raw.festivals !== false,
+  };
+}
+
+// Why a day is a store-cover day (empty: it isn't). storeStaff are the store's own people.
+export function coverReasonsOn(
+  date: string,
+  cover: StoreCover,
+  ctx: { coverId: string; storeStaff: { id: string; name: string }[]; leaves: any[]; calendar: Map<string, any> },
+): string[] {
+  const reasons: string[] = [];
+  const wd = weekdayOf(date);
+  if (cover.weekends && (wd === 0 || wd === 6)) reasons.push(wd === 0 ? 'Sunday' : 'Saturday');
+  const ev = ctx.calendar.get(date);
+  if (cover.festivals && ev && ev.confirmed !== false && ev.effect !== 'closed') reasons.push(String(ev.name || 'Festival'));
+  if (cover.onLeave) {
+    const names = new Map(ctx.storeStaff.filter((p) => p.id !== ctx.coverId).map((p) => [p.id, p.name]));
+    for (const l of ctx.leaves) {
+      if (l?.status !== 'approved' || l.leaveType === 'half' || String(l.leaveDate || '').slice(0, 10) !== date) continue;
+      const name = names.get(String(l.employeeId));
+      if (name && !reasons.includes(`${name} on leave`)) reasons.push(`${name} on leave`);
+    }
+  }
+  return reasons;
+}
 // Extra hours (owner, 28 Oct 2026): time before the shift start or after its end, from the
 // check-in and check-out, counts once the person's incharge confirms it was needed. Every 4
 // confirmed hours in the month add a point to the KPI total, at most 5, which raises variable pay.
@@ -36,7 +79,8 @@ export const EXTRA_POINTS_MAX = 5;
 export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
-  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash';
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
+  | 'storeCover' | 'requestAccepted';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -62,6 +106,8 @@ export const KPI_LABELS: Record<KpiId, string> = {
   placeClean: 'Place kept clean (all photos)',
   posCash: 'POS cash matches (cashier)',
   productionCash: 'Production cash matches',
+  storeCover: 'Store cover kept',
+  requestAccepted: 'Requests accepted by 9 AM',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -108,6 +154,7 @@ export type KpiSettings = {
   weeklyOff: number[]; // 0 = Sunday ... 6 = Saturday
   graceMin: number;
   breakMin: number; // unpaid break inside the shift, taken at any time
+  storeCover: StoreCover | null; // evenings at the store on cover days (see coverReasonsOn)
   hasVariablePay: boolean;
   variablePayMax: number; // ₹ per month
   kpis: KpiId[]; // the person's KPIs in order (nothing saved = their role's list)
@@ -272,6 +319,7 @@ export function resolveSettings(saved: any, employeeId: string, kind: WorkplaceK
     weeklyOff: Array.isArray(saved?.weeklyOff) ? saved.weeklyOff.filter((d: any) => Number.isInteger(d) && d >= 0 && d <= 6) : [],
     graceMin: Number.isFinite(saved?.graceMin) ? saved.graceMin : DEFAULT_GRACE_MIN,
     breakMin: Number.isFinite(saved?.breakMin) ? saved.breakMin : DEFAULT_BREAK_MIN[kind],
+    storeCover: cleanStoreCover(saved?.storeCover),
     hasVariablePay: !!saved?.hasVariablePay,
     variablePayMax: Number.isFinite(saved?.variablePayMax) ? saved.variablePayMax : 0,
     kpis,
@@ -308,6 +356,14 @@ export function cleanSettingsInput(body: any, moneyFields: boolean): { ok: true;
     const ids = [...new Set(body.kpis.filter((k: any) => typeof k === 'string' && k in KPI_LABELS))];
     if (!ids.length) return { ok: false, error: 'Pick at least one KPI' };
     out.kpis = ids;
+  }
+  if (body.storeCover !== undefined) {
+    if (body.storeCover === null) out.storeCover = null;
+    else {
+      const sc = cleanStoreCover(body.storeCover);
+      if (!sc) return { ok: false, error: 'Store cover needs a store' };
+      out.storeCover = sc;
+    }
   }
   if (body.breakMin !== undefined) {
     const b = Number(body.breakMin);
@@ -438,6 +494,8 @@ export type MonthInput = {
   approvals?: any[]; // production entries from the house that supplies the person's store
   placePhotos?: { date: string; item: any }[]; // every photo taken at the incharge's store or kitchen
   productionCash?: any[]; // the day's production-house cash counts (production-cash:{house}:{date})
+  coverDays?: { date: string; reasons: string[] }[]; // this month's store-cover days for the person
+  coverPunches?: { date: string; rec: any }[]; // their separate store check-ins (punch-cover:{id}:{date})
 };
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
@@ -460,6 +518,8 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'cashCount': return 'Save the cash count every working day before you close.';
     case 'cashAccuracy': return `Count carefully and record every cash expense so the cash matches within ${inr(CASH_TOLERANCE_INR)}.`;
     case 'posCash': return `Take the right amount for every bill and ring up everything on the POS, so cash and Paytm match the POS within ${inr(CASH_TOLERANCE_INR)}.`;
+    case 'storeCover': return s.storeCover ? `On a store-cover day, leave the production house by ${fmt12(parseHHMM(s.storeCover.productionEnd) || 0)}, check in at the store by ${fmt12((parseHHMM(s.storeCover.start) || 0) + s.graceMin)} and stay until ${fmt12(parseHHMM(s.storeCover.end) || 0)}.` : 'Check in at the store on store-cover days.';
+    case 'requestAccepted': return `Accept each day's stock request and start preparing by ${fmt12(ACCEPT_BY_MIN)}, so it ships on time.`;
     case 'productionCash': return `Record every production-house cash expense and count the cash each evening, so it matches within ${inr(CASH_TOLERANCE_INR)}.`;
     case 'stockOuts': return 'Ask for stock early (use the forecast) so nothing runs out during the day.';
     case 'productionLogged': return 'Log the day\'s production every working day.';
@@ -548,6 +608,9 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     return { s, e };
   };
   type DaySource = { d: string; punch: PunchRecord | null; sheet: { s: number | null; e: number | null } | null };
+  // On a store-cover day the production part of the shift ends early (the store part is storeCover).
+  const coverSet = new Set((input.coverDays || []).map((x) => x.date));
+  const coverEnd = settings.storeCover ? parseHHMM(settings.storeCover.productionEnd) : null;
   const timedDays: DaySource[] = [];
   for (const d of presentDays) {
     if (halfLeave.has(d)) continue;
@@ -577,7 +640,8 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
         if (inMin > start + settings.graceMin && !outside) { late++; lateMin += inMin - start; }
       } else missedIn++;
       if (outMin !== null) {
-        if (outMin >= end - settings.graceMin) full++; else early++;
+        const dayEnd = coverEnd !== null && coverSet.has(d) ? coverEnd : end;
+        if (outMin >= dayEnd - settings.graceMin) full++; else early++;
         if (inMin !== null) {
           const worked = outMin - inMin;
           if (worked > 0 && worked < 1440) { workedMin += worked; pairedDays++; }
@@ -675,6 +739,52 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       }
     }
   }
+  // Store cover: a separate check-in at the store on each cover day, on time, staying until the end.
+  if (ids.includes('storeCover')) {
+    const cover = settings.storeCover;
+    const coverDays = (input.coverDays || []).filter((x) => x.date >= from && x.date <= to && !fullLeave.has(x.date));
+    if (!cover) set('storeCover', null, 'No store cover set up for this person.');
+    else if (!coverDays.length) set('storeCover', null, 'No store-cover days in this period.');
+    else {
+      const recs = new Map((input.coverPunches || []).map((x) => [x.date, x.rec]));
+      const cStart = parseHHMM(cover.start) as number;
+      const cEnd = parseHHMM(cover.end) as number;
+      let kept = 0, noCheckIn = 0, lateIn = 0, early = 0, away = 0;
+      for (const { date } of coverDays) {
+        const rec = recs.get(date);
+        if (!rec?.in) { noCheckIn++; continue; }
+        if (rec.in.outside) { away++; continue; }
+        const inOk = minutesOfDay(rec.in.at, date) <= cStart + settings.graceMin;
+        const outOk = !!rec.out && minutesOfDay(rec.out.at, date) >= cEnd - settings.graceMin;
+        if (!inOk) lateIn++;
+        if (!outOk) early++;
+        if (inOk && outOk) kept++;
+      }
+      const why = new Map<string, number>();
+      for (const { reasons } of coverDays) for (const r of reasons) { const k = /on leave$/.test(r) ? 'staff leave' : /day$/.test(r) && /^(Satur|Sun)/.test(r) ? 'weekends' : 'festivals'; why.set(k, (why.get(k) || 0) + 1); }
+      set('storeCover', pct(kept, coverDays.length), [
+        `Covered the store ${fmt12(cStart)}-${fmt12(cEnd)} on ${kept} of ${plural(coverDays.length, 'cover day')} (${[...why.entries()].map(([k, n]) => `${k} ${n}`).join(', ')}).`,
+        noCheckIn ? `${plural(noCheckIn, 'day')} without a store check-in.` : '',
+        lateIn ? `Reached the store late on ${plural(lateIn, 'day')}.` : '',
+        early ? `Left the store early on ${plural(early, 'day')}.` : '',
+        away ? `${plural(away, 'store check-in')} made away from the store.` : '',
+      ].filter(Boolean).join(' '));
+    }
+  }
+  // Production: each day's stock request accepted (preparation started) by 9 AM on its day.
+  if (ids.includes('requestAccepted')) {
+    let n = 0, ok = 0, never = 0;
+    for (const r of input.requests || []) {
+      const d = String(r?.requestDate || '').slice(0, 10);
+      if (!d || d < from || d > to || r.status === 'cancelled') continue;
+      n++;
+      if (!r.acceptedAt || Number.isNaN(Date.parse(r.acceptedAt))) { never++; continue; }
+      if (Date.parse(r.acceptedAt) <= istMidnightMs(d) + ACCEPT_BY_MIN * 60000) ok++;
+    }
+    if (!n) set('requestAccepted', null, 'No stock requests in this period.');
+    else set('requestAccepted', pct(ok, n), `${ok} of ${plural(n, 'stock request')} accepted and started by ${fmt12(ACCEPT_BY_MIN)} on the day they were for.${never ? ` ${plural(never, 'request')} never accepted.` : ''}`);
+  }
+
   // The cashier: what the counter collected (cash + Paytm) against what the POS billed that day
   // (cashOverShortAmount: positive = short), on the person's working days.
   if (ids.includes('posCash')) {

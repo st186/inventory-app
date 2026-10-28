@@ -22,6 +22,7 @@ import {
   computeMonthKpis, extraMinutesOf, isMonth, istDate, monthDays, variablePayFormula,
   type KpiId, type MonthKpis,
 } from './kpiCore.ts';
+import { coverFor, loadCoverContext, registerStoreCoverRoutes } from './storeCover.ts';
 import {
   P, actorOf, canManage, loadConfig, loadPlaces, profileOf, registerAttendanceRoutes,
   type Actor, type KpiDeps, type Places, type Profile,
@@ -72,6 +73,7 @@ type Shared = {
   checks: Map<string, { date: string; row: any }[]>;
   stockOuts: Map<string, Promise<any[]>>;
   ledger: Map<string, Promise<{ made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] }>>;
+  coverCtx: ReturnType<typeof loadCoverContext> | null; // store cover (storeCover.ts), loaded when someone has it
 };
 
 // `needs`: every KPI someone on the screen has, so only the data those KPIs read is loaded.
@@ -85,7 +87,7 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
   const [sales, production, requests, trips, checkRows, inventory, overheads, productionCash] = await Promise.all([
     need('cashCount', 'cashAccuracy', 'salesOnTime', 'posCash') ? deps.getAllByPrefix('sales:') : none,
     need('productionLogged', 'wastage', 'productionApproved') ? deps.getAllByPrefix('production:') : none,
-    need('shippedOnTime', 'requestOnTime') ? deps.getAllByPrefix('production_request_') : none,
+    need('shippedOnTime', 'requestOnTime', 'requestAccepted') ? deps.getAllByPrefix('production_request_') : none,
     need('trips') ? deps.getAllByPrefix('rider-trip:') : none,
     rowsByPrefix(`workplace-check:${month}-`),
     need('expensesOnTime') ? deps.getAllByPrefix('inventory:') : none,
@@ -113,6 +115,7 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
     checks,
     stockOuts: new Map(),
     ledger: new Map(),
+    coverCtx: null,
   };
 }
 
@@ -153,6 +156,20 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     }
     ledger = await shared.ledger.get(house)!;
   }
+  // Store cover: this month's cover days and the separate store check-ins.
+  let coverDays: { date: string; reasons: string[] }[] = [];
+  let coverPunches: { date: string; rec: any }[] = [];
+  if (profile.settings.storeCover) {
+    shared.coverCtx ||= loadCoverContext(deps);
+    const ctx = await shared.coverCtx;
+    const days = monthDays(month).filter((d) => d <= shared.today);
+    for (const d of days) {
+      const info = await coverFor(deps, ctx, emp, d);
+      if (info?.reasons.length) coverDays.push({ date: d, reasons: info.reasons });
+    }
+    const recs = await deps.kv.getByPrefix<any>(`punch-cover:${id}:${month}-`);
+    coverPunches = (recs || []).filter((x: any) => x?.date).map((x: any) => ({ date: String(x.date), rec: x }));
+  }
   // Production entries are approved for the house that supplies the person's store.
   const supplyHouse = house || (store ? places.storeHouse.get(store) || null : null);
   // Every photo taken at the incharge's place (a production incharge's kitchen, else their store).
@@ -191,6 +208,8 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
     placePhotos,
     productionCash: supplyHouse ? shared.productionCash.filter((r: any) => r.productionHouseId === supplyHouse) : [],
+    coverDays,
+    coverPunches,
   });
 }
 
@@ -249,6 +268,7 @@ ${JSON.stringify({
 
 export function registerKpiRoutes(app: any, deps: KpiDeps) {
   registerAttendanceRoutes(app, deps);
+  registerStoreCoverRoutes(app, deps);
 
   const fail = (c: any, err: any) => {
     if (err instanceof AiError) return c.json({ error: err.message, ...err.extra }, err.status);

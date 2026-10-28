@@ -8,6 +8,7 @@
 //   /polish-preview.html?screen=expenses             Audit > Expenses (InventoryView, read-only; &role=auditor)
 //   /polish-preview.html?screen=checks               the production checks banner and sheet (made-up flags)
 //   /polish-preview.html?screen=extra                extra hours to confirm (made-up days)
+//   /polish-preview.html?screen=cover                store cover card and the incharge's notice (made-up day)
 //     &role=owner|store-incharge   &lang=en|bn|hi   &empty=1 (no sales records)
 //
 // Requests to the app's server are answered here from src/gallery/insightsMock.ts; nothing leaves
@@ -67,6 +68,9 @@ const EXTRA_DAYS = [
   { employeeId: 'DEMO-2', name: 'Counter Demo', date: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), inAt: new Date(Date.now() - 2 * 86400000 - 9 * 3600000).toISOString(), outAt: new Date(Date.now() - 2 * 86400000 - 0.5 * 3600000).toISOString(), shiftStart: '15:00', shiftEnd: '22:30', minutes: 50 },
 ];
 
+// Made-up store cover for ?screen=cover.
+const COVER = { setUp: true, date: new Date().toISOString().slice(0, 10), cover: true, reasons: ['Saturday', 'Counter Demo on leave'], storeId: 'STORE-1', storeName: 'Store A', start: '17:00', end: '22:00', productionEnd: '16:30', punch: null as any };
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -81,6 +85,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (path.startsWith('/production-flags/')) return json({ flag: {} });
   switch (path) {
     case '/production-flags': return json({ flags: PRODUCTION_FLAGS });
+    case '/shift/cover-today': return json(COVER);
+    case '/shift/cover-team': return json({ covers: [{ ...COVER, employeeId: 'DEMO-4', name: 'Ops Demo', punch: { in: { at: new Date().toISOString(), distanceM: 20 }, out: null } }] });
+    case '/shift/cover-punch': { COVER.punch = { in: { at: new Date().toISOString(), distanceM: 18, outside: false }, out: null }; return json({ punch: COVER.punch }); }
     case '/kpi/extra-hours': return json(init?.method === 'POST' ? { extra: {} } : { days: EXTRA_DAYS });
     case '/sales-data': return json({ data: salesRecords });
     case '/momo-plate-config': return json({ config: {} });
@@ -107,6 +114,7 @@ const SalesData = lazy<ComponentType<any>>(() =>
 const SyncStatusDemo = lazy(() => import('./polishSyncDemo').then((m) => ({ default: m.SyncStatusDemo })));
 const ProductionDemo = lazy(() => import('./polishProductionDemo').then((m) => ({ default: m.ProductionDemo })));
 const InventoryView = lazy(() => import('../components/InventoryView').then((m) => ({ default: m.InventoryView })));
+const StoreCoverDemo = lazy(() => import('../components/kpi/StoreCover').then((m) => ({ default: () => <div className="flex flex-col gap-4"><m.StoreCoverCard /><m.StoreCoverNotice /></div> })));
 const ExtraHoursSheet = lazy(() => import('../components/kpi/ExtraHours').then((m) => ({ default: m.ExtraHoursSheet })));
 const ProductionFlagsBanner = lazy(() => import('../components/production/ProductionFlags').then((m) => ({ default: m.ProductionFlagsBanner })));
 
@@ -130,7 +138,7 @@ function Preview() {
         <PageHeader title={screen === 'sync' ? 'Status line' : screen === 'expenses' ? 'Expenses' : screen === 'checks' ? 'Production' : lang === 'bn' ? 'বিশ্লেষণ' : lang === 'hi' ? 'विश्लेषण' : 'Insights'} />
         <main className="mx-auto w-full max-w-6xl px-4 py-4 lg:px-8">
           <Suspense fallback={null}>
-            {screen === 'extra' ? <ExtraHoursSheet open onOpenChange={() => undefined} days={EXTRA_DAYS} onChanged={() => undefined} /> : screen === 'checks' ? <ProductionFlagsBanner enabled accessToken="demo" /> : screen === 'expenses' ? <InventoryView context={context} selectedStoreId={storeId} /> : screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
+            {screen === 'cover' ? <StoreCoverDemo /> : screen === 'extra' ? <ExtraHoursSheet open onOpenChange={() => undefined} days={EXTRA_DAYS} onChanged={() => undefined} /> : screen === 'checks' ? <ProductionFlagsBanner enabled accessToken="demo" /> : screen === 'expenses' ? <InventoryView context={context} selectedStoreId={storeId} /> : screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
           </Suspense>
         </main>
       </div>

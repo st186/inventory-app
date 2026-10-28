@@ -10,6 +10,7 @@ import { teamKpiApi } from '../team/teamApi';
 import * as kpi from './kpiApi';
 import { FlagList, KpiBars, MonthPicker, TotalBadge } from './KpiParts';
 import { ShiftClockCard } from './ShiftClockCard';
+import { StoreCoverCard } from './StoreCover';
 
 // "My KPIs": the signed-in person's own month so far - each score, the numbers behind it and what
 // would improve it. Money only when the owner has switched that on. The check-in card sits on top
@@ -50,6 +51,7 @@ export function MyKpis() {
   return (
     <div data-ai-private>
       <ShiftClockCard />
+      <StoreCoverCard />
       <TeamPage>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-subtitle font-semibold text-text">{t('more.myKpis')}</h2>

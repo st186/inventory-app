@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   addDays, atWorkplace, checkApprovedAmount, clampAiAmount, cleanSettingsInput, computeMonthKpis, haversineM, istDate,
-  extraMinutesOf, istMidnightMs, lateStartIssues, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
+  coverReasonsOn, extraMinutesOf, istMidnightMs, lateStartIssues, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
   variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, type MonthInput, type PunchRecord,
 } from './kpiCore.ts';
 
@@ -342,6 +342,58 @@ test('cash KPIs: POS cash for the cashier, production cash', () => {
   assert.equal(k.productionCash.score, 66.7);
   assert.match(k.productionCash.explanation, /biggest gap ₹250 short/);
   assert.equal(k.cashAccuracy.label, 'Store cash matches');
+});
+
+test('store cover: which days, the separate store check-in, the earlier production finish', () => {
+  const cover = resolveSettings({ storeCover: { storeId: 'STORE-1' } }, 'BM004', 'mixed', 'operations').storeCover!;
+  assert.deepEqual([cover.start, cover.end, cover.productionEnd], ['17:00', '22:00', '16:30']);
+  const ctx = {
+    coverId: 'BM004',
+    storeStaff: [{ id: 'BM003', name: 'Asha' }, { id: 'BM004', name: 'Cover' }],
+    leaves: [
+      { employeeId: 'BM003', leaveDate: '2026-10-07', status: 'approved', leaveType: 'full' },
+      { employeeId: 'BM003', leaveDate: '2026-10-08', status: 'pending', leaveType: 'full' }, // not approved
+      { employeeId: 'BM003', leaveDate: '2026-10-09', status: 'approved', leaveType: 'half' }, // half day
+    ],
+    calendar: new Map([['2026-10-20', { name: 'Durga Puja', effect: 'busy' }], ['2026-10-21', { name: 'Closed', effect: 'closed' }]]),
+  };
+  assert.deepEqual(coverReasonsOn('2026-10-07', cover, ctx), ['Asha on leave']); // Wednesday
+  assert.deepEqual(coverReasonsOn('2026-10-08', cover, ctx), []);
+  assert.deepEqual(coverReasonsOn('2026-10-09', cover, ctx), []);
+  assert.deepEqual(coverReasonsOn('2026-10-10', cover, ctx), ['Saturday']);
+  assert.deepEqual(coverReasonsOn('2026-10-20', cover, ctx), ['Durga Puja']);
+  assert.deepEqual(coverReasonsOn('2026-10-21', cover, ctx), []);
+
+  const base = crewMonth();
+  const settings = resolveSettings({ shiftStart: '08:00', shiftEnd: '19:00', breakMin: 60, kpis: ['fullShift', 'storeCover'], storeCover: { storeId: 'STORE-1' } }, 'BM004', 'mixed', 'operations');
+  const p = (d: string, i: string, o: string): PunchRecord => ({ employeeId: 'BM004', date: d, outsideWorkplace: false, in: { at: at(d, i), source: 'manual', verified: true }, out: { at: at(d, o), source: 'manual', verified: true } });
+  const punches = [p('2026-10-03', '07:55', '16:35'), p('2026-10-04', '07:58', '16:35'), p('2026-10-05', '08:00', '19:05')];
+  const coverDays = [{ date: '2026-10-03', reasons: ['Saturday'] }, { date: '2026-10-04', reasons: ['Sunday'] }];
+  const coverPunches = [
+    { date: '2026-10-03', rec: { in: { at: at('2026-10-03', '17:05') }, out: { at: at('2026-10-03', '22:02') } } },
+    { date: '2026-10-04', rec: { in: { at: at('2026-10-04', '17:40') }, out: { at: at('2026-10-04', '22:00') } } }, // late at the store
+  ];
+  const r = computeMonthKpis({ ...base, emp: { employeeId: 'BM004' }, settings, punches, timesheets: [], leaves: [], coverDays, coverPunches });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.fullShift.score, 100); // 4:35 PM counts as a full production shift on a cover day
+  assert.equal(k.storeCover.score, 50);
+  assert.match(k.storeCover.explanation, /1 of 2 cover days \(weekends 2\)\. Reached the store late on 1 day/);
+});
+
+test('requests accepted by 9 AM', () => {
+  const base = crewMonth();
+  const settings = resolveSettings({ weeklyOff: [2], kpis: ['requestAccepted'] }, 'BM002', 'production', 'production_incharge');
+  const requests = [
+    { requestDate: '2026-10-01', acceptedAt: at('2026-10-01', '08:40') },
+    { requestDate: '2026-10-02', acceptedAt: at('2026-10-02', '17:09') }, // accepted with the shipping
+    { requestDate: '2026-10-03', acceptedAt: at('2026-10-02', '22:00') }, // the night before
+    { requestDate: '2026-10-04' }, // never accepted
+    { requestDate: '2026-10-05', status: 'cancelled' },
+  ];
+  const r = computeMonthKpis({ ...base, group: 'production_incharge', kind: 'production', settings, requests });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.requestAccepted.score, 50);
+  assert.match(k.requestAccepted.explanation, /2 of 4 stock requests accepted and started by 9:00 AM.*1 request never accepted/);
 });
 
 test('rider rides', () => {

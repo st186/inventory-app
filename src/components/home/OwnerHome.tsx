@@ -10,6 +10,7 @@ import { ProductionFlagsSheet, useProductionFlags } from '../production/Producti
 import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/RepairAlerts';
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
 import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
+import { StoreCoverCard, StoreCoverNotice } from '../kpi/StoreCover';
 import { useShell } from '../shell/ShellContext';
 import { formatINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
@@ -197,7 +198,10 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
     <HomePage wide>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* The team first (owner, 28 Oct 2026): who's in today before the money. */}
-        <div className="lg:col-span-12">
+        <div className="flex flex-col gap-3 lg:col-span-12">
+          {/* Store cover: the operations incharge's own evening at the store, and who covers today. */}
+          <StoreCoverCard />
+          <StoreCoverNotice />
           <TeamLeaveRow onOpenAttendance={teamPath ? () => open(teamPath) : undefined} />
         </div>
         <div className="lg:col-span-8">

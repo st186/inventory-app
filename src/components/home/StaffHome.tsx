@@ -30,6 +30,7 @@ import { ProductionFlagsSheet, useProductionFlags } from '../production/Producti
 import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/RepairAlerts';
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
 import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
+import { StoreCoverCard, StoreCoverNotice } from '../kpi/StoreCover';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
@@ -247,6 +248,8 @@ function InchargeHome() {
     <HomePage>
       {has('events') && <EventHomeCard onOpen={(id, tab) => router.push('events', tab ? { id, tab } : { id })} />}
       <ShiftClockCard isLead framed={false} />
+      <StoreCoverCard />
+      <StoreCoverNotice />
       <TeamLeaveRow onOpenAttendance={has('team/attendance') ? () => open('team/attendance') : undefined} />
       <TodayChecklist tasks={tasks} />
 

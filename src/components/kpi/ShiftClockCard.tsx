@@ -22,7 +22,7 @@ import {
 // check-ins waiting for confirmation. "Why location?" opens the consent text. Marked
 // data-ai-private: it shows people's times and names, which the Bunny chat must not send to the AI.
 
-async function currentPosition(): Promise<{ lat: number; lng: number; accuracyM: number } | null> {
+export async function currentPosition(): Promise<{ lat: number; lng: number; accuracyM: number } | null> {
   try {
     if (Capacitor.isNativePlatform()) {
       const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 });

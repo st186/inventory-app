@@ -38,7 +38,8 @@ const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return {
 
 export type KpiId = 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
-  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash';
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
+  | 'storeCover' | 'requestAccepted';
 
 export const KPI_LABELS: Record<KpiId, string> = {
   attendance: 'Attendance',
@@ -61,14 +62,16 @@ export const KPI_LABELS: Record<KpiId, string> = {
   placeClean: 'Place kept clean (all photos)',
   posCash: 'POS cash matches (cashier)',
   productionCash: 'Production cash matches',
+  storeCover: 'Store cover kept',
+  requestAccepted: 'Requests accepted by 9 AM',
 };
 
 // The KPIs the owner picks from for each person, grouped as in KPI settings (riders have none).
 export const KPI_SECTIONS: { title: string; ids: KpiId[] }[] = [
   { title: 'Everyone', ids: ['attendance', 'punctuality', 'fullShift', 'timesheet'] },
   { title: 'Photo checks', ids: ['workplace', 'hygiene', 'placeClean'] },
-  { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy', 'posCash'] },
-  { title: 'Production', ids: ['productionApproved', 'productionLogged', 'wastage', 'shippedOnTime', 'productionCash'] },
+  { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy', 'posCash', 'storeCover'] },
+  { title: 'Production', ids: ['requestAccepted', 'productionApproved', 'productionLogged', 'wastage', 'shippedOnTime', 'productionCash'] },
 ];
 export const ADDED_KPI_WEIGHT = 10;
 
@@ -152,6 +155,19 @@ export const dismissDetected = (kind: 'arrival' | 'exit', opts: { employeeId?: s
   send('POST', '/shift/dismiss', { kind, ...opts });
 export const saveShiftConsent = (accepted: boolean) => send('POST', '/shift/consent', { accepted });
 export const getTeamPending = (): Promise<{ pending: TeamPending[] }> => send('GET', '/shift/team-pending');
+
+// Store cover (storeCover.ts): today's cover for the signed-in person, their store check-in, and
+// for the store incharge / owner who is covering today.
+export type CoverPunchEvent = { at: string; noGps?: boolean; outside?: boolean; distanceM?: number };
+export type CoverToday = {
+  setUp: boolean; date?: string; cover?: boolean; reasons: string[]; storeId?: string; storeName?: string;
+  start: string; end: string; productionEnd: string; punch: { in: CoverPunchEvent | null; out: CoverPunchEvent | null } | null;
+};
+export type CoverTeamEntry = CoverToday & { employeeId: string; name: string };
+export const getCoverToday = (): Promise<CoverToday> => send('GET', '/shift/cover-today');
+export const coverPunch = (action: 'in' | 'out', pos: { lat: number; lng: number; accuracyM: number } | null): Promise<{ punch: NonNullable<CoverToday['punch']> }> =>
+  send('POST', '/shift/cover-punch', { action, ...(pos || { gpsError: true }) });
+export const getCoverTeam = (): Promise<{ covers: CoverTeamEntry[] }> => send('GET', '/shift/cover-team');
 
 // Extra hours waiting for the caller's word (their own team; the owner and operations managers anyone).
 export type ExtraHoursDay = { employeeId: string; name: string; date: string; inAt: string; outAt: string; shiftStart: string; shiftEnd: string; minutes: number };
