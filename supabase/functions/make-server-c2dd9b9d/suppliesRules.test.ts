@@ -1,7 +1,7 @@
 // Tests for running low and shopping lists. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/suppliesRules.test.ts
 import assert from 'node:assert/strict';
-import { alertRecipients, deliverAt, itemKey, linesPreview, listProgress, placeOf } from './suppliesRules.ts';
+import { STARTER_VENDORS, alertRecipients, deliverAt, itemKey, learnVendorItems, linesPreview, listProgress, placeOf, vendorForItem } from './suppliesRules.ts';
 
 let n = 0;
 const test = (name: string, fn: () => void) => { fn(); n++; };
@@ -55,6 +55,23 @@ test('how far a list has got', () => {
   ];
   assert.deepEqual(listProgress({ lines }), { total: 5, got: 2, missing: 1, left: 2, toLog: 1 });
   assert.equal(linesPreview(lines, 2), 'Onion 5 kg, Tomato 3 kg (+3 more)');
+});
+
+test('which vendor an item comes from, and learning from a saved list', () => {
+  const v = (id: string, items: string[]) => ({ id, name: id, items, createdAt: '', updatedAt: '' });
+  const vendors = [v('veg', ['Ginger', 'Garlic']), v('kali', ['Ajinomoto']), v('butter', ['Butter'])];
+  assert.equal(vendorForItem(vendors, 'ginger'), 'veg');
+  assert.equal(vendorForItem(vendors, 'Onion'), null);
+  // Onion goes to the vegetable vendor from now on; garlic moves to Kalimata; a line with no vendor changes nothing.
+  const changed = learnVendorItems(vendors, [
+    { item: 'Onion', vendorId: 'veg' }, { item: 'garlic', vendorId: 'kali' }, { item: 'Butter', vendorId: null }, { item: 'Ginger', vendorId: 'gone' },
+  ]);
+  assert.deepEqual(changed.map((c) => [c.id, c.items]).sort(), [['kali', ['Ajinomoto', 'garlic']], ['veg', ['Ginger', 'Onion']]]);
+  assert.deepEqual(vendors[0].items, ['Ginger', 'Garlic']); // the originals are not changed
+  assert.equal(learnVendorItems(vendors, [{ item: 'Ginger', vendorId: 'veg' }]).length, 0);
+  // Every starter item belongs to one vendor only.
+  const keys = STARTER_VENDORS.flatMap((s) => s.items.map(itemKey));
+  assert.equal(new Set(keys).size, keys.length);
 });
 
 console.log(`suppliesRules: ${n} tests passed`);

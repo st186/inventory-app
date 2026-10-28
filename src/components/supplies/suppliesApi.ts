@@ -21,6 +21,7 @@ export interface AlertList { alerts: SupplyAlert[]; canManage: boolean; myPlace:
 export interface ShoppingLine {
   id: string; item: string; itemBn?: string; entryType: EntryKind; category: string;
   qty: number; unit: string; placeKind: PlaceKind; placeId: string; placeName?: string; note?: string; alertIds?: string[];
+  vendorId?: string | null; vendorName?: string;
   got?: { qty: number; at: string } | null; missing?: boolean;
   logged?: { kind: EntryKind; id: string; at: string } | null; skipped?: boolean;
 }
@@ -29,6 +30,7 @@ export interface ShoppingList {
   status: 'draft' | 'sent' | 'shopping' | 'bought' | 'logged' | 'cancelled';
   note?: string; lines: ShoppingLine[]; bills?: { path: string; at: string }[];
   sentAt?: string; notifyAt?: string; notifiedAt?: string; boughtAt?: string; loggedAt?: string;
+  vendorOrders?: Record<string, { at: string; byName: string; sig: string }>;
   progress: { total: number; got: number; missing: number; left: number; toLog: number };
   canEdit: boolean; canShop: boolean;
 }
@@ -37,7 +39,10 @@ export interface Lists {
   people?: { id: string; name: string; designation: string | null }[]; places?: PlaceRef[];
 }
 // A line as the editor sends it (the server keeps what was got on lines it already has).
-export type LineDraft = Pick<ShoppingLine, 'item' | 'itemBn' | 'entryType' | 'category' | 'qty' | 'unit' | 'placeKind' | 'placeId' | 'note' | 'alertIds'> & { id?: string };
+export type LineDraft = Pick<ShoppingLine, 'item' | 'itemBn' | 'entryType' | 'category' | 'qty' | 'unit' | 'placeKind' | 'placeId' | 'note' | 'alertIds' | 'vendorId'> & { id?: string };
+// A shop that gets its part of a list on WhatsApp, and the items it usually supplies.
+export interface Vendor { id: string; name: string; phone?: string; items: string[]; createdAt: string; updatedAt: string }
+export type VendorDraft = Pick<Vendor, 'name' | 'phone' | 'items'>;
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -73,3 +78,10 @@ export const addBill = (id: string, path: string) => call<{ list: ShoppingList }
 export const finishShopping = (id: string) => call<{ list: ShoppingList }>(at(id, 'done'), post({})).then(one);
 export const markLogged = (id: string, lineId: string, b: { kind?: EntryKind; recordId?: string; qty?: number; skip?: boolean }) =>
   call<{ list: ShoppingList }>(at(id, 'logged'), post({ lineId, ...b })).then(one);
+export const vendorSent = (id: string, vendorId: string, sig: string) => call<{ list: ShoppingList }>(at(id, 'vendor-sent'), post({ vendorId, sig })).then(one);
+
+export const listVendors = () => call<{ vendors: Vendor[] }>('/supply-vendors').then((r) => r.vendors);
+export const createVendor = (b: VendorDraft) => call<{ vendor: Vendor }>('/supply-vendors', post(b)).then((r) => r.vendor);
+export const updateVendor = (id: string, b: VendorDraft) =>
+  call<{ vendor: Vendor }>(`/supply-vendors/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(b) }).then((r) => r.vendor);
+export const deleteVendor = (id: string) => call<{ ok: true }>(`/supply-vendors/${encodeURIComponent(id)}`, { method: 'DELETE' });

@@ -10,21 +10,28 @@
 //   each line through the usual expense routes (so production cash and the expense checks run as
 //   for any expense) and reports each one back here. Flags on the list close when their line is
 //   logged; a line not found puts its flags back to open.
+//   Vendors (owner, 28 Oct 2026): lines can come from a vendor (vegetables, grocery, Kalimata, butter,
+//   chicken). The writer sends each vendor its part on WhatsApp from the app (the phone opens WhatsApp
+//   with the text; nothing is sent from the server), and the app keeps when. Saving a line with a
+//   vendor teaches the app that item's vendor for next time.
 // Registered from kpi.ts; lists waiting for the end of quiet hours go out with the store-cover cron.
 //
 //   supply-alert:{id}     one flag, and everyone who raised it
 //   shopping-list:{id}    the list, what was got, what was logged
+//   supply-vendor:{id}    a vendor: name, WhatsApp number, the items it supplies
+//   supply-vendors:started  the starter vendors were set up once
 import { P, actorOf, loadPlaces, type Actor, type KpiDeps } from './attendance.ts';
 import { istDate } from './kpiCore.ts';
 import { DEFAULT_PREFS } from './notificationRules.ts';
 import { isBillPath } from './expensePaperwork.ts';
 import {
-  alertRecipients, deliverAt, isInchargeOf, isOwnerEmp, itemKey, linesPreview, listProgress, placeOf,
-  type EntryKind, type Place, type ShoppingLine, type ShoppingList, type SupplyAlert,
+  STARTER_VENDORS, alertRecipients, deliverAt, isInchargeOf, isOwnerEmp, itemKey, learnVendorItems, linesPreview, listProgress, placeOf,
+  type EntryKind, type Place, type ShoppingLine, type ShoppingList, type SupplyAlert, type Vendor,
 } from './suppliesRules.ts';
 
 const alertKey = (id: string) => `supply-alert:${id}`;
 const listKey = (id: string) => `shopping-list:${id}`;
+const vendorKey = (id: string) => `supply-vendor:${id}`;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UNITS = new Set(['g', 'kg', 'pcs', 'L', 'mL', 'packet', 'carton', 'box', 'roll', 'bundle']);
 const newId = () => [...crypto.getRandomValues(new Uint8Array(9))].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -63,6 +70,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
     deps.notifyUser ? deps.notifyUser(authUserId, type, title, message, relatedId).catch(() => undefined) : Promise.resolve(undefined);
   const allAlerts = async () => ((await deps.getAllByPrefix('supply-alert:')) || []).filter((a: any) => a?.id && a.placeId) as SupplyAlert[];
   const allLists = async () => ((await deps.getAllByPrefix('shopping-list:')) || []).filter((l: any) => l?.id && Array.isArray(l.lines)) as ShoppingList[];
+  const allVendors = async () => ((await deps.kv.getByPrefix<any>('supply-vendor:')) || []).filter((v: any) => v?.id && v.name && Array.isArray(v.items)) as Vendor[];
 
   // Tell everyone who raised a flag what happened to it (not the person who did it).
   const tellRaisers = async (ctx: Ctx, al: SupplyAlert, title: string, message: string, exceptId: string | null) => {
@@ -170,10 +178,98 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
     } catch (err) { return fail(c, err); }
   });
 
+  // ---------------- Vendors ----------------
+
+  const phoneOf = (v: unknown) => String(v ?? '').replace(/\D/g, '');
+  const cleanVendor = (body: any, others: Vendor[]): { name: string; phone?: string; items: string[] } | string => {
+    const name = clip(body?.name, 40);
+    if (!name) return 'Write the vendor\'s name';
+    if (others.some((o) => o.name.trim().toLowerCase() === name.toLowerCase())) return `There is already a vendor called ${name}`;
+    const phone = phoneOf(body?.phone);
+    if (phone && (phone.length < 10 || phone.length > 13)) return 'Check the WhatsApp number: 10 digits';
+    const seen = new Set<string>();
+    const items = (Array.isArray(body?.items) ? body.items : []).map((i: unknown) => clip(i, 60)).filter((i: string) => {
+      const k = itemKey(i);
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }).slice(0, 200);
+    return { name, phone: phone || undefined, items };
+  };
+  // An item belongs to one vendor: one saved here comes off the others.
+  const takeItems = async (keep: Vendor, all: Vendor[]) => {
+    const mine = new Set(keep.items.map(itemKey));
+    for (const v of all) {
+      if (v.id === keep.id || !v.items.some((i) => mine.has(itemKey(i)))) continue;
+      await deps.kv.set(vendorKey(v.id), { ...v, items: v.items.filter((i) => !mine.has(itemKey(i))), updatedAt: keep.updatedAt });
+    }
+  };
+
+  // The owner and ops. The first time, the vendors already ordered from are set up (no numbers yet).
+  app.get(`${P}/supply-vendors`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can see the vendors' }, 403);
+    try {
+      let vendors = await allVendors();
+      if (!vendors.length && !(await deps.kv.get('supply-vendors:started'))) {
+        const now = new Date().toISOString();
+        vendors = STARTER_VENDORS.map((s) => ({ id: newId(), name: s.name, items: [...s.items], createdAt: now, updatedAt: now }));
+        for (const v of vendors) await deps.kv.set(vendorKey(v.id), v);
+        await deps.kv.set('supply-vendors:started', { at: now, by: actor!.name });
+      }
+      return c.json({ vendors: vendors.sort((a, b) => a.name.localeCompare(b.name)) });
+    } catch (err) { return fail(c, err); }
+  });
+
+  app.post(`${P}/supply-vendors`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can add a vendor' }, 403);
+    try {
+      const all = await allVendors();
+      if (all.length >= 40) return c.json({ error: 'That is the most vendors the app keeps' }, 400);
+      const v = cleanVendor(await c.req.json().catch(() => ({})), all);
+      if (typeof v === 'string') return c.json({ error: v }, 400);
+      const now = new Date().toISOString();
+      const vendor: Vendor = { id: newId(), ...v, createdAt: now, updatedAt: now };
+      await deps.kv.set(vendorKey(vendor.id), vendor);
+      await takeItems(vendor, all);
+      if (!(await deps.kv.get('supply-vendors:started'))) await deps.kv.set('supply-vendors:started', { at: now, by: actor!.name });
+      return c.json({ vendor });
+    } catch (err) { return fail(c, err); }
+  });
+
+  app.put(`${P}/supply-vendors/:id`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can change a vendor' }, 403);
+    try {
+      const all = await allVendors();
+      const cur = all.find((v) => v.id === c.req.param('id'));
+      if (!cur) return c.json({ error: 'That vendor was not found' }, 404);
+      const v = cleanVendor(await c.req.json().catch(() => ({})), all.filter((o) => o.id !== cur.id));
+      if (typeof v === 'string') return c.json({ error: v }, 400);
+      const vendor: Vendor = { ...cur, ...v, phone: v.phone, updatedAt: new Date().toISOString() };
+      await deps.kv.set(vendorKey(vendor.id), vendor);
+      await takeItems(vendor, all);
+      return c.json({ vendor });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // Lists keep the vendor's name on their lines, so old lists still read right.
+  app.delete(`${P}/supply-vendors/:id`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can remove a vendor' }, 403);
+    try {
+      const cur = await deps.kv.get<Vendor>(vendorKey(c.req.param('id')));
+      if (!cur) return c.json({ error: 'That vendor was not found' }, 404);
+      await deps.kv.del(vendorKey(cur.id));
+      return c.json({ ok: true });
+    } catch (err) { return fail(c, err); }
+  });
+
   // ---------------- Shopping lists ----------------
 
   const canShop = (a: Actor, l: ShoppingList) => isLead(a) || (!!a.employeeId && a.employeeId === l.assigneeId);
-  const cleanLines = (ctx: Ctx, raw: unknown, before: ShoppingLine[] = []): ShoppingLine[] | string => {
+  const cleanLines = (ctx: Ctx, vendors: Vendor[], raw: unknown, before: ShoppingLine[] = []): ShoppingLine[] | string => {
     if (!Array.isArray(raw) || !raw.length) return 'Add at least one item';
     if (raw.length > 80) return 'That is too many lines for one list';
     const out: ShoppingLine[] = [];
@@ -183,11 +279,13 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       const place = knownPlace(ctx, r?.placeKind, r?.placeId);
       if (!place) return `Pick where ${item} is for`;
       const old = before.find((b) => b.id === r?.id);
+      const vendor = r?.vendorId ? vendors.find((v) => v.id === String(r.vendorId)) : null;
       out.push({
         id: old?.id || newId(), item, itemBn: clip(r?.itemBn, 60) || undefined,
         entryType: (r?.entryType === 'overhead' ? 'overhead' : 'inventory') as EntryKind, category: clip(r?.category, 40) || 'staples',
         qty: num(r?.qty) || 0, unit: UNITS.has(String(r?.unit)) ? String(r.unit) : 'pcs', placeKind: place.kind, placeId: place.id, placeName: placeName(ctx, place),
         note: clip(r?.note, 120) || undefined, alertIds: Array.isArray(r?.alertIds) ? r.alertIds.map(String).slice(0, 10) : undefined,
+        vendorId: vendor?.id || null, vendorName: vendor?.name || undefined,
         got: old?.got ?? null, missing: old?.missing, logged: old?.logged ?? null, skipped: old?.skipped,
       });
     }
@@ -204,6 +302,11 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (listed && (al.status !== 'listed' || al.listId !== list.id)) await deps.kv.set(alertKey(id), { ...al, status: 'listed', listId: list.id, updatedAt: new Date().toISOString() });
       if (!listed && al.status === 'listed' && al.listId === list.id) await deps.kv.set(alertKey(id), { ...al, status: 'open', listId: null, updatedAt: new Date().toISOString() });
     }
+  };
+  // Items saved with a vendor are that vendor's from now on.
+  const learnVendors = async (vendors: Vendor[], lines: ShoppingLine[]) => {
+    const now = new Date().toISOString();
+    for (const v of learnVendorItems(vendors, lines)) await deps.kv.set(vendorKey(v.id), { ...v, items: v.items.slice(0, 200), updatedAt: now });
   };
   const tellShopper = async (ctx: Ctx, list: ShoppingList) => {
     const person = ctx.employees.find((e) => String(e.employeeId) === list.assigneeId);
@@ -256,7 +359,8 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       const date = DATE.test(String(body?.date)) ? String(body.date) : istDate(Date.now() + 86400000);
       const person = ctx.employees.find((e) => String(e.employeeId) === String(body?.assigneeId));
       if (!person) return c.json({ error: 'Pick who does the shopping' }, 400);
-      const lines = cleanLines(ctx, body?.lines);
+      const vendors = await allVendors();
+      const lines = cleanLines(ctx, vendors, body?.lines);
       if (typeof lines === 'string') return c.json({ error: lines }, 400);
       const now = new Date().toISOString();
       let list: ShoppingList = {
@@ -267,6 +371,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (body?.send) list = await send(ctx, list);
       await deps.kv.set(listKey(list.id), list);
       await syncAlerts(list);
+      await learnVendors(vendors, list.lines);
       return c.json({ list: view(actor!, list) });
     } catch (err) { return fail(c, err); }
   });
@@ -283,7 +388,8 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       const ctx = await loadCtx(deps);
       const person = body?.assigneeId ? ctx.employees.find((e) => String(e.employeeId) === String(body.assigneeId)) : null;
       if (body?.assigneeId && !person) return c.json({ error: 'Pick who does the shopping' }, 400);
-      const lines = body?.lines ? cleanLines(ctx, body.lines, list.lines) : list.lines;
+      const vendors = await allVendors();
+      const lines = body?.lines ? cleanLines(ctx, vendors, body.lines, list.lines) : list.lines;
       if (typeof lines === 'string') return c.json({ error: lines }, 400);
       let next: ShoppingList = {
         ...list, lines, date: DATE.test(String(body?.date)) ? String(body.date) : list.date, note: body?.note !== undefined ? clip(body.note, 200) || undefined : list.note,
@@ -294,6 +400,26 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (body?.send && (next.status === 'draft' || (person && person.employeeId !== list.assigneeId))) next = await send(ctx, next);
       await deps.kv.set(listKey(list.id), next);
       await syncAlerts(next, list.lines);
+      if (body?.lines) await learnVendors(vendors, next.lines);
+      return c.json({ list: view(actor!, next) });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // The writer sent a vendor its part on WhatsApp (from their phone): when, and what it said.
+  app.post(`${P}/shopping-lists/:id/vendor-sent`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can order from vendors' }, 403);
+    try {
+      const list = await deps.kv.get<ShoppingList>(listKey(c.req.param('id')));
+      if (!list || list.status === 'cancelled') return c.json({ error: 'That list was not found' }, 404);
+      const body = await c.req.json().catch(() => ({}));
+      const vendorId = clip(body?.vendorId, 40);
+      if (!vendorId || !list.lines.some((l) => l.vendorId === vendorId)) return c.json({ error: 'Nothing on this list is from that vendor' }, 400);
+      const next: ShoppingList = {
+        ...list, vendorOrders: { ...(list.vendorOrders || {}), [vendorId]: { at: new Date().toISOString(), byName: actor!.name, sig: clip(body?.sig, 4000) } },
+        updatedAt: new Date().toISOString(),
+      };
+      await deps.kv.set(listKey(list.id), next);
       return c.json({ list: view(actor!, next) });
     } catch (err) { return fail(c, err); }
   });

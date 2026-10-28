@@ -20,6 +20,7 @@ export type SupplyAlert = {
 export type ShoppingLine = {
   id: string; item: string; itemBn?: string; entryType: EntryKind; category: string;
   qty: number; unit: string; placeKind: PlaceKind; placeId: string; placeName?: string; note?: string; alertIds?: string[];
+  vendorId?: string | null; vendorName?: string;
   got?: { qty: number; at: string } | null; missing?: boolean;
   logged?: { kind: EntryKind; id: string; at: string } | null; skipped?: boolean;
 };
@@ -30,7 +31,12 @@ export type ShoppingList = {
   status: 'draft' | 'sent' | 'shopping' | 'bought' | 'logged' | 'cancelled';
   note?: string; lines: ShoppingLine[]; bills?: { path: string; at: string }[];
   sentAt?: string; notifyAt?: string; notifiedAt?: string; boughtAt?: string; loggedAt?: string;
+  // Each vendor's part sent on WhatsApp: when, by whom, and what it said (to spot later changes).
+  vendorOrders?: Record<string, { at: string; byName: string; sig: string }>;
 };
+
+// A shop that gets its part of the list on WhatsApp, and the items it usually supplies.
+export type Vendor = { id: string; name: string; phone?: string; items: string[]; createdAt: string; updatedAt: string };
 
 // Two names are the same item when they match ignoring case, spaces and punctuation.
 export const itemKey = (s: string) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -104,3 +110,36 @@ export function linesPreview(lines: Pick<ShoppingLine, 'item' | 'qty' | 'unit'>[
   const head = lines.slice(0, max).map((l) => `${l.item}${l.qty ? ` ${l.qty} ${l.unit}` : ''}`).join(', ');
   return lines.length > max ? `${head} (+${lines.length - max} more)` : head;
 }
+
+// The vendor an item usually comes from.
+export function vendorForItem(vendors: Pick<Vendor, 'id' | 'items'>[], item: string): string | null {
+  const k = itemKey(item);
+  return vendors.find((v) => v.items.some((i) => itemKey(i) === k))?.id || null;
+}
+
+// A list saved with a vendor on a line teaches the app: the item moves to that vendor (and off any
+// other). A line with no vendor changes nothing. Returns the vendors whose items changed.
+export function learnVendorItems(vendors: Vendor[], lines: Pick<ShoppingLine, 'item' | 'vendorId'>[]): Vendor[] {
+  const byId = new Map(vendors.map((v) => [v.id, { ...v, items: [...v.items] }]));
+  const changed = new Set<string>();
+  for (const l of lines) {
+    if (!l.vendorId || !byId.has(l.vendorId)) continue;
+    const k = itemKey(l.item);
+    for (const v of byId.values()) {
+      const has = v.items.some((i) => itemKey(i) === k);
+      if (v.id === l.vendorId && !has) { v.items.push(l.item); changed.add(v.id); }
+      if (v.id !== l.vendorId && has) { v.items = v.items.filter((i) => itemKey(i) !== k); changed.add(v.id); }
+    }
+  }
+  return [...changed].map((id) => byId.get(id)!);
+}
+
+// The vendors Aniket orders from (owner, 28 Oct 2026), with the item names as they are logged in
+// the expenses. Set up once; numbers are added in the app.
+export const STARTER_VENDORS: { name: string; items: string[] }[] = [
+  { name: 'Vegetable vendor', items: ['Ginger', 'Garlic', 'Green Chilli', 'Carrot', 'Cabbage', 'Coriander Leaves', 'Lemon', 'Tomato'] },
+  { name: 'Grocery vendor', items: ['Oil', 'Maida', 'Red Chilli Sauce', 'Green Chilli Sauce', 'Sesame seeds'] },
+  { name: 'Kalimata', items: ['Aromatic Powder', 'Makhni Gravy', 'Mayonnaise', 'Tomato Sauce', 'Tomato sauce sachet', 'Peri Peri Masala', 'Chat Masala', 'Ajinomoto', 'Liquid Cheese', 'Sweet Corn', 'Mozzarella Cheese', 'Tandoori masala'] },
+  { name: 'Butter vendor', items: ['Butter'] },
+  { name: 'Chicken vendor', items: ['Chicken'] },
+];

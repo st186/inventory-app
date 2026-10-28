@@ -5,8 +5,10 @@
 //   expenses through the usual routes, so nothing is typed twice.
 //   The shopper (the production incharge): the list reaches them when their quiet hours end; they
 //   tick what they got (or not found), add the bill photos, and finish.
+//   Vendors (Vendors.tsx): lines can come from a vendor; after sending the list, each vendor's part
+//   goes out on WhatsApp from here, and the shopper sees the list grouped by vendor.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, CheckCircle2, ClipboardList, Plus, ShoppingBasket, Trash2, XCircle } from 'lucide-react';
+import { Camera, CheckCircle2, ClipboardList, Plus, ShoppingBasket, Store, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InventoryItem, OverheadItem } from '../../App';
 import * as rootApi from '../../utils/api';
@@ -30,6 +32,7 @@ import { Textarea } from '../ui/textarea';
 import { cn } from '../ui/utils';
 import { CATEGORY_OPTIONS, ItemPicker, UNITS, categoryLabel, itemKey, usualBuys, useSupplyCandidates, type ItemPick, type Usual } from './supplyItems';
 import * as api from './suppliesApi';
+import { VendorManager, VendorOrders, VendorsModal, useVendors, vendorFor, vendorProgress } from './Vendors';
 
 const dayLabel = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
@@ -46,6 +49,7 @@ export function ShoppingCard() {
   const [editing, setEditing] = useState<api.ShoppingList | 'new' | null>(null);
   const [running, setRunning] = useState<string | null>(null);
   const [pricing, setPricing] = useState<string | null>(null);
+  const [vendorsOpen, setVendorsOpen] = useState(false);
   const load = useCallback(() => { api.listShopping().then(setData).catch(() => undefined); }, []);
   useEffect(() => { load(); }, [load]);
   if (!data) return null;
@@ -59,7 +63,10 @@ export function ShoppingCard() {
         <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
           <div className="flex items-center justify-between gap-3">
             <span className="inline-flex items-center gap-2 text-body-md font-semibold text-text"><ShoppingBasket className="size-5 text-primary" aria-hidden="true" /> Shopping</span>
-            <Button size="sm" leadingIcon={<Plus />} onClick={() => setEditing('new')}>New list</Button>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" leadingIcon={<Store />} onClick={() => setVendorsOpen(true)}>Vendors</Button>
+              <Button size="sm" leadingIcon={<Plus />} onClick={() => setEditing('new')}>New list</Button>
+            </div>
           </div>
           {lists.length > 0 && (
             <ListGroup>
@@ -75,7 +82,8 @@ export function ShoppingCard() {
       ) : (
         lists.filter((l) => l.status !== 'logged').map((l) => <ShopperCard key={l.id} list={l} onOpen={() => setRunning(l.id)} />)
       )}
-      {editing && <ListEditor data={data} list={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {editing && <ListEditor data={data} list={editing === 'new' ? null : editing} onClose={() => { setEditing(null); load(); }} onSaved={load} />}
+      {vendorsOpen && <VendorsModal onClose={() => setVendorsOpen(false)} />}
       {running && byId(running) && <RunSheet list={byId(running)!} onChange={replace} onClose={() => { setRunning(null); load(); }} />}
       {pricing && byId(pricing) && <PricingSheet list={byId(pricing)!} onChange={replace} onClose={() => { setPricing(null); load(); }} />}
     </>
@@ -84,8 +92,10 @@ export function ShoppingCard() {
 
 function leadSubtitle(l: api.ShoppingList) {
   const p = l.progress;
-  if (l.status === 'draft') return `${p.total} items · not sent yet`;
-  if (l.status === 'sent') return l.notifyAt && !l.notifiedAt ? `${p.total} items · reaches ${l.assigneeName} at ${timeOf(l.notifyAt)}` : `${p.total} items · sent ${l.sentAt ? timeOf(l.sentAt) : ''}`;
+  const v = vendorProgress(l);
+  const vendors = v.total ? ` · vendors ${v.sent} of ${v.total} sent` : '';
+  if (l.status === 'draft') return `${p.total} items · not sent yet${vendors}`;
+  if (l.status === 'sent') return (l.notifyAt && !l.notifiedAt ? `${p.total} items · reaches ${l.assigneeName} at ${timeOf(l.notifyAt)}` : `${p.total} items · sent ${l.sentAt ? timeOf(l.sentAt) : ''}`) + vendors;
   if (l.status === 'shopping') return `${p.got + p.missing} of ${p.total} marked`;
   if (l.status === 'bought') return `Got ${p.got} of ${p.total}${p.missing ? ` · ${p.missing} not found` : ''} · ${p.toLog} to price`;
   return `${p.got} items in the expenses${p.missing ? ` · ${p.missing} not found` : ''}`;
@@ -124,11 +134,22 @@ function RunSheet({ list, onChange, onClose }: { list: api.ShoppingList; onChang
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
+  // By place, then by vendor (each vendor's items together, then what is bought at the shops).
   const groups = useMemo(() => {
-    const m = new Map<string, api.ShoppingLine[]>();
-    for (const l of list.lines) m.set(l.placeName || l.placeId, [...(m.get(l.placeName || l.placeId) || []), l]);
+    const places = new Set(list.lines.map((l) => l.placeName || l.placeId));
+    const anyVendor = list.lines.some((l) => l.vendorName);
+    const m = new Map<string, { title: string | null; lines: api.ShoppingLine[] }>();
+    const sorted = [...list.lines].sort((a, b) => Number(!a.vendorName) - Number(!b.vendorName) || (a.vendorName || '').localeCompare(b.vendorName || ''));
+    for (const l of sorted) {
+      const place = l.placeName || l.placeId;
+      const key = `${place}|${l.vendorName || ''}`;
+      const parts = [anyVendor ? (l.vendorName ? t('shop.fromVendor', { name: l.vendorName }) : t('shop.otherShops')) : null, places.size > 1 ? t('shop.placeFor', { place }) : null].filter(Boolean);
+      const g = m.get(key) || { title: parts.length ? parts.join(' · ') : null, lines: [] };
+      g.lines.push(l);
+      m.set(key, g);
+    }
     return [...m.entries()];
-  }, [list.lines]);
+  }, [list.lines, t]);
   const act = async (key: string, fn: () => Promise<api.ShoppingList>) => {
     setBusy(key);
     try { onChange(await fn()); } catch (e) { toast.error((e as Error).message || t('shop.failed')); } finally { setBusy(null); }
@@ -148,9 +169,9 @@ function RunSheet({ list, onChange, onClose }: { list: api.ShoppingList; onChang
       )}>
       <div className="flex flex-col gap-4">
         {list.note && <Callout tone="neutral" title={t('shop.note', { name: list.createdByName })}>{list.note}</Callout>}
-        {groups.map(([place, lines]) => (
-          <section key={place} className="flex flex-col gap-2">
-            {groups.length > 1 && <p className="overline-label mx-1">{t('shop.placeFor', { place })}</p>}
+        {groups.map(([key, { title, lines }]) => (
+          <section key={key} className="flex flex-col gap-2">
+            {title && <p className="overline-label mx-1">{title}</p>}
             {lines.map((l) => (
               <ShopLine key={l.id} line={l} lang={lang} disabled={done} busy={busy === l.id}
                 onGot={(qty) => act(l.id, () => api.markGot(list.id, l.id, { qty }))}
@@ -232,10 +253,14 @@ type DraftLine = api.LineDraft & { key: string };
 let keySeq = 0;
 const nextKey = () => `k${++keySeq}`;
 
+// Steps: the list itself; after sending, each vendor's part on WhatsApp; the vendors themselves.
 function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: api.ShoppingList | null; onClose: () => void; onSaved: () => void }) {
   const { context } = useShell();
   const candidates = useSupplyCandidates();
+  const { vendors, reload: reloadVendors } = useVendors();
   const [open, setOpen] = useState(true);
+  const [step, setStep] = useState<'list' | 'orders' | 'vendors'>('list');
+  const [saved, setSaved] = useState<api.ShoppingList | null>(list);
   const today = data.today || getTodayIST();
   const places = data.places || [];
   const people = data.people || [];
@@ -247,6 +272,10 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
   const [alerts, setAlerts] = useState<api.SupplyAlert[]>([]);
   const [saving, setSaving] = useState<'draft' | 'send' | 'cancel' | null>(null);
   useEffect(() => { api.listAlerts().then((r) => setAlerts(r.alerts.filter((a) => a.status === 'open'))).catch(() => undefined); }, []);
+  // Lines added before the vendors arrived (and lists from before vendors) get their usual vendor.
+  useEffect(() => {
+    if (vendors.length) setLines((ls) => (ls.some((l) => l.vendorId === undefined) ? ls.map((l) => (l.vendorId === undefined ? { ...l, vendorId: vendorFor(vendors, l.item) } : l)) : ls));
+  }, [vendors]);
 
   const usual = useMemo(() => usualBuys(context.inventory || [], context.overheads || [], addDays(today, -30)), [context.inventory, context.overheads, today]);
   const onList = new Set(lines.map((l) => `${l.placeKind}:${l.placeId}:${itemKey(l.item)}`));
@@ -259,11 +288,12 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
     return {
       key: nextKey(), item: p.item, itemBn: p.itemBn, entryType: p.entryType || u?.entryType || 'inventory', category: p.category || u?.category || '',
       qty: u?.qty || 1, unit: u?.unit && UNITS.includes(u.unit) ? u.unit : u?.unit === 'pieces' ? 'pcs' : 'pcs', placeKind: place?.kind || 'production', placeId: place?.id || '',
+      vendorId: vendors.length ? vendorFor(vendors, p.item) : undefined,
     };
   };
   const addUsual = (u: Usual) => setLines((ls) => [...ls, {
     key: nextKey(), item: u.item, entryType: u.entryType, category: u.category, qty: u.qty, unit: UNITS.includes(u.unit) ? u.unit : 'pcs', placeKind: u.placeKind, placeId: u.placeId,
-    itemBn: candidates.find((c) => itemKey(c.label) === itemKey(u.item))?.bengali,
+    itemBn: candidates.find((c) => itemKey(c.label) === itemKey(u.item))?.bengali, vendorId: vendors.length ? vendorFor(vendors, u.item) : undefined,
   }]);
   const addAlert = (a: api.SupplyAlert) => {
     const base = defaultsFor({ item: a.item, itemBn: a.itemBn, entryType: a.entryType, category: a.category });
@@ -278,12 +308,14 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
     if (noCat) { toast.error(`Pick what kind of expense ${noCat.item} is`); return; }
     setSaving(mode);
     try {
-      const body = { date, assigneeId, note: note.trim(), lines: lines.map(({ key: _k, ...l }) => l), send: mode === 'send' };
-      if (list) await api.updateList(list.id, body);
-      else await api.createList(body);
+      const body = { date, assigneeId, note: note.trim(), lines: lines.map(({ key: _k, ...l }) => ({ ...l, vendorId: l.vendorId ?? null })), send: mode === 'send' };
+      const next = saved ? await api.updateList(saved.id, body) : await api.createList(body);
+      setSaved(next);
       toast.success(mode === 'send' ? `Sent to ${assignee?.name || 'them'}` : 'Saved');
-      setOpen(false);
       onSaved();
+      // Sent: now each vendor's part. A draft just closes.
+      if (mode === 'send' && vendorProgress(next).total > 0) setStep('orders');
+      else setOpen(false);
     } catch (e) {
       toast.error((e as Error).message || 'Could not save the list');
     } finally {
@@ -291,21 +323,51 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
     }
   };
   const cancel = async () => {
-    if (!list) return;
+    if (!saved) return;
     setSaving('cancel');
-    try { await api.cancelList(list.id); toast.success('List cancelled'); setOpen(false); onSaved(); } catch (e) { toast.error((e as Error).message || 'Could not cancel'); } finally { setSaving(null); }
+    try { await api.cancelList(saved.id); toast.success('List cancelled'); setOpen(false); onSaved(); } catch (e) { toast.error((e as Error).message || 'Could not cancel'); } finally { setSaving(null); }
   };
-  const sent = list?.status === 'sent';
+  // WhatsApp opened for a vendor: kept on the list (the message itself goes from the phone).
+  const vendorSent = (vendorId: string, sig: string) => {
+    if (!saved) return;
+    api.vendorSent(saved.id, vendorId, sig).then((l) => { setSaved(l); onSaved(); }).catch(() => undefined);
+  };
+  const sent = saved?.status === 'sent';
+  const rest = lines.filter((l) => !l.vendorId);
+
+  if (step === 'orders' && saved) {
+    return (
+      <ResponsiveModal open={open} onOpenChange={(o) => !o && setOpen(false)} onClosed={onClose} size="detail"
+        title="Order from vendors" description="Each button opens WhatsApp with that vendor's part. Check it and press send."
+        footer={<Button size="lg" className="flex-1" onClick={() => setOpen(false)}>Done</Button>}>
+        <div className="flex flex-col gap-4">
+          <VendorOrders date={saved.date} lines={saved.lines} vendors={vendors} sent={saved.vendorOrders} onSent={vendorSent} />
+          {rest.length > 0 && (
+            <Callout tone="neutral" icon={ShoppingBasket} title={`${saved.assigneeName} buys the rest at the shops`}>{rest.map((l) => l.item).join(', ')}</Callout>
+          )}
+        </div>
+      </ResponsiveModal>
+    );
+  }
+  if (step === 'vendors') {
+    return (
+      <ResponsiveModal open={open} onOpenChange={(o) => !o && setOpen(false)} onClosed={onClose} size="detail" dirty={lines.length > 0}
+        title="Vendors" description="Who gets their part of the shopping list on WhatsApp."
+        footer={<Button variant="secondary" size="lg" className="flex-1" onClick={() => setStep('list')}>Back to the list</Button>}>
+        <VendorManager vendors={vendors} onChanged={reloadVendors} />
+      </ResponsiveModal>
+    );
+  }
 
   return (
     <ResponsiveModal open={open} onOpenChange={(o) => !o && setOpen(false)} onClosed={onClose} size="detail" dirty={lines.length > 0}
-      title={list ? `Shopping list · ${dayLabel(list.date)}` : 'New shopping list'}
+      title={saved ? `Shopping list · ${dayLabel(saved.date)}` : 'New shopping list'}
       description="The same names as the expenses, so the prices go straight in afterwards."
       footer={(
         <>
           {!sent && <Button variant="secondary" size="lg" loading={saving === 'draft'} onClick={() => save('draft')}>Save draft</Button>}
           <Button size="lg" className="flex-1" loading={saving === 'send'} onClick={() => save('send')}>
-            {sent && list?.assigneeId === assigneeId ? 'Save changes' : `Send to ${assignee?.name.split(' ')[0] || 'them'}`}
+            {sent && saved?.assigneeId === assigneeId ? 'Save changes' : `Send to ${assignee?.name.split(' ')[0] || 'them'}`}
           </Button>
         </>
       )}>
@@ -318,7 +380,7 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
             </NativeSelect>
           </Field>
         </div>
-        {sent && list?.notifyAt && !list.notifiedAt && <Callout tone="info" title={`Reaches ${list.assigneeName} at ${timeOf(list.notifyAt)}`}>Held until their quiet hours end.</Callout>}
+        {sent && saved?.notifyAt && !saved.notifiedAt && <Callout tone="info" title={`Reaches ${saved.assigneeName} at ${timeOf(saved.notifyAt)}`}>Held until their quiet hours end.</Callout>}
 
         {flagged.length > 0 && (
           <section className="flex flex-col gap-2">
@@ -348,7 +410,10 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
 
         {lines.length > 0 && (
           <section className="flex flex-col gap-2">
-            <p className="overline-label">On the list · {lines.length}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="overline-label">On the list · {lines.length}</p>
+              <Button size="sm" variant="ghost" leadingIcon={<Store />} onClick={() => setStep('vendors')}>Vendors</Button>
+            </div>
             {lines.map((l) => (
               <div key={l.key} className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                 <div className="flex items-start justify-between gap-2">
@@ -367,6 +432,12 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
                     {places.map((p) => <option key={`${p.kind}:${p.id}`} value={`${p.kind}:${p.id}`}>{p.name}</option>)}
                   </NativeSelect>
                 </div>
+                {vendors.length > 0 && (
+                  <NativeSelect value={l.vendorId || ''} aria-label={`Who ${l.item} comes from`} onChange={(e) => patch(l.key, { vendorId: e.target.value || null })}>
+                    <option value="">Bought at a shop (no vendor)</option>
+                    {vendors.map((v) => <option key={v.id} value={v.id}>From {v.name}</option>)}
+                  </NativeSelect>
+                )}
                 {!l.category ? (
                   <NativeSelect value="" aria-label={`What kind of expense ${l.item} is`} onChange={(e) => { const o = CATEGORY_OPTIONS.find((x) => x.value === e.target.value); if (o) patch(l.key, { entryType: o.entryType, category: o.value.split(':')[1] }); }}>
                     <option value="" disabled>New item: pick what kind of expense</option>
@@ -382,7 +453,13 @@ function ListEditor({ data, list, onClose, onSaved }: { data: api.Lists; list: a
         <Field label="Note" optional>
           <Textarea rows={2} value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Get the chicken from the usual shop" />
         </Field>
-        {list && <Button variant="danger-ghost" leadingIcon={<XCircle />} loading={saving === 'cancel'} onClick={cancel}>Cancel this list</Button>}
+        {saved && vendorProgress({ lines, vendorOrders: saved.vendorOrders }).total > 0 && (
+          <section className="flex flex-col gap-2">
+            <p className="overline-label">Order from vendors</p>
+            <VendorOrders compact date={date} lines={lines} vendors={vendors} sent={saved.vendorOrders} onSent={vendorSent} />
+          </section>
+        )}
+        {saved && <Button variant="danger-ghost" leadingIcon={<XCircle />} loading={saving === 'cancel'} onClick={cancel}>Cancel this list</Button>}
       </div>
     </ResponsiveModal>
   );
