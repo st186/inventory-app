@@ -20,6 +20,12 @@ export const PHOTO_FLAG_PENALTY = 5; // points off the photo-check KPI per "need
 export const WASTAGE_FULL_MARKS_PCT = 2; // production wastage at or under 2% scores 100 ...
 export const WASTAGE_ZERO_PCT = 10; // ... and 10% or more scores 0, straight line between
 export const AI_MAX_SHIFT = 0.15; // the AI may move the formula amount by at most ±15%
+// Extra hours (owner, 28 Oct 2026): time before the shift start or after its end, from the
+// check-in and check-out, counts once the person's incharge confirms it was needed. Every 4
+// confirmed hours in the month add a point to the KPI total, at most 5, which raises variable pay.
+export const EXTRA_MIN_OFFERED = 30; // less than this beyond the shift in a day isn't offered
+export const EXTRA_HOURS_PER_POINT = 4;
+export const EXTRA_POINTS_MAX = 5;
 
 export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
@@ -75,14 +81,16 @@ export const DEFAULT_WEIGHTS: Record<RoleGroup, Partial<Record<KpiId, number>>> 
 export const ALL_KPIS = Object.keys(KPI_LABELS) as KpiId[];
 export const ADDED_KPI_WEIGHT = 10;
 
-// Default shift by workplace (owner, 27 Oct 2026): store 3:00-10:30 PM, production house 8 AM-8 PM.
+// Default shift by workplace (owner, 27-28 Oct 2026): store 3:00-10:30 PM; production house
+// 8 AM-7 PM with a one-hour break taken whenever suits the day.
 export const DEFAULT_SHIFTS: Record<WorkplaceKind, { start: string; end: string }> = {
   store: { start: '15:00', end: '22:30' },
-  production: { start: '08:00', end: '20:00' },
+  production: { start: '08:00', end: '19:00' },
   mixed: { start: '11:00', end: '22:00' },
   none: { start: '11:00', end: '22:00' },
 };
 export const DEFAULT_GRACE_MIN = 10;
+export const DEFAULT_BREAK_MIN: Record<WorkplaceKind, number> = { store: 0, production: 60, mixed: 0, none: 0 };
 
 export type KpiSettings = {
   employeeId: string;
@@ -90,6 +98,7 @@ export type KpiSettings = {
   shiftEnd: string; // HH:MM IST; earlier than shiftStart means the shift ends after midnight
   weeklyOff: number[]; // 0 = Sunday ... 6 = Saturday
   graceMin: number;
+  breakMin: number; // unpaid break inside the shift, taken at any time
   hasVariablePay: boolean;
   variablePayMax: number; // ₹ per month
   kpis: KpiId[]; // the person's KPIs in order (nothing saved = their role's list)
@@ -250,6 +259,7 @@ export function resolveSettings(saved: any, employeeId: string, kind: WorkplaceK
     shiftEnd: parseHHMM(saved?.shiftEnd) !== null ? saved.shiftEnd : shift.end,
     weeklyOff: Array.isArray(saved?.weeklyOff) ? saved.weeklyOff.filter((d: any) => Number.isInteger(d) && d >= 0 && d <= 6) : [],
     graceMin: Number.isFinite(saved?.graceMin) ? saved.graceMin : DEFAULT_GRACE_MIN,
+    breakMin: Number.isFinite(saved?.breakMin) ? saved.breakMin : DEFAULT_BREAK_MIN[kind],
     hasVariablePay: !!saved?.hasVariablePay,
     variablePayMax: Number.isFinite(saved?.variablePayMax) ? saved.variablePayMax : 0,
     kpis,
@@ -286,6 +296,11 @@ export function cleanSettingsInput(body: any, moneyFields: boolean): { ok: true;
     const ids = [...new Set(body.kpis.filter((k: any) => typeof k === 'string' && k in KPI_LABELS))];
     if (!ids.length) return { ok: false, error: 'Pick at least one KPI' };
     out.kpis = ids;
+  }
+  if (body.breakMin !== undefined) {
+    const b = Number(body.breakMin);
+    if (!Number.isInteger(b) || b < 0 || b > 180) return { ok: false, error: 'The break must be between 0 and 180 minutes' };
+    out.breakMin = b;
   }
   if (body.weights !== undefined) {
     if (!body.weights || typeof body.weights !== 'object') return { ok: false, error: 'Weights are not valid' };
@@ -376,7 +391,8 @@ export type MonthKpis = {
   to: string | null;
   scheduledDays: number;
   kpis: KpiResult[];
-  total: number | null;
+  total: number | null; // includes the extra-hours points, at most 100
+  extra: { points: number; hours: number; days: number; pendingDays: number } | null;
   coverage: number; // share of the weights that had data (0-1)
   notes: string[];
   flags: Record<string, number>; // check-ins worth a look, by kind
@@ -404,6 +420,7 @@ export type MonthInput = {
   ledgerWastedKg?: { date: string; kg: number }[];
   requests?: any[]; // stock requests from the stores that house supplies
   trips?: any[]; // the rider's rides
+  extraHours?: { date: string; minutes: number; status: 'confirmed' | 'declined' }[]; // the incharge's decisions
   storeRequests?: any[]; // stock requests sent from the person's own store
   expenses?: any[]; // expense entries (inventory and overhead) the person logged
   approvals?: any[]; // production entries from the house that supplies the person's store
@@ -539,12 +556,12 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       away ? `${plural(away, 'check-in')} away from the workplace (not counted as on time).` : '',
       noGps ? `${plural(noGps, 'check-in')} without GPS.` : '',
     ].filter(Boolean).join(' '));
-    const scheduledH = Math.round((n * (end - start)) / 6) / 10;
+    const scheduledH = Math.round((n * Math.max(0, end - start - (settings.breakMin || 0))) / 6) / 10;
     set('fullShift', pct(full, n), [
       `Stayed until the end of the shift (${fmt12(end)}) on ${full} of ${n} days.`,
       early ? `Left early on ${plural(early, 'day')}.` : '',
       missedOut ? `${plural(missedOut, 'day')} without a check-out.` : '',
-      pairedDays ? `${Math.round(workedMin / 6) / 10} h at work on ${plural(pairedDays, 'day')} with both check-in and check-out, against ${scheduledH} h scheduled for ${plural(n, 'day')}.` : '',
+      pairedDays ? `${Math.round(Math.max(0, workedMin - pairedDays * (settings.breakMin || 0)) / 6) / 10} h at work (less ${settings.breakMin || 0} min break a day) on ${plural(pairedDays, 'day')} with both check-in and check-out, against ${scheduledH} h scheduled for ${plural(n, 'day')}.` : '',
     ].filter(Boolean).join(' '));
   }
 
@@ -765,9 +782,34 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     explanation: results[id]?.explanation || 'No data.',
     tip: tipFor(id, settings, kind),
   }));
-  const { total, coverage } = weightedTotal(kpis);
-  if (total !== null && coverage < 0.5) notes.push('Less than half of the KPI weight has data yet, so the total may move a lot.');
-  return { month, from: days.length ? from : null, to: days.length ? to : null, scheduledDays: scheduled.length, kpis, total, coverage, notes, flags };
+  const { total: base, coverage } = weightedTotal(kpis);
+  if (base !== null && coverage < 0.5) notes.push('Less than half of the KPI weight has data yet, so the total may move a lot.');
+
+  // Extra hours the incharge confirmed add points to the total; ones still waiting are mentioned.
+  const decided = new Map((input.extraHours || []).filter((x) => x?.date).map((x) => [x.date, x]));
+  let extraMin = 0, confirmedDays = 0, pendingDays = 0;
+  for (const d of days) {
+    const x = decided.get(d);
+    if (x?.status === 'confirmed' && x.minutes > 0) { extraMin += x.minutes; confirmedDays++; continue; }
+    if (!x && extraMinutesOf(punchBy.get(d), d, settings) >= EXTRA_MIN_OFFERED) pendingDays++;
+  }
+  const extraHours = Math.round((extraMin / 60) * 10) / 10;
+  const points = Math.min(EXTRA_POINTS_MAX, Math.floor(extraMin / 60 / EXTRA_HOURS_PER_POINT));
+  const total = base === null ? null : Math.min(100, Math.round((base + points) * 10) / 10);
+  if (confirmedDays) notes.push(`Extra hours: ${extraHours} h confirmed on ${plural(confirmedDays, 'day')}${points ? `, +${points} point${points === 1 ? '' : 's'} on the total` : ''} (1 point per ${EXTRA_HOURS_PER_POINT} h, at most +${EXTRA_POINTS_MAX}).`);
+  if (pendingDays) notes.push(`${plural(pendingDays, 'day')} of extra hours waiting for the incharge to confirm.`);
+  const extra = confirmedDays || pendingDays ? { points, hours: extraHours, days: confirmedDays, pendingDays } : null;
+  return { month, from: days.length ? from : null, to: days.length ? to : null, scheduledDays: scheduled.length, kpis, total, extra, coverage, notes, flags };
+}
+
+// Minutes before the shift start and after its end on one day, from a check-in and a check-out.
+export function extraMinutesOf(p: PunchRecord | null | undefined, date: string, settings: Pick<KpiSettings, 'shiftStart' | 'shiftEnd'>): number {
+  if (!p?.in?.at || !p?.out?.at) return 0;
+  const { start, end } = shiftMinutes(settings);
+  const inMin = minutesOfDay(p.in.at, date);
+  const outMin = minutesOfDay(p.out.at, date);
+  if (!(outMin > inMin)) return 0;
+  return Math.round(Math.max(0, start - inMin) + Math.max(0, outMin - end));
 }
 
 export function weightedTotal(kpis: Pick<KpiResult, 'score' | 'weight'>[]) {

@@ -100,11 +100,14 @@ export type KpiResult = { id: KpiId; label: string; score: number | null; weight
 export type MonthKpis = {
   month: string; from: string | null; to: string | null; scheduledDays: number; kpis: KpiResult[];
   total: number | null; coverage: number; notes: string[]; flags: Record<string, number>;
+  // Confirmed extra hours and the points they added to the total (at most 5).
+  extra?: { points: number; hours: number; days: number; pendingDays: number } | null;
 };
 export type KpiSettings = {
   employeeId: string; shiftStart: string; shiftEnd: string; weeklyOff: number[]; graceMin: number;
   hasVariablePay: boolean; variablePayMax: number; weights: Partial<Record<KpiId, number>>;
   kpis?: KpiId[]; // the person's KPIs (picked per person; nothing saved = their role's list)
+  breakMin?: number; // unpaid break inside the shift (production: 60)
   isDefault?: boolean; updatedBy?: string; updatedAt?: string;
 };
 export type KpiReview = {
@@ -146,6 +149,12 @@ export const dismissDetected = (kind: 'arrival' | 'exit', opts: { employeeId?: s
   send('POST', '/shift/dismiss', { kind, ...opts });
 export const saveShiftConsent = (accepted: boolean) => send('POST', '/shift/consent', { accepted });
 export const getTeamPending = (): Promise<{ pending: TeamPending[] }> => send('GET', '/shift/team-pending');
+
+// Extra hours waiting for the caller's word (their own team; the owner and operations managers anyone).
+export type ExtraHoursDay = { employeeId: string; name: string; date: string; inAt: string; outAt: string; shiftStart: string; shiftEnd: string; minutes: number };
+export const getExtraHours = (): Promise<{ days: ExtraHoursDay[] }> => send('GET', '/kpi/extra-hours');
+export const decideExtraHours = (body: { employeeId: string; date: string; decision: 'confirm' | 'decline'; reason?: string; minutes?: number }) =>
+  send('POST', '/kpi/extra-hours', body);
 
 // ---- KPIs ----
 

@@ -6,6 +6,7 @@
 //   kpi-config                       workplace radius, whether staff see money, first shift-clock day
 //   kpi-review:{month}:{employeeId}  the AI's review, cached so reopening the screen doesn't re-run it
 //   variable-pay:{month}:{employeeId} { formula, ai, approved, approvedBy, approvedAt } - read by payroll
+//   extra-hours:{employeeId}:{date}  the incharge's word on time beyond the shift (confirmed / declined)
 //
 // Who: the owner sees and decides everything. Operations managers see the team (not themselves),
 // change shift times / weekly off / weights and can ask the AI, but don't change pay or approve.
@@ -17,12 +18,12 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { askClaudeForJson, AiError } from './insights.ts';
 import {
-  FLAG_LABELS, KPI_LABELS, ROLE_LABELS, AI_MAX_SHIFT, addDays, checkApprovedAmount, clampAiAmount, cleanSettingsInput,
-  computeMonthKpis, isMonth, istDate, monthDays, variablePayFormula,
+  FLAG_LABELS, KPI_LABELS, ROLE_LABELS, AI_MAX_SHIFT, EXTRA_MIN_OFFERED, addDays, checkApprovedAmount, clampAiAmount, cleanSettingsInput,
+  computeMonthKpis, extraMinutesOf, isMonth, istDate, monthDays, variablePayFormula,
   type KpiId, type MonthKpis,
 } from './kpiCore.ts';
 import {
-  P, actorOf, loadConfig, loadPlaces, profileOf, registerAttendanceRoutes,
+  P, actorOf, canManage, loadConfig, loadPlaces, profileOf, registerAttendanceRoutes,
   type Actor, type KpiDeps, type Places, type Profile,
 } from './attendance.ts';
 
@@ -116,10 +117,11 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
 async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Shared): Promise<MonthKpis> {
   const id = String(emp.employeeId);
   const { month, places } = shared;
-  const [punches, timesheets, leaves] = await Promise.all([
+  const [punches, timesheets, leaves, extraHours] = await Promise.all([
     deps.kv.getByPrefix<any>(`punch:${id}:${month}-`),
     deps.getAllByPrefix(`timesheet:${id}:`),
     deps.kv.getByPrefix<any>(`leave:${id}:`),
+    deps.kv.getByPrefix<any>(`extra-hours:${id}:${month}-`),
   ]);
   const first = `${month}-01`;
   const store = storeOf(emp, places);
@@ -167,6 +169,7 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     trips: shared.trips.filter((t: any) => t.riderEmployeeId === id),
     ledgerMadeKg: ledger.made,
     ledgerWastedKg: ledger.wasted,
+    extraHours: extraHours || [],
     storeRequests: store ? shared.requests.filter((r: any) => r.storeId === store) : [],
     expenses: shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || ''))),
     approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
@@ -216,6 +219,7 @@ ${JSON.stringify({
   shift: `${profile.settings.shiftStart}-${profile.settings.shiftEnd}, ${profile.settings.graceMin} min grace`,
   kpis: k.kpis.filter((x) => x.weight > 0).map((x) => ({ kpi: x.label, score: x.score, weight: x.weight, details: x.explanation })),
   weightedTotal: k.total,
+  extraHoursBonus: k.extra ? { confirmedHours: k.extra.hours, days: k.extra.days, pointsAdded: k.extra.points } : null,
   shareOfWeightWithData: k.coverage,
   notes: k.notes,
   checkInsFlagged: flags,
@@ -260,6 +264,68 @@ export function registerKpiRoutes(app: any, deps: KpiDeps) {
     const formula = variablePayFormula(kpis.total, profile.settings.hasVariablePay ? profile.settings.variablePayMax : 0);
     return { profile, kpis, formula, cfg };
   };
+
+  // ---- Extra hours ----
+  // Days in the last three weeks where someone the caller manages (canManage: the owner and
+  // operations managers anyone, an incharge their own people) worked 30+ minutes beyond the shift,
+  // with nobody's decision yet.
+  app.get(`${P}/kpi/extra-hours`, async (c: any) => {
+    const r = await actorOf(deps, c);
+    if (r.error) return r.error;
+    const a = r.actor!;
+    try {
+      const employees = ((await deps.kv.getByPrefix<any>('unified-employee:')) || []).filter((e: any) => isStaff(e) && canManage(a, e));
+      if (!employees.length) return c.json({ days: [] });
+      const places = await loadPlaces(deps.kv);
+      const today = istDate(Date.now());
+      const since = addDays(today, -21);
+      const out: any[] = [];
+      await mapLimit(employees, 6, async (e: any) => {
+        const id = String(e.employeeId);
+        const [saved, punches, decided] = await Promise.all([
+          deps.kv.get<any>(`kpi-settings:${id}`),
+          deps.kv.getByPrefix<any>(`punch:${id}:`),
+          deps.kv.getByPrefix<any>(`extra-hours:${id}:`),
+        ]);
+        const settings = profileOf(e, places, saved).settings;
+        const done = new Set((decided || []).map((x: any) => x?.date));
+        for (const p of punches || []) {
+          if (!p?.date || p.date < since || p.date >= today || done.has(p.date)) continue;
+          const minutes = extraMinutesOf(p, p.date, settings);
+          if (minutes < EXTRA_MIN_OFFERED) continue;
+          out.push({ employeeId: id, name: e.name || id, date: p.date, inAt: p.in.at, outAt: p.out.at, shiftStart: settings.shiftStart, shiftEnd: settings.shiftEnd, minutes });
+        }
+      });
+      out.sort((x, y) => y.date.localeCompare(x.date) || x.name.localeCompare(y.name));
+      return c.json({ days: out });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // Confirm (with the reason it was needed, and the minutes - never more than the clock shows) or decline.
+  app.post(`${P}/kpi/extra-hours`, async (c: any) => {
+    const r = await actorOf(deps, c);
+    if (r.error) return r.error;
+    const a = r.actor!;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const id = String(body.employeeId || '');
+      const date = String(body.date || '');
+      const decision = body.decision === 'confirm' ? 'confirmed' : body.decision === 'decline' ? 'declined' : null;
+      if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !decision) return c.json({ error: 'Missing details' }, 400);
+      const emp = await deps.kv.get<any>(`unified-employee:${id}`);
+      if (!isStaff(emp) || !canManage(a, emp)) return c.json({ error: 'You can only confirm extra hours for your own team' }, 403);
+      const [saved, punch, places] = await Promise.all([deps.kv.get<any>(`kpi-settings:${id}`), deps.kv.get<any>(`punch:${id}:${date}`), loadPlaces(deps.kv)]);
+      const clocked = extraMinutesOf(punch, date, profileOf(emp, places, saved).settings);
+      if (clocked < EXTRA_MIN_OFFERED) return c.json({ error: 'The check-in and check-out don\'t show extra time that day' }, 400);
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+      if (decision === 'confirmed' && reason.length < 3) return c.json({ error: 'Say why the extra time was needed' }, 400);
+      const asked = Math.round(Number(body.minutes));
+      const minutes = decision === 'confirmed' ? (Number.isFinite(asked) && asked > 0 ? Math.min(asked, clocked) : clocked) : 0;
+      const rec = { employeeId: id, date, status: decision, minutes, clockedMinutes: clocked, reason, decidedBy: a.name, decidedById: a.employeeId, decidedAt: new Date().toISOString() };
+      await deps.kv.set(`extra-hours:${id}:${date}`, rec);
+      return c.json({ extra: rec });
+    } catch (err) { return fail(c, err); }
+  });
 
   // ---- Settings ----
 

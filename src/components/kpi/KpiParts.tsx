@@ -30,12 +30,13 @@ export function MonthPicker({ month, onChange }: { month: string; onChange: (m: 
   );
 }
 
-export function TotalBadge({ total }: { total: number | null }) {
+export function TotalBadge({ total, extraPoints = 0 }: { total: number | null; extraPoints?: number }) {
   const { t } = useT();
   return (
     <div className="flex shrink-0 flex-col items-end">
       <p className={cn('num text-title-lg font-semibold', TEXT[scoreToneOf(total)])}>{total === null ? '–' : Math.round(total)}</p>
       <p className="text-caption text-text-3">{t('team.kpi.outOf100')}</p>
+      {extraPoints > 0 && total !== null && <p className="num text-caption font-medium text-primary">{t('team.kpi.extraPoints', { n: extraPoints })}</p>}
     </div>
   );
 }

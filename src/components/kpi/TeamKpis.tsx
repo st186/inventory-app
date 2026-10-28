@@ -227,7 +227,7 @@ function PersonCard({
             </p>
           )}
         </div>
-        <TotalBadge total={p.kpis.total} />
+        <TotalBadge total={p.kpis.total} extraPoints={p.kpis.extra?.points || 0} />
       </div>
 
       <KpiBars kpis={p.kpis.kpis} compact={!open} />
@@ -374,6 +374,7 @@ function SettingsEditor({ person: p, canEditMoney, onClose, onSaved }: { person:
   const [shiftEnd, setShiftEnd] = useState(s.shiftEnd);
   const [weeklyOff, setWeeklyOff] = useState<number[]>(s.weeklyOff);
   const [graceMin, setGraceMin] = useState(String(s.graceMin));
+  const [breakMin, setBreakMin] = useState(String(s.breakMin ?? 0));
   const [hasVariablePay, setHasVariablePay] = useState(s.hasVariablePay);
   const [variablePayMax, setVariablePayMax] = useState<number | null>(s.variablePayMax || null);
   const [weights, setWeights] = useState<Record<string, string>>(Object.fromEntries(Object.entries(s.weights).map(([k, v]) => [k, String(v)])));
@@ -398,6 +399,7 @@ function SettingsEditor({ person: p, canEditMoney, onClose, onSaved }: { person:
         shiftEnd,
         weeklyOff,
         graceMin: Number(graceMin),
+        breakMin: Number(breakMin) || 0,
         kpis: picked,
         weights: Object.fromEntries(picked.map((id) => [id, Number(weights[id]) || 0])) as kpi.KpiSettings['weights'],
         ...(canEditMoney ? { hasVariablePay, variablePayMax: Number(variablePayMax) || 0 } : {}),
@@ -433,9 +435,14 @@ function SettingsEditor({ person: p, canEditMoney, onClose, onSaved }: { person:
             <Input type="time" value={shiftEnd} onChange={(e) => setShiftEnd(e.target.value)} className="num" />
           </Field>
         </div>
-        <Field label="Grace (minutes)" className="w-40">
-          <Input type="number" inputMode="numeric" min={0} max={60} value={graceMin} onChange={(e) => setGraceMin(e.target.value)} className="num" />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Grace (minutes)">
+            <Input type="number" inputMode="numeric" min={0} max={60} value={graceMin} onChange={(e) => setGraceMin(e.target.value)} className="num" />
+          </Field>
+          <Field label="Break (minutes)" helper="Taken any time in the shift">
+            <Input type="number" inputMode="numeric" min={0} max={180} value={breakMin} onChange={(e) => setBreakMin(e.target.value)} className="num" />
+          </Field>
+        </div>
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1.5 text-body-sm font-medium text-text">Weekly off</legend>
           <div className="flex flex-wrap gap-2">

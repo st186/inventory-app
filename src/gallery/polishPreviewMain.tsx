@@ -7,6 +7,7 @@
 //   /polish-preview.html?screen=production           Insights > Production alone (&period=lastMonth, &house=PH-1)
 //   /polish-preview.html?screen=expenses             Audit > Expenses (InventoryView, read-only; &role=auditor)
 //   /polish-preview.html?screen=checks               the production checks banner and sheet (made-up flags)
+//   /polish-preview.html?screen=extra                extra hours to confirm (made-up days)
 //     &role=owner|store-incharge   &lang=en|bn|hi   &empty=1 (no sales records)
 //
 // Requests to the app's server are answered here from src/gallery/insightsMock.ts; nothing leaves
@@ -60,6 +61,12 @@ const PRODUCTION_FLAGS = [
   return { ...f, id: `demo-${i}:${f.kind}`, productionId: `demo-${i}`, date, house: 'PH-1', status: 'open', createdAt: `${date}T15:00:00.000Z`, loggedBy: 'Production Demo', entry: { date, pieces: f.pieces, approvalStatus: f.approvalStatus } };
 });
 
+// Made-up extra-hours days for ?screen=extra.
+const EXTRA_DAYS = [
+  { employeeId: 'DEMO-1', name: 'Production Demo', date: new Date(Date.now() - 86400000).toISOString().slice(0, 10), inAt: new Date(Date.now() - 86400000 - 14 * 3600000).toISOString(), outAt: new Date(Date.now() - 86400000 - 1 * 3600000).toISOString(), shiftStart: '08:00', shiftEnd: '19:00', minutes: 135 },
+  { employeeId: 'DEMO-2', name: 'Counter Demo', date: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), inAt: new Date(Date.now() - 2 * 86400000 - 9 * 3600000).toISOString(), outAt: new Date(Date.now() - 2 * 86400000 - 0.5 * 3600000).toISOString(), shiftStart: '15:00', shiftEnd: '22:30', minutes: 50 },
+];
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const realFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -74,6 +81,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (path.startsWith('/production-flags/')) return json({ flag: {} });
   switch (path) {
     case '/production-flags': return json({ flags: PRODUCTION_FLAGS });
+    case '/kpi/extra-hours': return json(init?.method === 'POST' ? { extra: {} } : { days: EXTRA_DAYS });
     case '/sales-data': return json({ data: salesRecords });
     case '/momo-plate-config': return json({ config: {} });
     case '/menu-item-prices': return json({ items: MENU_PRICES });
@@ -99,6 +107,7 @@ const SalesData = lazy<ComponentType<any>>(() =>
 const SyncStatusDemo = lazy(() => import('./polishSyncDemo').then((m) => ({ default: m.SyncStatusDemo })));
 const ProductionDemo = lazy(() => import('./polishProductionDemo').then((m) => ({ default: m.ProductionDemo })));
 const InventoryView = lazy(() => import('../components/InventoryView').then((m) => ({ default: m.InventoryView })));
+const ExtraHoursSheet = lazy(() => import('../components/kpi/ExtraHours').then((m) => ({ default: m.ExtraHoursSheet })));
 const ProductionFlagsBanner = lazy(() => import('../components/production/ProductionFlags').then((m) => ({ default: m.ProductionFlagsBanner })));
 
 const owner = mock.context.user!;
@@ -121,7 +130,7 @@ function Preview() {
         <PageHeader title={screen === 'sync' ? 'Status line' : screen === 'expenses' ? 'Expenses' : screen === 'checks' ? 'Production' : lang === 'bn' ? 'বিশ্লেষণ' : lang === 'hi' ? 'विश्लेषण' : 'Insights'} />
         <main className="mx-auto w-full max-w-6xl px-4 py-4 lg:px-8">
           <Suspense fallback={null}>
-            {screen === 'checks' ? <ProductionFlagsBanner enabled accessToken="demo" /> : screen === 'expenses' ? <InventoryView context={context} selectedStoreId={storeId} /> : screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
+            {screen === 'extra' ? <ExtraHoursSheet open onOpenChange={() => undefined} days={EXTRA_DAYS} onChanged={() => undefined} /> : screen === 'checks' ? <ProductionFlagsBanner enabled accessToken="demo" /> : screen === 'expenses' ? <InventoryView context={context} selectedStoreId={storeId} /> : screen === 'sync' ? <SyncStatusDemo /> : screen === 'production' ? <ProductionDemo context={context} /> : <SalesData context={context} selectedStoreId={storeId} />}
           </Suspense>
         </main>
       </div>

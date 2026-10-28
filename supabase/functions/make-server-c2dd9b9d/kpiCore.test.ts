@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   addDays, atWorkplace, checkApprovedAmount, clampAiAmount, cleanSettingsInput, computeMonthKpis, haversineM, istDate,
-  istMidnightMs, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
+  extraMinutesOf, istMidnightMs, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
   variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, type MonthInput, type PunchRecord,
 } from './kpiCore.ts';
 
@@ -238,6 +238,33 @@ test('per-person KPI lists and the store-duty KPIs', () => {
   assert.match(k.productionApproved.explanation, /approved themselves/);
   // An operations incharge in the production department is operations, not production staff.
   assert.equal(roleGroupOf({ role: 'manager', designation: 'operations_incharge', department: 'production' }, 'mixed'), 'operations');
+});
+
+test('extra hours: confirmed time adds points (capped), the rest waits; production break', () => {
+  const prod = resolveSettings(null, 'BM013', 'production', 'production_staff');
+  assert.equal(prod.shiftEnd, '19:00');
+  assert.equal(prod.breakMin, 60);
+  assert.equal(resolveSettings(null, 'BM010', 'store', 'store_staff').breakMin, 0);
+  assert.equal(cleanSettingsInput({ breakMin: 200 }, true).ok, false);
+  const base = crewMonth(); // shift 15:00-22:30
+  const p = (d: string, i: string, o: string): PunchRecord => ({ employeeId: 'BM010', date: d, outsideWorkplace: false, in: { at: at(d, i), source: 'manual', verified: true }, out: { at: at(d, o), source: 'manual', verified: true } });
+  assert.equal(extraMinutesOf(p('2026-10-01', '13:00', '22:30'), '2026-10-01', base.settings), 120);
+  assert.equal(extraMinutesOf(p('2026-10-01', '15:20', '23:40'), '2026-10-01', base.settings), 70); // late in doesn't take away from staying on
+  assert.equal(extraMinutesOf({ ...p('2026-10-01', '13:00', '22:30'), out: null }, '2026-10-01', base.settings), 0); // no check-out, no extra
+  const plain = computeMonthKpis(base);
+  assert.equal(plain.extra, null);
+  const punches = [...base.punches.filter((x) => x.date !== '2026-10-02'), p('2026-10-02', '15:00', '23:45')];
+  const r = computeMonthKpis({ ...base, punches, extraHours: [
+    { date: '2026-10-01', minutes: 600, status: 'confirmed' },
+    { date: '2026-10-03', minutes: 420, status: 'confirmed' },
+    { date: '2026-10-04', minutes: 0, status: 'declined' },
+  ] });
+  assert.deepEqual(r.extra, { points: 4, hours: 17, days: 2, pendingDays: 1 }); // 17 h -> 4 points; 2 Oct still to confirm
+  assert.match(r.notes.join(' '), /\+4 points/);
+  const withoutExtra = computeMonthKpis({ ...base, punches });
+  assert.equal(r.total, Math.min(100, Math.round((withoutExtra.total! + 4) * 10) / 10));
+  const many = computeMonthKpis({ ...base, extraHours: ['2026-10-01', '2026-10-02', '2026-10-03'].map((d) => ({ date: d, minutes: 900, status: 'confirmed' as const })) });
+  assert.equal(many.extra!.points, 5); // 45 h, capped at +5
 });
 
 test('rider rides', () => {
