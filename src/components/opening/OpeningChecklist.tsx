@@ -19,14 +19,14 @@ import { useT } from '../../utils/i18n';
 import { fmt12, timeOfIso } from '../workplace/workplaceUtils';
 import * as api from './openingApi';
 
-function useOpeningToday() {
+export function useOpeningToday() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.getOpeningToday>> | null>(null);
   const reload = useCallback(() => { api.getOpeningToday().then(setData).catch(() => undefined); }, []);
   useEffect(() => { reload(); }, [reload]);
   return { data, setData, reload };
 }
 
-const nowHHMM = () => new Date(Date.now() + 330 * 60000).toISOString().slice(11, 16);
+export const nowHHMM = () => new Date(Date.now() + 330 * 60000).toISOString().slice(11, 16);
 
 function Progress({ done, total }: { done: number; total: number }) {
   return (
@@ -124,6 +124,18 @@ function ChecklistSheet({ checklist: c, lang, onClose, onChange }: { checklist: 
 }
 
 // ---------------- Owner and ops ----------------
+
+// For the owner and ops the checklist is not a Home card: Home lists it under "Needs your
+// attention" only when a store's list is late or someone must be picked, and opens this sheet.
+// Set up lives in More > Store opening checklist (owner, 28 Oct 2026).
+export function OpeningOverviewSheet({ onClose }: { onClose: () => void }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <ResponsiveModal open={open} onOpenChange={(o) => !o && setOpen(false)} onClosed={onClose} title="Store opening checklist">
+      <OpeningOverview />
+    </ResponsiveModal>
+  );
+}
 
 export function OpeningOverview() {
   const { data, setData, reload } = useOpeningToday();

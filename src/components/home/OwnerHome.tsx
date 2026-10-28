@@ -11,7 +11,7 @@ import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/Re
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
 import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
 import { StoreCoverCard, StoreCoverNotice } from '../kpi/StoreCover';
-import { OpeningChecklistCard, OpeningOverview } from '../opening/OpeningChecklist';
+import { OpeningChecklistCard, OpeningOverviewSheet, nowHHMM, useOpeningToday } from '../opening/OpeningChecklist';
 import { RunningLowCard } from '../supplies/RunningLow';
 import { ShoppingCard } from '../supplies/Shopping';
 import { ExplainComplaintSheet, useComplaintsToDecide, useComplaintsToExplain } from '../complaints/ExplainComplaint';
@@ -27,6 +27,7 @@ import { AttentionInbox, type AttentionItem } from './AttentionInbox';
 import { SalesTodayHero } from './SalesTodayHero';
 import { OwnerKpis } from './OwnerKpis';
 import { HomePage, timeOf, useClock, useDateWords, useOpen } from './HomeParts';
+import { fmt12 } from '../workplace/workplaceUtils';
 import { useOwnerHome } from './useOwnerHome';
 import { useFocusProfile } from './HomeShortcuts';
 import { TeamLeaveRow } from './TeamLeaveRow';
@@ -75,9 +76,20 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   const complaintsToExplain = useComplaintsToExplain(!nav.perms.isClusterHead);
   const [explaining, setExplaining] = useState<ComplaintT | null>(null);
   const x = home.extras;
+  const opening = useOpeningToday();
+  const [openingOpen, setOpeningOpen] = useState(false);
 
   const attention = useMemo(() => {
     const items: AttentionItem[] = [];
+    // Store opening checklist: only when someone must be picked, or it is past due and not done.
+    for (const c of opening.data?.overview || []) {
+      if (c.startsOn) continue;
+      if (c.needsPick) {
+        items.push({ key: `opening-pick-${c.storeId}`, icon: ClipboardCheck, tone: 'warning', rank: 1, title: `Pick who opens ${c.storeName} today`, meta: `${c.assigneeName} and ${c.coverName || 'the cover'} are on leave`, onOpen: () => setOpeningOpen(true) });
+      } else if (c.done < c.total && nowHHMM() > c.dueBy) {
+        items.push({ key: `opening-late-${c.storeId}`, icon: ClipboardCheck, tone: 'danger', rank: 1, title: `Opening checklist not done: ${c.storeName}`, meta: `${c.done} of ${c.total} ready · ${c.doerName || 'nobody'} · was due ${fmt12(c.dueBy)}`, onOpen: () => setOpeningOpen(true) });
+      }
+    }
     const approver = nav.perms.isClusterHead || nav.perms.isOperationsManager;
     if (approver) {
       const waiting = salesApprovalsPending(context.salesData || []).sort((a, b) => b.date.localeCompare(a.date));
@@ -217,7 +229,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       items.push({ key: 'profile', icon: IdCard, tone: 'warning', rank: 9, title: t('home.task.profile'), meta: t('home.task.profileMeta'), onOpen: profile.openSheet });
     }
     return items;
-  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, complaintsToDecide, complaintsToExplain.items]);
+  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, complaintsToDecide, complaintsToExplain.items, opening.data]);
 
   const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
 
@@ -229,9 +241,9 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
           {/* Store cover: the operations incharge's own evening at the store, and who covers today. */}
           <StoreCoverCard />
           <StoreCoverNotice />
-          {/* The store opening checklist: theirs to tick on a cover day; every store's progress. */}
+          {/* The store opening checklist when it is theirs to tick (a cover day). Every store's
+              progress is under Needs your attention when it is late, and in More. */}
           <OpeningChecklistCard />
-          <OpeningOverview />
           {/* Running low (anyone can flag; the owner hears too). Shopping lists are written by operations
               and bought by the production incharge, so the owner's Home leaves them out (owner, 28 Oct 2026). */}
           <RunningLowCard />
@@ -270,6 +282,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
 
         <div className="lg:col-span-6">
           <AttentionInbox items={attention} loading={x.loading && attention.length === 0} />
+          {openingOpen && <OpeningOverviewSheet onClose={() => { setOpeningOpen(false); opening.reload(); }} />}
         </div>
         <div className="flex flex-col gap-6 lg:col-span-6">
           {insightsStoreId && (

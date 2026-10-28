@@ -21,6 +21,7 @@ const StaffHome = lazy(() => import('../../home/StaffHome').then((m) => ({ defau
 const CrewHome = lazy(() => import('../../home/CrewHome').then((m) => ({ default: m.CrewHome })));
 const RiderHome = lazy(() => import('../../home/RiderHome').then((m) => ({ default: m.RiderHome })));
 const ComplaintsScreen = lazy(() => import('../../complaints/ComplaintsScreen').then((m) => ({ default: m.ComplaintsScreen })));
+const OpeningOverview = lazy(() => import('../../opening/OpeningChecklist').then((m) => ({ default: m.OpeningOverview })));
 const SiteAuditsScreen = lazy(() => import('../../audits/SiteAuditsScreen').then((m) => ({ default: m.SiteAuditsScreen })));
 
 class ScreenBoundary extends Component<{ children: ReactNode }, { error: Error | null; attempt: number }> {
@@ -152,6 +153,9 @@ export const DestinationView = memo(function DestinationView({ dest, params, ren
         break;
       case 'SiteAudits':
         content = <SiteAuditsScreen />;
+        break;
+      case 'OpeningChecklist':
+        content = <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 px-4 py-4 lg:px-8"><OpeningOverview /></div>;
         break;
       default:
         content = null;
