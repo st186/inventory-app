@@ -27,6 +27,14 @@ export const AI_MAX_SHIFT = 0.15; // the AI may move the formula amount by at mo
 // (owner, 28 Oct 2026: most staff weren't on the shift clock yet). After it, no check-in = not on time.
 export const TIMESHEET_TIMES_UNTIL = '2026-11-10';
 export const ACCEPT_BY_MIN = 9 * 60; // a stock request should be accepted (preparation started) by 9 AM on its day
+// Expenses entered correctly (owner, 29 Oct 2026): counted from November, when the amount rule
+// (packs with the size of each) started. The expense checks (expenseReview.ts) that mean the entry
+// itself was wrong; a bill photo, the owner's OK or a big spend are not entry mistakes.
+export const EXPENSE_ACCURACY_FROM = '2026-11-01';
+export const EXPENSE_MISTAKES: Record<string, string> = {
+  category: 'wrong category', amount: 'amount unclear', weight: 'unit or quantity slip', bundle: 'wrong pieces per pack',
+  duplicate: 'logged twice', detail: 'repair or labour without details',
+};
 
 // Store cover (owner, 28 Oct 2026): someone who works at the production house from 8 AM goes to
 // the store for the evening on a store-cover day - a store staff member on approved leave, a
@@ -80,7 +88,7 @@ export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness' | 'expenseAccuracy';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -111,6 +119,7 @@ export const KPI_LABELS: Record<KpiId, string> = {
   cratesClean: 'Crates and containers clean',
   photoChecks: 'Photo checks (on time and clean)',
   storeReadiness: 'Store ready on time',
+  expenseAccuracy: 'Expenses entered correctly',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -497,6 +506,7 @@ export type MonthInput = {
   extraHours?: { date: string; minutes: number; status: 'confirmed' | 'declined' }[]; // the incharge's decisions
   storeRequests?: any[]; // stock requests sent from the person's own store
   expenses?: any[]; // expense entries (inventory and overhead) the person logged
+  expenseFlags?: any[]; // the expense checks' flags on those entries (expense-flag:{expenseId}:{kind})
   approvals?: any[]; // production entries from the house that supplies the person's store
   placePhotos?: { date: string; item: any }[]; // every photo taken at the incharge's store or kitchen
   crateChecks?: { date: string; itemId: string; item: any | null }[]; // crates and containers checks due at that place, with the photo if one came
@@ -539,6 +549,7 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'trips': return 'Finish every ride you take on and confirm the delivery.';
     case 'salesOnTime': return `Save the day's sales and cash count by ${fmt12(DAY_CLOSE_BY_MIN)} after closing.`;
     case 'expensesOnTime': return `Enter every expense on the day it is paid (by ${fmt12(DAY_CLOSE_BY_MIN)} after closing), so the cash count matches.`;
+    case 'expenseAccuracy': return 'Enter each expense right the first time: the right category, and an amount that says exactly what was bought - packs with the size of each (Butter 4 packets × 500 g, not 8 pcs), vegetables by weight. An entry the app flags that turns out wrong counts against you; one marked correct does not.';
     case 'productionApproved': return 'Check each day\'s production entry and approve it before it approves itself after 24 hours.';
     case 'placeClean': return `Walk the whole ${place} every day: garbage out, bins covered, nothing piled up. Every photo that needs cleaning costs ${PLACE_FLAG_PENALTY} points, a garbage dump or filth ${PLACE_SEVERE_PENALTY}.`;
     case 'requestOnTime': return `Send the stock request by ${fmt12(REQUEST_BY_MIN)} on the day it is for, so production can plan.`;
@@ -954,6 +965,29 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     }
     if (!n) set('expensesOnTime', null, 'No expenses entered in this period.');
     else set('expensesOnTime', pct(ok, n), `${ok} of ${plural(n, 'expense entry', 'expense entries')} entered by ${fmt12(DAY_CLOSE_BY_MIN)} after the day paid.${n > ok ? ` The late ones came ${Math.max(1, Math.round(lateDays / (n - ok)))} day(s) late on average.` : ''}`);
+  }
+  if (ids.includes('expenseAccuracy')) {
+    const start = from > EXPENSE_ACCURACY_FROM ? from : EXPENSE_ACCURACY_FROM;
+    const wrong = new Map<string, string[]>(); // expense id -> its mistakes
+    for (const f of input.expenseFlags || []) {
+      // Marked correct by someone other than whoever entered it (an incharge can't clear their own).
+      const cleared = f?.status === 'dismissed' && !!f.decidedBy && f.decidedBy !== f.loggedBy;
+      if (!f?.expenseId || !EXPENSE_MISTAKES[f.kind] || cleared) continue;
+      wrong.set(String(f.expenseId), [...(wrong.get(String(f.expenseId)) || []), String(f.kind)]);
+    }
+    let n = 0, ok = 0;
+    const kinds: Record<string, number> = {};
+    for (const e of input.expenses || []) {
+      const d = String(e?.date || '').slice(0, 10);
+      if (!d || d < start || d > to) continue;
+      n++;
+      const mistakes = wrong.get(String(e.id)) || [];
+      if (!mistakes.length) ok++;
+      for (const k of new Set(mistakes)) kinds[k] = (kinds[k] || 0) + 1;
+    }
+    const list = Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, c]) => `${c} ${EXPENSE_MISTAKES[k]}`).join(', ');
+    if (!n) set('expenseAccuracy', null, to < EXPENSE_ACCURACY_FROM ? 'Counted from 1 Nov 2026.' : 'No expenses entered in this period.');
+    else set('expenseAccuracy', pct(ok, n), `${ok} of ${plural(n, 'expense entry', 'expense entries')} entered correctly.${list ? ` Flagged and not marked correct: ${list}.` : ''}`);
   }
   if (ids.includes('productionApproved')) {
     let decided = 0, byPerson = 0;

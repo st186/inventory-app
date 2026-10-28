@@ -193,6 +193,29 @@ test('store incharge cash and stock-out KPIs', () => {
   assert.equal(k.stockOuts.score, 85);
 });
 
+test('expenses entered correctly', () => {
+  const base = crewMonth();
+  const settings = { ...resolveSettings({}, 'BM008', 'store', 'store_incharge'), kpis: ['expenseAccuracy'] as any, weights: { expenseAccuracy: 8 } as any };
+  const expenses = [
+    { id: 'e1', date: '2026-11-02' }, { id: 'e2', date: '2026-11-02' }, { id: 'e3', date: '2026-11-03' }, { id: 'e4', date: '2026-11-04' },
+    { id: 'old', date: '2026-10-29' }, // before the rule started: not counted
+  ];
+  const expenseFlags = [
+    { expenseId: 'e1', kind: 'amount', status: 'open' }, // Butter 8 pcs
+    { expenseId: 'e1', kind: 'category', status: 'fixed' }, // one entry, two mistakes: counted once
+    { expenseId: 'e2', kind: 'category', status: 'dismissed', loggedBy: 'Rohan', decidedBy: 'Aniket' }, // marked correct by someone else
+    { expenseId: 'e4', kind: 'amount', status: 'dismissed', loggedBy: 'Rohan', decidedBy: 'Rohan' }, // can't clear your own
+    { expenseId: 'e3', kind: 'unusual', status: 'open' }, // a big spend is not an entry mistake
+    { expenseId: 'old', kind: 'amount', status: 'open' },
+  ];
+  const r = computeMonthKpis({ ...base, month: '2026-11', today: '2026-11-10', group: 'store_incharge', settings, expenses, expenseFlags });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.expenseAccuracy.score, 50); // 2 of 4
+  assert.match(k.expenseAccuracy.explanation, /2 of 4 expense entries entered correctly\. Flagged and not marked correct: 2 amount unclear, 1 wrong category\./);
+  const oct = computeMonthKpis({ ...base, group: 'store_incharge', settings, expenses, expenseFlags });
+  assert.equal(Object.fromEntries(oct.kpis.map((x) => [x.id, x])).expenseAccuracy.score, null);
+});
+
 test('production KPIs', () => {
   const base = crewMonth();
   const settings = resolveSettings({ weeklyOff: [2] }, 'BM004', 'production', 'production_incharge');

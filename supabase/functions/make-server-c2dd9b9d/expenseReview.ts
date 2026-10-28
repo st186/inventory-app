@@ -11,10 +11,12 @@
 // unlike before), category (filed unlike before, or a word that belongs elsewhere), detail (a
 // repair or labour entry that doesn't say what), repeat (a consumable bought again and again),
 // unusual (far above what this kind of spend usually is here), duplicate (same amount, kind and
-// place within two days); for repairs, labour and equipment (expensePaperwork.ts) also bill (no
+// place within two days), amount (doesn't say how much: "Butter 8 pcs" with no pack size - owner,
+// 29 Oct 2026; it closes itself when the entry is edited to a clear amount); for repairs, labour and equipment (expensePaperwork.ts) also bill (no
 // photo of the bill above ₹500), approval (above ₹2,000: waits for the owner's OK) and replace
 // (a machine repaired 3 times in 4 months, or repairs reaching 40% of its price).
 import { askClaudeForJson } from './insights.ts';
+import { amountFix, amountIssue, itemKey, type ItemSpec } from './suppliesRules.ts';
 import {
   APPROVAL_ABOVE, BILL_PHOTO_ABOVE, REPLACE_AFTER_REPAIRS, REPLACE_SHARE, REPLACE_WINDOW_DAYS, describeRepair, isBillPath, needsPaperwork,
 } from './expensePaperwork.ts';
@@ -153,6 +155,20 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
       }
     }
 
+    // An amount that doesn't say how much. The fix comes from how the item was last written on a
+    // shopping list (2 packets × 1 L), when there is one.
+    if (source === 'inventory') {
+      const issue = amountIssue({ name, qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton });
+      if (issue) {
+        const specs: Record<string, ItemSpec> | null = await deps.kv.get('supply-item-specs').catch(() => null);
+        const fix = amountFix(Number(item.quantity) || 0, amount, specs?.[itemKey(name)]);
+        flags.push({
+          kind: 'amount', title: 'How much is that?', message: issue,
+          ...(fix ? { suggestion: { quantity: fix.quantity, unit: fix.unit, costPerUnit: fix.costPerUnit }, suggestionText: fix.text } : {}),
+        });
+      }
+    }
+
     // Category: filed unlike before, or a word that belongs in another category.
     let categoryChecked = false;
     const rule = WORD_RULES.find((r) => r.test.test(name) && r.from.includes(item.category) && r.to !== item.category);
@@ -258,6 +274,20 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
   } catch (error) {
     console.log('Expense review failed:', error instanceof Error ? error.message : String(error));
     return [];
+  }
+}
+
+/** After an edit: an open "how much is that?" flag closes when the amount is now clear (it still
+ *  counts as a mistake for the KPI - it was fixed, not marked correct). Never throws. */
+export async function recheckAmount(deps: Pick<ExpenseReviewDeps, 'kv'>, item: any, by: string) {
+  try {
+    const id = `${item?.id}:amount`;
+    const flag: Flag | null = await deps.kv.get(`expense-flag:${id}`);
+    if (!flag || flag.status !== 'open') return;
+    if (amountIssue({ name: nameOf(item), qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton })) return;
+    await deps.kv.set(`expense-flag:${id}`, { ...flag, status: 'fixed', decidedBy: by, decidedAt: new Date().toISOString(), note: 'The entry was edited' });
+  } catch (error) {
+    console.log('Expense recheck failed:', error instanceof Error ? error.message : String(error));
   }
 }
 

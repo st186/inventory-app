@@ -162,3 +162,41 @@ export function learnSpecs(specs: Record<string, ItemSpec>, lines: Pick<Shopping
   if (keys.length <= 400) return next;
   return Object.fromEntries(keys.map((k) => [k, next[k]] as const).sort((a, b) => b[1].at.localeCompare(a[1].at)).slice(0, 400));
 }
+
+// Leafy herbs go by the bundle; a few vegetables are counted; packed goods come in packs (the app's
+// quantityNorms.ts, kept in step).
+const LEAFY = /\b(coriander|dhania|dhaniya|pudina|mint|curry leaves?|spring onions?|methi|palak|spinach|lettuce|lemon ?grass|celery)\b/i;
+const COUNTED_VEG = /\b(lemons?|limes?|gandhoraj|eggs?|coconuts?|corn cobs?|bhutta)\b/i;
+const PACKED = /\b(masala|powder|sauce|ketchup|mayo|mayonnaise|gravy|ajinomoto|sachet|cheese|oil|vinegar|soya|seasoning|oregano|flakes|paste|premix|butter)\b/i;
+const NOT_PACKED = /butter (paper|brush)|oil (paper|brush)/i;
+const FOOD_CATEGORIES = new Set(['meat', 'dairy', 'fresh_produce', 'staples', 'spices_seasonings', 'bread_buns']);
+const PIECES = new Set(['', 'pcs', 'pc', 'piece', 'pieces', 'nos', 'no']);
+
+/** An expense amount that doesn't say how much (owner, 29 Oct 2026), in one sentence; null when it is clear.
+ *  A packed food counted in pieces with no pack size ("Butter 8 pcs"), a pack with no size, a
+ *  vegetable counted in pieces, a bundle of something that isn't a leafy herb. */
+export function amountIssue(e: { name: string; qty: number; unit: string; category?: string; piecesPerCarton?: number }): string | null {
+  const unit = String(e.unit || '').trim().toLowerCase();
+  const name = String(e.name || '').trim() || 'This item';
+  const qty = Number(e.qty) || 0;
+  const sized = Number(e.piecesPerCarton) > 0;
+  const food = !e.category || FOOD_CATEGORIES.has(e.category);
+  if (unit === 'bundle') return LEAFY.test(name) ? null : `${name} by the bundle doesn't say how much - only leafy herbs like coriander and pudina go by the bundle. Write the weight.`;
+  if (PACK_UNITS.has(unit) && !sized) return `${name}: "${qty} ${unitWord(unit, qty)}" doesn't say how big each ${unit} is. Write the total weight or volume (e.g. 2 L), or the size of each.`;
+  if (!PIECES.has(unit) || sized || !food) return null;
+  if (LEAFY.test(name)) return `${name} in pieces doesn't say how much - write the bundles or the weight.`;
+  if (PACKED.test(name) && !NOT_PACKED.test(name)) return `${name}: "${qty} pcs" doesn't say how big each pack is. Write the total weight or volume (e.g. 8 × 500 g = 4 kg).`;
+  if (e.category === 'fresh_produce' && !COUNTED_VEG.test(name)) return `${name} goes by weight (g or kg), not pieces.`;
+  return null;
+}
+
+/** "8 pcs" to the weight or volume they come to, from how the item was last written on a shopping list. */
+export function amountFix(qty: number, amount: number, spec: ItemSpec | null | undefined): { quantity: number; unit: string; costPerUnit: number; text: string } | null {
+  if (!spec?.packSize || !spec.packUnit || spec.packUnit === 'pcs' || !(qty > 0) || !(amount > 0)) return null;
+  let total = qty * spec.packSize;
+  let unit = spec.packUnit;
+  if (unit === 'g' && total >= 1000) { total /= 1000; unit = 'kg'; }
+  if (unit === 'mL' && total >= 1000) { total /= 1000; unit = 'L'; }
+  total = Math.round(total * 1000) / 1000;
+  return { quantity: total, unit, costPerUnit: Math.round((amount / total) * 100) / 100, text: `${qty} × ${spec.packSize} ${spec.packUnit} = ${total} ${unit}` };
+}

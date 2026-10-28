@@ -73,7 +73,7 @@ function houseOf(emp: any, places: Places): string | null {
 // Month-wide data shared by everyone on the team screen, loaded once and only when a role needs it.
 type Shared = {
   month: string; today: string; places: Places; punchSince: string | null;
-  sales: any[]; production: any[]; requests: any[]; trips: any[]; expenses: any[]; productionCash: any[]; complaints: any[];
+  sales: any[]; production: any[]; requests: any[]; trips: any[]; expenses: any[]; expenseFlags: any[]; productionCash: any[]; complaints: any[];
   checks: Map<string, { date: string; row: any }[]>;
   stockOuts: Map<string, Promise<any[]>>;
   ledger: Map<string, Promise<{ made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] }>>;
@@ -88,16 +88,17 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
   const inMonth = (d: string) => d >= first && d <= last;
   const need = (...ids: KpiId[]) => ids.some((id) => needs.has(id));
   const none = Promise.resolve([] as any[]);
-  const [sales, production, requests, trips, checkRows, inventory, overheads, productionCash, complaints] = await Promise.all([
+  const [sales, production, requests, trips, checkRows, inventory, overheads, productionCash, complaints, expenseFlags] = await Promise.all([
     need('cashCount', 'cashAccuracy', 'salesOnTime', 'posCash') ? deps.getAllByPrefix('sales:') : none,
     need('productionLogged', 'wastage', 'productionApproved') ? deps.getAllByPrefix('production:') : none,
     need('shippedOnTime', 'requestOnTime', 'requestAccepted') ? deps.getAllByPrefix('production_request_') : none,
     need('trips') ? deps.getAllByPrefix('rider-trip:') : none,
     rowsByPrefix(`workplace-check:${month}-`),
-    need('expensesOnTime') ? deps.getAllByPrefix('inventory:') : none,
-    need('expensesOnTime') ? deps.getAllByPrefix('overhead:') : none,
+    need('expensesOnTime', 'expenseAccuracy') ? deps.getAllByPrefix('inventory:') : none,
+    need('expensesOnTime', 'expenseAccuracy') ? deps.getAllByPrefix('overhead:') : none,
     need('productionCash') ? deps.getAllByPrefix('production-cash:') : none,
     deps.getAllByPrefix('complaint:'), // upheld complaints come off everyone's total
+    need('expenseAccuracy') ? deps.getAllByPrefix('expense-flag:') : none,
   ]);
   const checks = new Map<string, { date: string; row: any }[]>();
   for (const { key, value } of checkRows) {
@@ -116,6 +117,7 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
     requests: (requests || []).filter((r: any) => r?.requestDate && inMonth(String(r.requestDate).slice(0, 10))),
     trips: (trips || []).filter((t: any) => t?.date && inMonth(String(t.date).slice(0, 10))),
     expenses: [...(inventory || []), ...(overheads || [])].filter((e: any) => e?.date && inMonth(String(e.date).slice(0, 10))),
+    expenseFlags: (expenseFlags || []).filter((f: any) => f?.date && inMonth(String(f.date).slice(0, 10))),
     productionCash: (productionCash || []).filter((r: any) => r?.date && inMonth(String(r.date).slice(0, 10))),
     // Decided in this month (an IST day), so a closed month's pay never changes afterwards.
     complaints: (complaints || []).filter((x: any) => x?.decision?.upheld && x.decision.at && inMonth(istDayOf(x.decision.at))),
@@ -212,6 +214,8 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     }
   }
   const ids = new Set([id, emp.authUserId].filter(Boolean).map(String));
+  const myExpenses = shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || '')));
+  const myExpenseIds = new Set(myExpenses.map((e: any) => String(e.id)));
   return computeMonthKpis({
     month, today: shared.today, emp: { employeeId: id, joiningDate: emp.joiningDate || null },
     group: profile.group, kind: profile.kind, settings: profile.settings, punchSince: shared.punchSince,
@@ -229,7 +233,8 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     ledgerWastedKg: ledger.wasted,
     extraHours: extraHours || [],
     storeRequests: store ? shared.requests.filter((r: any) => r.storeId === store) : [],
-    expenses: shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || ''))),
+    expenses: myExpenses,
+    expenseFlags: shared.expenseFlags.filter((f: any) => myExpenseIds.has(String(f.expenseId))),
     approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
     placePhotos,
     crateChecks,
