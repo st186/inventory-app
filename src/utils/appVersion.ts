@@ -7,7 +7,7 @@
 //   `node scripts/publish-update.mjs apk`.
 // - A live update (screens and code only; build.gradle unchanged): bump this alone, build, and
 //   `node scripts/publish-update.mjs bundle` (see utils/liveUpdate.ts).
-export const APP_VERSION = '1.16.8';
+export const APP_VERSION = '1.16.9';
 
 /** True when `latest` is a later version than `current` ("1.10.0" > "1.9.0"). */
 export function isNewerVersion(latest: string, current: string): boolean {
