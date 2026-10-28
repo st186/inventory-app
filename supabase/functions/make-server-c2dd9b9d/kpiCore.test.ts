@@ -136,12 +136,28 @@ test('monthly KPIs for store crew', () => {
   assert.equal(r.coverage, 1);
 });
 
-test('punch KPIs wait for the shift clock to start', () => {
-  const r = computeMonthKpis(crewMonth({ punchSince: null }));
+test('on time / full shift: check-ins, else timesheet times until 10 Nov, else left out', () => {
+  // No shift clock, no check-ins, timesheets without times: nothing to judge.
+  const none = computeMonthKpis(crewMonth({ punchSince: null, punches: [] }));
+  const kn = Object.fromEntries(none.kpis.map((x) => [x.id, x]));
+  assert.equal(kn.punctuality.score, null);
+  assert.equal(kn.fullShift.score, null);
+  assert.ok(none.coverage < 1);
+  // No check-ins: the timesheet's start and end are used, and say so.
+  const sheets = crewMonth().timesheets.map((t, i) => ({ ...t, startTime: i === 0 ? '15:30' : '14:55', endTime: i === 1 ? '21:00' : '22:35' }));
+  const r = computeMonthKpis(crewMonth({ punchSince: null, punches: [], timesheets: sheets }));
   const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
-  assert.equal(k.punctuality.score, null);
-  assert.equal(k.fullShift.score, null);
-  assert.ok(r.coverage < 1);
+  assert.equal(k.punctuality.score, 85.7); // 6 of 7 started by 3:10 PM
+  assert.equal(k.fullShift.score, 85.7); // 6 of 7 stayed until 10:20 PM or later
+  assert.match(k.punctuality.explanation, /7 days judged from the timesheet/);
+  // After 10 Nov a worked day without a check-in is not on time, whatever the timesheet says.
+  const nov = computeMonthKpis({
+    ...crewMonth(), month: '2026-11', today: '2026-11-13', punchSince: '2026-10-27', punches: [], leaves: [], workplaceChecks: [],
+    timesheets: ['2026-11-09', '2026-11-11', '2026-11-12'].map((d) => ({ date: d, totalHours: 7, status: 'approved', startTime: '14:55', endTime: '22:35', submittedAt: at(d, '23:00') })),
+  });
+  const kv = Object.fromEntries(nov.kpis.map((x) => [x.id, x]));
+  assert.equal(kv.punctuality.score, 33.3); // the 9th from the timesheet; the 11th and 12th have no check-in
+  assert.match(kv.punctuality.explanation, /2 days without a check-in/);
 });
 
 test('check-ins away from the workplace are not on time, and flags are counted', () => {

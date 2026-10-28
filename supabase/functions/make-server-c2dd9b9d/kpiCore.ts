@@ -23,6 +23,9 @@ export const PLACE_SEVERE_PENALTY = 15; // per photo showing a garbage dump, ove
 export const WASTAGE_FULL_MARKS_PCT = 2; // production wastage at or under 2% scores 100 ...
 export const WASTAGE_ZERO_PCT = 10; // ... and 10% or more scores 0, straight line between
 export const AI_MAX_SHIFT = 0.15; // the AI may move the formula amount by at most ±15%
+// Until this day, a worked day with no check-in is judged from the timesheet's start and end
+// (owner, 28 Oct 2026: most staff weren't on the shift clock yet). After it, no check-in = not on time.
+export const TIMESHEET_TIMES_UNTIL = '2026-11-10';
 // Extra hours (owner, 28 Oct 2026): time before the shift start or after its end, from the
 // check-in and check-out, counts once the person's incharge confirms it was needed. Every 4
 // confirmed hours in the month add a point to the KPI total, at most 5, which raises variable pay.
@@ -526,53 +529,77 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     set('attendance', pct(presentDays.length, scheduled.length), `Came in on ${presentDays.length} of ${scheduled.length} working days${extra ? ` (${extra} not counted)` : ''}.${extraDays ? ` Also worked ${plural(extraDays, 'extra day')}.` : ''}${!settings.weeklyOff.length ? ' There is no fixed weekly off: days off are taken as leave (4 a month), applied for in the app.' : ''}`);
   }
 
-  // Punches: only days from the start of the shift clock, and not half-day leave.
+  // On time / full shift: the check-in and check-out; on a worked day without them, the
+  // timesheet's start and end until TIMESHEET_TIMES_UNTIL (marked as not verified). Days before the
+  // shift clock with no timesheet times are left out; half-day leave days are always left out.
   const { start, end } = shiftMinutes(settings);
   const since = input.punchSince || null;
-  const punchDays = since ? presentDays.filter((d) => d >= since && !halfLeave.has(d)) : [];
   const isRider = group === 'rider';
-  if (!since || !punchDays.length) {
-    const why = !since ? 'The shift clock was not in use yet.' : 'No working days with the shift clock in use yet.';
+  const sheetTimes = (d: string) => {
+    const t = sheetBy.get(d);
+    if (!t || t.isLeave || t.status === 'rejected' || d > TIMESHEET_TIMES_UNTIL) return null;
+    const s = parseHHMM(t.startTime);
+    let e = parseHHMM(t.endTime);
+    if (s === null && e === null) return null;
+    if (s !== null && e !== null && e <= s) e += 1440; // ended after midnight
+    return { s, e };
+  };
+  type DaySource = { d: string; punch: PunchRecord | null; sheet: { s: number | null; e: number | null } | null };
+  const timedDays: DaySource[] = [];
+  for (const d of presentDays) {
+    if (halfLeave.has(d)) continue;
+    const p = punchBy.get(d);
+    if (p?.in || p?.out) { timedDays.push({ d, punch: p, sheet: null }); continue; }
+    const sheet = sheetTimes(d);
+    if (sheet) timedDays.push({ d, punch: null, sheet });
+    else if (since && d >= since) timedDays.push({ d, punch: null, sheet: null }); // shift clock in use, nothing recorded
+  }
+  if (!timedDays.length) {
+    const why = !since ? 'No check-ins or timesheet times yet.' : 'No working days with a check-in or timesheet times yet.';
     set('punctuality', null, why);
     set('fullShift', null, why);
   } else {
     let onTime = 0, late = 0, lateMin = 0, missedIn = 0, away = 0, noGps = 0;
-    let full = 0, early = 0, missedOut = 0, workedMin = 0, pairedDays = 0;
-    for (const d of punchDays) {
-      const p = punchBy.get(d);
+    let full = 0, early = 0, missedOut = 0, workedMin = 0, pairedDays = 0, fromSheet = 0;
+    for (const { d, punch: p, sheet } of timedDays) {
+      if (sheet) fromSheet++;
       for (const ev of [p?.in, p?.out]) for (const f of ev?.flags || []) flags[f] = (flags[f] || 0) + 1;
-      if (p?.in) {
-        const m = minutesOfDay(p.in.at, d);
-        if (p.in.noGps) noGps++;
-        if (p.in.outside && !isRider) { away++; }
-        else if (m <= start + settings.graceMin) onTime++;
-        if (m > start + settings.graceMin && !(p.in.outside && !isRider)) { late++; lateMin += m - start; }
+      const inMin = p?.in ? minutesOfDay(p.in.at, d) : sheet?.s ?? null;
+      const outMin = p?.out ? minutesOfDay(p.out.at, d) : sheet?.e ?? null;
+      const outside = !!p?.in?.outside && !isRider;
+      if (inMin !== null) {
+        if (p?.in?.noGps) noGps++;
+        if (outside) away++;
+        else if (inMin <= start + settings.graceMin) onTime++;
+        if (inMin > start + settings.graceMin && !outside) { late++; lateMin += inMin - start; }
       } else missedIn++;
-      if (p?.out) {
-        const m = minutesOfDay(p.out.at, d);
-        if (m >= end - settings.graceMin) full++; else early++;
-        if (p.in) {
-          const worked = (Date.parse(p.out.at) - Date.parse(p.in.at)) / 60000;
+      if (outMin !== null) {
+        if (outMin >= end - settings.graceMin) full++; else early++;
+        if (inMin !== null) {
+          const worked = outMin - inMin;
           if (worked > 0 && worked < 1440) { workedMin += worked; pairedDays++; }
         }
       } else missedOut++;
     }
     if (away) flags.outside = (flags.outside || 0) + away;
     if (noGps) flags.no_gps = (flags.no_gps || 0) + noGps;
-    const n = punchDays.length;
+    const n = timedDays.length;
+    const sheetNote = fromSheet ? `${plural(fromSheet, 'day')} judged from the timesheet (no check-in, not verified).` : '';
     set('punctuality', pct(onTime, n), [
-      `Checked in on time (by ${fmt12(start + settings.graceMin)}) on ${onTime} of ${n} days.`,
+      `On time (by ${fmt12(start + settings.graceMin)}) on ${onTime} of ${n} days.`,
       late ? `Late ${plural(late, 'day')}, ${Math.round(lateMin / late)} min on average.` : '',
       missedIn ? `${plural(missedIn, 'day')} without a check-in.` : '',
       away ? `${plural(away, 'check-in')} away from the workplace (not counted as on time).` : '',
       noGps ? `${plural(noGps, 'check-in')} without GPS.` : '',
+      sheetNote,
     ].filter(Boolean).join(' '));
     const scheduledH = Math.round((n * Math.max(0, end - start - (settings.breakMin || 0))) / 6) / 10;
     set('fullShift', pct(full, n), [
       `Stayed until the end of the shift (${fmt12(end)}) on ${full} of ${n} days.`,
       early ? `Left early on ${plural(early, 'day')}.` : '',
       missedOut ? `${plural(missedOut, 'day')} without a check-out.` : '',
-      pairedDays ? `${Math.round(Math.max(0, workedMin - pairedDays * (settings.breakMin || 0)) / 6) / 10} h at work (less ${settings.breakMin || 0} min break a day) on ${plural(pairedDays, 'day')} with both check-in and check-out, against ${scheduledH} h scheduled for ${plural(n, 'day')}.` : '',
+      pairedDays ? `${Math.round(Math.max(0, workedMin - pairedDays * (settings.breakMin || 0)) / 6) / 10} h at work (less ${settings.breakMin || 0} min break a day) on ${plural(pairedDays, 'day')} with a start and end time, against ${scheduledH} h scheduled for ${plural(n, 'day')}.` : '',
+      sheetNote,
     ].filter(Boolean).join(' '));
   }
 
