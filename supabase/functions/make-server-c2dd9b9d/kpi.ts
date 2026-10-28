@@ -153,6 +153,20 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
   }
   // Production entries are approved for the house that supplies the person's store.
   const supplyHouse = house || (store ? places.storeHouse.get(store) || null : null);
+  // Every photo taken at the incharge's place (a production incharge's kitchen, else their store).
+  let placePhotos: { date: string; item: any }[] = [];
+  if (has.has('placeClean')) {
+    const place = profile.group === 'production_incharge' || (!store && house) ? { kind: 'production', id: house } : { kind: 'store', id: store };
+    if (place.id) {
+      for (const rows of shared.checks.values()) {
+        for (const { date, row } of rows) {
+          for (const item of Object.values(row?.items || {}) as any[]) {
+            if (item?.locationKind === place.kind && item?.locationId === place.id) placePhotos.push({ date, item });
+          }
+        }
+      }
+    }
+  }
   const ids = new Set([id, emp.authUserId].filter(Boolean).map(String));
   return computeMonthKpis({
     month, today: shared.today, emp: { employeeId: id, joiningDate: emp.joiningDate || null },
@@ -173,6 +187,7 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     storeRequests: store ? shared.requests.filter((r: any) => r.storeId === store) : [],
     expenses: shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || ''))),
     approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
+    placePhotos,
   });
 }
 

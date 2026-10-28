@@ -285,6 +285,23 @@ test('a late start given at the close is held against the check-ins', () => {
   assert.match(lateStartIssues({ people: [] }, day.slice(1)).join(' '), /nobody is named and no check-in was late/);
 });
 
+test('place kept clean: every photo at the incharge\'s place, a garbage dump costs more', () => {
+  const base = crewMonth();
+  const settings = resolveSettings({ weeklyOff: [2], kpis: ['attendance', 'placeClean'] }, 'BM008', 'store', 'store_incharge');
+  const placePhotos = [
+    { date: '2026-10-01', item: { aiScore: 9, aiVerdict: 'clean' } },
+    { date: '2026-10-02', item: { aiScore: 5, aiVerdict: 'needs_cleaning', flag: { status: 'needs_cleaning' } } },
+    { date: '2026-10-03', item: { aiScore: 8, aiVerdict: 'clean', wasSevere: true } }, // re-shot clean, the dump still counts
+    { date: '2026-10-04', item: { aiScore: 2, aiVerdict: 'needs_cleaning', aiSevere: true, wasSevere: true } },
+    { date: '2026-10-20', item: { aiScore: 1, aiSevere: true } }, // after the counted days
+  ];
+  const r = computeMonthKpis({ ...base, group: 'store_incharge', settings, placePhotos });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.placeClean.score, 100 - 5 - 15 * 2); // 65
+  assert.match(k.placeClean.explanation, /4 photos taken here\. 2 photos showed a garbage dump/);
+  assert.equal(computeMonthKpis({ ...base, group: 'store_incharge', settings, placePhotos: [] }).kpis.find((x) => x.id === 'placeClean')!.score, null);
+});
+
 test('rider rides', () => {
   const base = crewMonth();
   const settings = resolveSettings(null, 'BM020', 'none', 'rider');

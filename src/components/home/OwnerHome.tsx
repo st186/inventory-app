@@ -3,12 +3,13 @@
 // through the month first), what needs them, today's brief and the next days' forecast.
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Clock3, Factory, IdCard, PackageCheck, ReceiptText, Scale, Truck, Wallet, Wrench,
+  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Clock3, Factory, IdCard, PackageCheck, ReceiptText, Scale, Trash2, Truck, Wallet, Wrench,
 } from 'lucide-react';
 import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
 import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/RepairAlerts';
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
+import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
 import { useShell } from '../shell/ShellContext';
 import { formatINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
@@ -61,6 +62,8 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   // Extra hours waiting for a word (kpi.ts /kpi/extra-hours).
   const extraHours = useExtraHours(nav.perms.isClusterHead || nav.perms.isOperationsManager);
   const [extraOpen, setExtraOpen] = useState(false);
+  // Garbage dumps and filth the photo AI found (workplace.ts /workplace/alerts).
+  const dirtAlerts = useWorkplaceAlerts(nav.perms.isClusterHead || nav.perms.isOperationsManager);
   const x = home.extras;
 
   const attention = useMemo(() => {
@@ -133,6 +136,13 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         onOpen: () => setFlagsOpen(true),
       });
     }
+    if (dirtAlerts.length) {
+      items.push({
+        key: 'dirt-alerts', icon: Trash2, tone: 'danger', rank: 1.2,
+        title: alertTitle(dirtAlerts), meta: alertMeta(dirtAlerts), count: dirtAlerts.length,
+        onOpen: () => open('team/checks'),
+      });
+    }
     if (repairs.alerts.length) {
       items.push({
         key: 'repairs', icon: Wrench, tone: 'danger', rank: 1.5,
@@ -179,7 +189,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       items.push({ key: 'profile', icon: IdCard, tone: 'warning', rank: 9, title: t('home.task.profile'), meta: t('home.task.profileMeta'), onOpen: profile.openSheet });
     }
     return items;
-  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days]);
+  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts]);
 
   const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
 

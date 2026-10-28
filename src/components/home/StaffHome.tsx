@@ -29,6 +29,7 @@ import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
 import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/RepairAlerts';
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
+import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
@@ -70,6 +71,7 @@ function InchargeHome() {
   useEffect(() => { if (focusProfile && profile.needed) profile.openSheet(); }, [focusProfile, profile.needed, profile.openSheet]);
   const photos = useWorkplaceDue();
   const checksPath = useFirstPath('my-checks', 'team/checks');
+  const reviewPath = useFirstPath('team/checks', 'my-checks');
   const timesheets = useTimesheetsWaiting(nav.perms.isEmployee && nav.perms.isAnyIncharge, user.employeeId);
   const stockOuts = useLoad(store ? () => data.getStockOuts(token, store, today, today) : null, [store, today, token, data]);
   const wastage = useLoad(store ? () => data.getStockWastageEntry(token, store, today) : null, [store, today, token, data]);
@@ -92,8 +94,16 @@ function InchargeHome() {
   // Extra hours of this incharge's people waiting for their word.
   const extraHours = useExtraHours(nav.perms.isAnyIncharge);
   const [extraOpen, setExtraOpen] = useState(false);
+  // Garbage dumps and filth the photo AI found at this incharge's place.
+  const dirtAlerts = useWorkplaceAlerts(nav.perms.isAnyIncharge);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (dirtAlerts.length && reviewPath) {
+      list.push({
+        key: 'dirt-alerts', icon: Trash2, title: alertTitle(dirtAlerts), meta: alertMeta(dirtAlerts), status: 'late', count: dirtAlerts.length, due: 0,
+        onOpen: () => open(reviewPath),
+      });
+    }
     if (extraHours.days.length) {
       list.push({
         key: 'extra-hours', icon: Clock3, title: extraHours.days.length === 1 ? '1 day of extra hours to confirm' : `${extraHours.days.length} days of extra hours to confirm`,
@@ -219,7 +229,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);

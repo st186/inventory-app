@@ -99,6 +99,9 @@ export const getReview = (kind: LocationKind, id: string, from: string, to: stri
 export const setFlag = (p: { date: string; employeeId: string; itemId: string; status: 'ok' | 'needs_cleaning'; note: string }) =>
   call<{ success: boolean; flag: WorkplaceFlag }>('/workplace/flag', { method: 'POST', body: JSON.stringify(p) });
 export const getSummary = (kind: LocationKind, id: string) => call<SummaryResponse>(`/workplace/summary?${q({ kind, id })}`);
+// Garbage dumps and filth the AI found in the last three days, still not cleaned or marked OK.
+export interface WorkplaceAlert { date: string; employeeId: string; personName: string; itemId: string; name: string; locationKind: LocationKind; locationId: string; locationName: string; aiScore: number | null; issues: string[]; uploadedAt: string }
+export const getAlerts = () => call<{ alerts: WorkplaceAlert[] }>('/workplace/alerts');
 
 // Photos come through the server with the sign-in token (no public links), so an <img> can't load
 // them directly: fetch as a blob and hand back an object URL. Thumbnails are cached for the session.

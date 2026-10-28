@@ -38,7 +38,7 @@ const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return {
 
 export type KpiId = 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
-  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime';
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean';
 
 export const KPI_LABELS: Record<KpiId, string> = {
   attendance: 'Attendance',
@@ -58,12 +58,13 @@ export const KPI_LABELS: Record<KpiId, string> = {
   expensesOnTime: 'Expenses entered on time',
   productionApproved: 'Production approved on time',
   requestOnTime: 'Stock request sent on time',
+  placeClean: 'Place kept clean (all photos)',
 };
 
 // The KPIs the owner picks from for each person, grouped as in KPI settings (riders have none).
 export const KPI_SECTIONS: { title: string; ids: KpiId[] }[] = [
   { title: 'Everyone', ids: ['attendance', 'punctuality', 'fullShift', 'timesheet'] },
-  { title: 'Photo checks', ids: ['workplace', 'hygiene'] },
+  { title: 'Photo checks', ids: ['workplace', 'hygiene', 'placeClean'] },
   { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy'] },
   { title: 'Production', ids: ['productionApproved', 'productionLogged', 'wastage', 'shippedOnTime'] },
 ];

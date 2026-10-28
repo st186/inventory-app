@@ -47,6 +47,8 @@ type CheckItem = {
   name: string; nameBn?: string; path: string; uploadedAt: string; late: boolean; flag?: Flag;
   locationKind: LocationKind; locationId: string; firstUploadedAt?: string; retakes?: number;
   wasFlagged?: boolean; // a reviewer marked it needs-cleaning at some point (kept for KPIs after it's fixed)
+  aiSevere?: boolean; // the AI saw a garbage dump, overflowing waste, pests or filth in this photo
+  wasSevere?: boolean; // ... in this or an earlier photo of the day (kept after a clean retake: the incharge's KPI)
   onBehalf?: boolean; uploadedById?: string; uploadedByName?: string;
   storage: 'drive' | 'bucket'; driveFileId?: string; driveThumbId?: string; thumbPath?: string; mimeType: string;
   aiStatus?: 'pending' | 'scored' | 'failed' | 'off'; aiScore?: number; aiVerdict?: string;
@@ -534,7 +536,7 @@ async function scorePhoto(deps: Deps, settings: Settings, a: { name: string; hin
   if (!settings.aiEnabled || !Deno.env.get('ANTHROPIC_API_KEY')) return { aiStatus: 'off' };
   try {
     const r = await withTimeout(aiScorePhoto(deps.kv, { base64, mediaType, itemName: a.name, hint: a.hint }), AI_TIMEOUT_MS);
-    return { aiStatus: 'scored', aiScore: r.score, aiVerdict: r.verdict, aiIssues: r.issues, aiIssuesBengali: r.issuesBengali, aiShown: r.whatIsShown, aiAt: new Date().toISOString() };
+    return { aiStatus: 'scored', aiScore: r.score, aiVerdict: r.verdict, aiIssues: r.issues, aiIssuesBengali: r.issuesBengali, aiShown: r.whatIsShown, aiSevere: r.severe, aiAt: new Date().toISOString() };
   } catch (err: any) {
     console.log('Workplace photo AI score failed:', err?.status || '', String(err?.message || err).slice(0, 160));
     return { aiStatus: 'failed', aiAt: new Date().toISOString() };
@@ -545,14 +547,16 @@ async function scorePhoto(deps: Deps, settings: Settings, a: { name: string; hin
 // unless a reviewer has already decided; a good retake clears the AI's own earlier flag.
 // Returns true when the item was newly auto-flagged.
 function applyScore(it: CheckItem, ai: Partial<CheckItem>, threshold: number): boolean {
-  for (const k of ['aiScore', 'aiVerdict', 'aiIssues', 'aiIssuesBengali', 'aiShown'] as const) delete it[k];
+  for (const k of ['aiScore', 'aiVerdict', 'aiIssues', 'aiIssuesBengali', 'aiShown', 'aiSevere'] as const) delete it[k];
   Object.assign(it, ai);
   if (ai.aiStatus !== 'scored') return false;
-  const low = (ai.aiScore ?? 10) < threshold && ai.aiVerdict !== 'unclear_photo';
+  // A garbage dump or filth stays on the day's record even after a clean retake (owner, 28 Oct 2026).
+  if (ai.aiSevere) it.wasSevere = true;
+  const low = ((ai.aiScore ?? 10) < threshold || !!ai.aiSevere) && ai.aiVerdict !== 'unclear_photo';
   if (it.flag && !it.flag.auto) return false;
   if (low) {
     const issues = (ai.aiIssues || []).join('; ');
-    it.flag = { status: 'needs_cleaning', note: `AI score ${ai.aiScore}/10${issues ? `: ${issues}` : ''}`, by: 'AI check', byId: 'ai', at: new Date().toISOString(), auto: true };
+    it.flag = { status: 'needs_cleaning', note: `${ai.aiSevere ? 'Serious: ' : ''}AI score ${ai.aiScore}/10${issues ? `: ${issues}` : ''}`, by: 'AI check', byId: 'ai', at: new Date().toISOString(), auto: true };
     return true;
   }
   if (it.flag?.auto) delete it.flag;
@@ -571,9 +575,28 @@ async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; i
     await safeNotify(deps, person.authUserId, 'workplace_flag', `Clean again: ${o.it.name} (AI ${o.it.aiScore}/10)`,
       `${en ? `${en}. ` : ''}Clean it and take a new photo. · ${bn ? `${bn}। ` : ''}পরিষ্কার করে নতুন ছবি দিন।`, related, o.date);
   }
+  // A garbage dump, overflowing waste, pests or filth: an alarm at once to the incharge, the
+  // operations managers and the owner (it also stays on their Home, GET /workplace/alerts).
+  if (o.it.aiSevere) {
+    const to = new Map<string, any>();
+    for (const e of inchargesOf(employees, o.it.locationKind, o.it.locationId, locs)) if (e.authUserId) to.set(e.authUserId, e);
+    for (const e of employees) if (e.status !== 'inactive' && e.authUserId && e.role === 'manager' && e.designation !== 'store_incharge' && e.designation !== 'production_incharge') to.set(e.authUserId, e);
+    for (const e of (await deps.getAllClusterHeads()) || []) if (e?.authUserId) to.set(e.authUserId, e);
+    for (const authUserId of to.keys()) {
+      await safeNotify(deps, authUserId, 'workplace_flag', `Garbage / dirt alert: ${o.it.name} at ${locName}`,
+        `${person?.name || 'A staff member'}'s photo shows a serious problem (AI ${o.it.aiScore}/10)${en ? `: ${en}` : ''}. Get it cleaned now. It lowers the incharge's KPI.`, related, o.date);
+    }
+    return;
+  }
+  // Any other AI flag: the place's incharge and the owner (owner, 28 Oct 2026).
+  const to = new Map<string, any>();
   for (const inc of inchargesOf(employees, o.it.locationKind, o.it.locationId, locs)) {
     if (empIdOf(inc) === o.employeeId || empIdOf(inc) === o.actorEmployeeId) continue;
-    await safeNotify(deps, inc.authUserId, 'workplace_flag', `AI flagged ${o.it.name} at ${locName}`,
+    if (inc.authUserId) to.set(inc.authUserId, inc);
+  }
+  for (const e of (await deps.getAllClusterHeads()) || []) if (e?.authUserId) to.set(e.authUserId, e);
+  for (const authUserId of to.keys()) {
+    await safeNotify(deps, authUserId, 'workplace_flag', `AI flagged ${o.it.name} at ${locName}`,
       `${person?.name || 'A staff member'}'s photo scored ${o.it.aiScore}/10${en ? `: ${en}` : ''}. Open Workplace checks to confirm or mark it OK.`, related, o.date);
   }
 }
@@ -740,6 +763,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       locationKind: a.locationKind, locationId: a.locationId,
       ...(prev ? { retakes: (prev.retakes || 0) + 1 } : {}),
       ...(prev?.wasFlagged ? { wasFlagged: true } : {}),
+      ...(prev?.wasSevere ? { wasSevere: true } : {}),
       // A reviewer's needs-cleaning stays (marked fixed) until they look again; an OK or the AI's own
       // flag was about the old photo, so it goes.
       ...(prev?.flag && !prev.flag.auto && prev.flag.status === 'needs_cleaning' ? { flag: { ...prev.flag, fixedAt: nowIso } } : {}),
@@ -866,6 +890,36 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     }
     items.sort((x, y) => y.date.localeCompare(x.date) || (x.start || '99').localeCompare(y.start || '99') || x.name.localeCompare(y.name));
     return c.json({ from, to, location: { kind: place.kind, id: place.id, name: place.name }, items });
+  });
+
+  // Garbage dumps and filth from the last three days still showing in the latest photo (not re-shot
+  // clean, not marked OK by a reviewer), at the places the caller reviews - shown on Home.
+  app.get(`${P}/workplace/alerts`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    const today = deps.getTodayIST();
+    const dates = [addDays(today, -2), addDays(today, -1), today];
+    const [locs, employees, rowsByDate] = await Promise.all([
+      loadLocations(kv),
+      loadEmployees(kv),
+      inBatches(dates, 3, async (d) => ({ d, rows: ((await kv.getByPrefix<CheckRow>(`workplace-check:${d}:`)) || []).filter((r) => r?.employeeId) })),
+    ]);
+    const names = new Map(employees.map((e) => [empIdOf(e), String(e.name || empIdOf(e))]));
+    const alerts: any[] = [];
+    for (const { d, rows } of rowsByDate) {
+      for (const r of rows) {
+        for (const [itemId, it] of Object.entries(r.items || {})) {
+          if (!it.aiSevere || it.flag?.status === 'ok') continue;
+          if (!reviews(actor!, it.locationKind, it.locationId, locs)) continue;
+          alerts.push({
+            date: d, employeeId: r.employeeId, personName: names.get(r.employeeId) || 'Former staff', itemId, name: it.name,
+            locationKind: it.locationKind, locationId: it.locationId, locationName: findLoc(locs, it.locationKind, it.locationId)?.name || '',
+            aiScore: it.aiScore ?? null, issues: it.aiIssues || [], uploadedAt: it.uploadedAt,
+          });
+        }
+      }
+    }
+    alerts.sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)));
+    return c.json({ alerts });
   });
 
   // A reviewer's verdict on a photo: OK, or needs cleaning with a note (pushed to the person).

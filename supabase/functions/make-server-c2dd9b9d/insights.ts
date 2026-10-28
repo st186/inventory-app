@@ -1242,12 +1242,13 @@ export type PhotoHygieneScore = {
   issues: string[];
   issuesBengali: string[];
   whatIsShown: string;
+  severe: boolean; // garbage dump, overflowing waste, pests or filth: raised at once (workplace.ts)
 };
 
 // What "clean" means for each kind of area, matched on the check's English name. Order matters:
 // "Post-steaming table" is a table, "Dining area fan" a fan, "Garbage/back area" the garbage area.
 const HYGIENE_RUBRICS: [RegExp, string][] = [
-  [/garbage|dustbin|\bbins?\b|waste|back area/i, 'Garbage / back area: bins covered with lids and not overflowing, no spilled or loose waste on the floor, no flies or pests, floor swept.'],
+  [/garbage|dustbin|\bbins?\b|waste|back area/i, 'Garbage / back area: bins covered with lids and not overflowing, no spilled or loose waste on the floor, no heap or dump of garbage anywhere in view, no flies or pests, floor swept.'],
   [/\bfans?\b/i, 'Fan: blades and motor cover free of dust, grease and cobwebs.'],
   [/light|bulb|tube/i, 'Lights: no dust, cobwebs or dead insects on or around the lights; fittings intact.'],
   [/table|surface|counter|slab/i, 'Table / work surface: dry, no food bits, dough or flour clumps, no stains, oil or spills, nothing unrelated left lying on it.'],
@@ -1268,7 +1269,8 @@ const HYGIENE_SYSTEM = `You check daily hygiene photos for Bunny Momos, a momo s
 - Score 0-10: 9-10 spotless; 7-8 clean, at most a tiny issue; 5-6 needs a wipe or tidy now; 3-4 clearly dirty; 0-2 very dirty or unsafe for food.
 - verdict "clean" if nothing needs doing before the next service, "needs_cleaning" if something should be cleaned now, "unclear_photo" if the photo is too dark, blurred, too close, or does not show the named area (then score 0 and say what is wrong with the photo).
 - issues: up to 4 short, specific English phrases a worker can act on (e.g. "oil drips on fryer side"), empty if clean. issuesBengali: the same issues in simple everyday Bengali, same order.
-- whatIsShown: one short English sentence describing what the photo shows.`;
+- whatIsShown: one short English sentence describing what the photo shows.
+- severe: true only for a serious problem the incharge must deal with now - a large heap or dump of garbage, waste piled or spilling well beyond the bin, garbage left lying around, rotting food, pests (rats, cockroaches, swarms of flies), or filth that makes the area unsafe for food. A small tidy-up or a wipe is not severe. Always false for unclear_photo.`;
 
 const hygieneSchema = {
   type: 'object',
@@ -1278,8 +1280,9 @@ const hygieneSchema = {
     issues: { type: 'array', items: { type: 'string' }, description: 'Short English phrases, at most 4' },
     issuesBengali: { type: 'array', items: { type: 'string' }, description: 'The same issues in simple Bengali' },
     whatIsShown: { type: 'string' },
+    severe: { type: 'boolean', description: 'A garbage dump, overflowing waste, pests, rotting food or filth unsafe for food' },
   },
-  required: ['score', 'verdict', 'issues', 'issuesBengali', 'whatIsShown'],
+  required: ['score', 'verdict', 'issues', 'issuesBengali', 'whatIsShown', 'severe'],
   additionalProperties: false,
 };
 
@@ -1316,5 +1319,6 @@ export async function aiScorePhoto(
     issues: list(parsed.issues),
     issuesBengali: list(parsed.issuesBengali),
     whatIsShown: String(parsed.whatIsShown || '').slice(0, 200),
+    severe: parsed.severe === true && verdict !== 'unclear_photo',
   };
 }

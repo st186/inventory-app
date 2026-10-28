@@ -17,6 +17,9 @@ export const DAY_CLOSE_BY_MIN = 25 * 60; // a day's sales and expenses are on ti
 export const REQUEST_BY_MIN = 8 * 60; // a stock request is on time if sent by 8 AM on the day it is for (production starts at 8)
 export const STOCK_OUT_PENALTY = 15; // points off per item that ran out at the store
 export const PHOTO_FLAG_PENALTY = 5; // points off the photo-check KPI per "needs cleaning" photo
+// Place kept clean (incharges, owner 28 Oct 2026): every photo at their store or kitchen, whoever took it.
+export const PLACE_FLAG_PENALTY = 5; // per photo needing cleaning
+export const PLACE_SEVERE_PENALTY = 15; // per photo showing a garbage dump, overflowing waste, pests or filth
 export const WASTAGE_FULL_MARKS_PCT = 2; // production wastage at or under 2% scores 100 ...
 export const WASTAGE_ZERO_PCT = 10; // ... and 10% or more scores 0, straight line between
 export const AI_MAX_SHIFT = 0.15; // the AI may move the formula amount by at most ±15%
@@ -30,7 +33,7 @@ export const EXTRA_POINTS_MAX = 5;
 export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
-  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime';
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -53,6 +56,7 @@ export const KPI_LABELS: Record<KpiId, string> = {
   expensesOnTime: 'Expenses entered on time',
   productionApproved: 'Production approved on time',
   requestOnTime: 'Stock request sent on time',
+  placeClean: 'Place kept clean (all photos)',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -424,6 +428,7 @@ export type MonthInput = {
   storeRequests?: any[]; // stock requests sent from the person's own store
   expenses?: any[]; // expense entries (inventory and overhead) the person logged
   approvals?: any[]; // production entries from the house that supplies the person's store
+  placePhotos?: { date: string; item: any }[]; // every photo taken at the incharge's store or kitchen
 };
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
@@ -453,6 +458,7 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'salesOnTime': return `Save the day's sales and cash count by ${fmt12(DAY_CLOSE_BY_MIN)} after closing.`;
     case 'expensesOnTime': return `Enter every expense on the day it is paid (by ${fmt12(DAY_CLOSE_BY_MIN)} after closing), so the cash count matches.`;
     case 'productionApproved': return 'Check each day\'s production entry and approve it before it approves itself after 24 hours.';
+    case 'placeClean': return `Walk the whole ${place} every day: garbage out, bins covered, nothing piled up. Every photo that needs cleaning costs ${PLACE_FLAG_PENALTY} points, a garbage dump or filth ${PLACE_SEVERE_PENALTY}.`;
     case 'requestOnTime': return `Send the stock request by ${fmt12(REQUEST_BY_MIN)} on the day it is for, so production can plan.`;
   }
 }
@@ -758,6 +764,24 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     }
     if (!n) set('requestOnTime', null, 'No stock requests sent in this period.');
     else set('requestOnTime', pct(ok, n), `${ok} of ${plural(n, 'stock request')} sent by ${fmt12(REQUEST_BY_MIN)} on the day they were for.`);
+  }
+
+  // The incharge's place: every photo taken there this month, whoever took it.
+  if (ids.includes('placeClean')) {
+    let photos = 0, dirty = 0, severe = 0;
+    for (const { date, item } of input.placePhotos || []) {
+      if (!item || date < from || date > to) continue;
+      photos++;
+      if (item.wasSevere || item.aiSevere) severe++;
+      else if (item.wasFlagged || item.flag?.status === 'needs_cleaning' || item.aiVerdict === 'needs_cleaning') dirty++;
+    }
+    if (!photos) set('placeClean', null, 'No photos taken here yet this month.');
+    else set('placeClean', 100 - PLACE_FLAG_PENALTY * dirty - PLACE_SEVERE_PENALTY * severe, [
+      `${plural(photos, 'photo')} taken here.`,
+      severe ? `${plural(severe, 'photo')} showed a garbage dump or serious dirt (${PLACE_SEVERE_PENALTY} points off each).` : '',
+      dirty ? `${plural(dirty, 'photo')} needed cleaning (${PLACE_FLAG_PENALTY} points off each).` : '',
+      !severe && !dirty ? 'All clean.' : '',
+    ].filter(Boolean).join(' '));
   }
 
   // Riders: rides finished.
