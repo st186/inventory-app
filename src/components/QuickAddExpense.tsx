@@ -28,6 +28,7 @@ import { PriceWarning } from './PriceCheck';
 import { VoiceButton } from './VoiceButton';
 import { AssetHint } from './assets/AssetHint';
 import { BillFields, billNeedsMonth, defaultBillMonth } from './money/BillFields';
+import { MEALS_STOPPED_TEXT, mealsStopped } from '../utils/inventoryData';
 import type { FixedCostItem } from '../App';
 import { idbGet, idbSet } from '../utils/idbStore';
 import { useT } from '../utils/i18n';
@@ -375,6 +376,10 @@ export function QuickAddExpense({
       toast.error(t('exp.enterPacks'));
       return;
     }
+    if (mealsStopped(category, entryDate)) {
+      toast.error(MEALS_STOPPED_TEXT);
+      return;
+    }
     if (isBill && !billMonth) {
       toast.error('Pick the month this bill is for');
       return;
@@ -685,6 +690,9 @@ export function QuickAddExpense({
             <span className="num">{priceLine.text}</span>
             {priceLine.usual ? ` · ${t('exp.usualPrice')}` : priceLine.usualText ? ` · ${t('exp.usually', { price: priceLine.usualText })}` : ''}
           </p>
+        )}
+        {mealsStopped(currentCategory, entryDate) && (
+          <Callout tone="warning" title="Meals aren't expenses any more">{MEALS_STOPPED_TEXT}</Callout>
         )}
         {isBill && (
           <BillFields

@@ -1319,6 +1319,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
     if (item?.category === 'fuel' && role !== 'cluster_head') {
       return c.json({ error: 'Fuel cost entries need cluster head permission. Use Electric Bike Charging for the e-bike.' }, 403);
     }
+    if (mealsStopped(item?.category, item?.date)) return c.json({ error: MEALS_STOPPED_TEXT }, 400);
     if ((item?.category === 'losses_writeoffs' || item?.category === 'ai_credits') && role !== 'cluster_head') {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
@@ -1411,6 +1412,9 @@ app.put('/make-server-c2dd9b9d/overheads/:id', async (c) => {
     const updates = await c.req.json();
     if (updates?.category === 'fuel' && role !== 'cluster_head') {
       return c.json({ error: 'Fuel cost entries need cluster head permission.' }, 403);
+    }
+    if (mealsStopped(updates?.category ?? existing.category, updates?.date ?? existing.date) && !mealsStopped(existing.category, existing.date)) {
+      return c.json({ error: MEALS_STOPPED_TEXT }, 400);
     }
     if ((updates?.category === 'losses_writeoffs' || updates?.category === 'ai_credits') && role !== 'cluster_head') {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
@@ -2932,6 +2936,12 @@ async function withCanonicalHouse(data: any): Promise<any> {
   if (!house || house === data.productionHouseId) return data;
   return { ...data, productionHouseId: house, ...(data.storeId === data.productionHouseId ? { storeId: house } : {}) };
 }
+
+// From 1 November 2026 staff food is Rs 500 a month in salary (owner, 28 Oct): meals are no longer
+// expenses (the app's forms stop them too; this catches older app versions).
+const MEAL_CATEGORY_KEYS = ['breakfast', 'lunch', 'dinner', 'evening_snacks'];
+const MEALS_STOPPED_TEXT = "From 1 November staff food is paid in salary (Rs 500 a month), so meals aren't logged as expenses.";
+const mealsStopped = (category: any, date: any) => MEAL_CATEGORY_KEYS.includes(String(category)) && String(date || '') > '2026-10-31';
 
 // Cluster head, or an operations manager (a manager who is not a store or production incharge).
 function isClusterHeadOrOps(user: any): boolean {

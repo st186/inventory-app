@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { OverheadItem } from '../App';
 import { Employee } from '../utils/api';
-import { OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup, STORE_OVERHEAD_CATEGORY_KEYS, RESTRICTED_OVERHEAD_CATEGORIES, SELECTABLE_OVERHEAD_CATEGORY_KEYS } from '../utils/inventoryData';
+import { MEALS_STOPPED_TEXT, mealsStopped, OVERHEAD_CATEGORY_META, MEAL_CATEGORIES, OverheadCategoryGroup, STORE_OVERHEAD_CATEGORY_KEYS, RESTRICTED_OVERHEAD_CATEGORIES, SELECTABLE_OVERHEAD_CATEGORY_KEYS } from '../utils/inventoryData';
 import { EmployeeMultiSelect } from './EmployeeMultiSelect';
 import { AutocompleteInput } from './AutocompleteInput';
 import { ProductionCashChoice, productionCashChoiceAvailable } from './ProductionCashChoice';
@@ -144,6 +144,10 @@ export function OverheadForm({ selectedDate, onSubmit, onClose, editingItem, emp
 
     if (!splitAmountsValid()) {
       toast.error('Cash and Paytm amounts must add up to the total amount');
+      return;
+    }
+    if (mealsStopped(formData.category, selectedDate)) {
+      toast.error(MEALS_STOPPED_TEXT);
       return;
     }
     

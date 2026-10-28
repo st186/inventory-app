@@ -147,6 +147,11 @@ export const OVERHEAD_CATEGORIES: Record<string, string> = Object.fromEntries(
 export const RESTRICTED_OVERHEAD_CATEGORIES: readonly string[] = ['fuel', 'losses_writeoffs', 'ai_credits'];
 
 export const MEAL_CATEGORIES: readonly string[] = ['breakfast', 'lunch', 'dinner', 'evening_snacks'];
+// From 1 November 2026 everyone gets Rs 500 a month more in salary for food (owner, 28 Oct), so
+// staff meals stop being expenses. The server refuses them too (POST/PUT /overheads).
+export const MEALS_LAST_DAY = '2026-10-31';
+export const mealsStopped = (category: string | null | undefined, date: string) => !!category && MEAL_CATEGORIES.includes(category) && date > MEALS_LAST_DAY;
+export const MEALS_STOPPED_TEXT = "From 1 November staff food is paid in salary (₹500 a month), so meals aren't logged as expenses.";
 
 // Overhead categories offered when adding a new expense (legacy ones and the salary-linked
 // personal expense excluded).
