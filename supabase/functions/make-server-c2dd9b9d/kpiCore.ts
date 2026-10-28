@@ -812,6 +812,35 @@ export function extraMinutesOf(p: PunchRecord | null | undefined, date: string, 
   return Math.round(Math.max(0, start - inMin) + Math.max(0, outMin - end));
 }
 
+// A late start given as the reason for leftover stuffing, held against the check-ins (owner,
+// 28 Oct 2026): someone named who checked in on time, was on leave or has no check-in; someone
+// who checked in late but isn't named; work said to start long after people had checked in.
+export type StaffDay = { id: string; name: string; shiftStart: string; inMin: number | null; lateMin: number; onLeave: boolean };
+export function lateStartIssues(reason: { people?: { id: string }[]; startedAt?: string | null }, day: StaffDay[]): string[] {
+  const hhmm12 = (min: number) => `${Math.floor(min / 60) % 12 || 12}:${String(min % 60).padStart(2, '0')} ${min >= 720 ? 'PM' : 'AM'}`;
+  const named = new Set((reason.people || []).map((p) => String(p.id)));
+  const issues: string[] = [];
+  for (const s of day) {
+    if (named.has(s.id)) {
+      if (s.onLeave) issues.push(`${s.name} is named as late but was on leave that day.`);
+      else if (s.inMin === null) issues.push(`${s.name} is named as late but has no check-in that day, so it can't be checked.`);
+      else if (!s.lateMin) issues.push(`${s.name} is named as late but checked in at ${hhmm12(s.inMin)}, on time for ${hhmm12(parseHHMM(s.shiftStart) as number)}.`);
+    } else if (!s.onLeave && s.lateMin > 0 && s.inMin !== null) {
+      issues.push(`${s.name} checked in at ${hhmm12(s.inMin)} (${s.lateMin} min late) but isn't named.`);
+    }
+  }
+  const started = parseHHMM(reason.startedAt);
+  if (started !== null) {
+    const early = day.filter((s) => !s.onLeave && s.inMin !== null && (s.inMin as number) <= started - 30);
+    if (early.length) {
+      const first = Math.min(...early.map((s) => s.inMin as number));
+      issues.push(`Work is said to have started at ${hhmm12(started)}, but ${early.map((s) => s.name).join(', ')} had checked in by ${hhmm12(first)}.`);
+    }
+  }
+  if (!named.size && !day.some((s) => s.lateMin > 0)) issues.push('A late start is given, but nobody is named and no check-in was late.');
+  return issues;
+}
+
 export function weightedTotal(kpis: Pick<KpiResult, 'score' | 'weight'>[]) {
   let sum = 0, w = 0, allW = 0;
   for (const k of kpis) {

@@ -13,6 +13,8 @@
 // day), total (the day far above or below usual), type (one momo type far above usual), perKg
 // (pieces per kg of stuffing far from usual), sauce (a sauce weight that looks like a slip),
 // wastage (a lot written off), late (entered days afterwards), ai-1 / ai-2 (Bunny's own findings).
+// A day's close adds lateMismatch (flagLedgerDay): a late start given as the reason for leftover
+// stuffing that the check-ins don't bear out; its productionId is the ledger day's id.
 import { askClaudeForJson } from './insights.ts';
 
 type Kv = {
@@ -253,6 +255,34 @@ export async function reviewProduction(deps: ProductionReviewDeps, key: string, 
   }
 }
 
+// Problems found when a production day is closed (index.ts), kept and shown like the entry checks.
+// `kinds` are the kinds this call decides: an open one of those that no longer applies is closed.
+export async function flagLedgerDay(
+  deps: ProductionReviewDeps,
+  day: { key: string; id: string; date: string; house: string; loggedBy?: string },
+  kinds: string[],
+  findings: Finding[],
+): Promise<Flag[]> {
+  const now = new Date().toISOString();
+  const existing = (await deps.rows(`production-flag:${day.id}:`)) as Flag[];
+  for (const f of existing) {
+    if (f?.status === 'open' && kinds.includes(f.kind) && !findings.some((x) => x.kind === f.kind)) {
+      await deps.kv.set(`production-flag:${f.id}`, { ...f, status: 'fixed', decidedBy: 'Changed when the day was closed again', decidedAt: now });
+    }
+  }
+  const saved: Flag[] = [];
+  for (const f of findings) {
+    const id = `${day.id}:${f.kind}`;
+    const prev = existing.find((x) => x?.id === id);
+    if (prev && (prev.status === 'dismissed' || prev.status === 'open') && prev.message === f.message) continue;
+    const flag: Flag = { ...f, id, productionId: day.id, productionKey: day.key, date: day.date, house: day.house, status: 'open', createdAt: now, loggedBy: day.loggedBy };
+    await deps.kv.set(`production-flag:${id}`, flag);
+    saved.push(flag);
+  }
+  if (saved.length) await tellPeople(deps, { id: day.id, date: day.date }, day.house, saved);
+  return saved;
+}
+
 // The house's production incharge, the operations managers (they approve production) and the
 // owner get one notification per entry.
 async function tellPeople(deps: ProductionReviewDeps, item: any, house: string, flags: Flag[]) {
@@ -298,7 +328,8 @@ export function registerProductionReviewRoutes(app: any, deps: ProductionReviewD
       const rows = flags
         .map((f: Flag) => {
           const entry = byId.get(f.productionId);
-          return { ...f, entry: entry ? { date: entry.date, pieces: totalOf(piecesOf(entry)), approvalStatus: entry.approvalStatus || null } : null };
+          // A day-close check points at the ledger day, which has no pieces of its own.
+          return { ...f, entry: entry ? { date: entry.date, pieces: entry.pools ? null : totalOf(piecesOf(entry)), approvalStatus: entry.approvalStatus || null } : null };
         })
         .filter((f: any) => f.entry || f.status !== 'open') // the entry was deleted
         .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)));

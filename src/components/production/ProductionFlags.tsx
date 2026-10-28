@@ -28,7 +28,7 @@ export function useProductionFlags(enabled: boolean, accessToken?: string) {
 
 const entryLine = (f: api.ProductionFlag) => [
   new Date(`${f.date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
-  f.entry ? `${f.entry.pieces.toLocaleString('en-IN')} pieces` : '',
+  f.entry ? (f.entry.pieces === null ? 'Day close' : `${f.entry.pieces.toLocaleString('en-IN')} pieces`) : '',
   f.entry?.approvalStatus === 'pending' ? 'waiting for approval' : '',
   f.loggedBy ? `by ${f.loggedBy}` : '',
 ].filter(Boolean).join(' · ');

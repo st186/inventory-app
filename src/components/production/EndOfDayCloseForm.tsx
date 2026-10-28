@@ -74,7 +74,7 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
 
   const handleSubmit = () => {
     if (grams) return;
-    const problem = needsReason ? leftoverProblem(leftover, t) : null;
+    const problem = needsReason ? leftoverProblem(leftover, t, dayContext || null) : null;
     if (problem) {
       toast.error(problem);
       return;

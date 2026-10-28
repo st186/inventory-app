@@ -8,9 +8,9 @@ import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
 import { registerExpenseReviewRoutes, reviewExpense, type ExpenseReviewDeps } from './expenseReview.ts';
-import { registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
+import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
-import { DEFAULT_GRACE_MIN, DEFAULT_SHIFTS, parseHHMM } from './kpiCore.ts';
+import { DEFAULT_GRACE_MIN, DEFAULT_SHIFTS, lateStartIssues, parseHHMM } from './kpiCore.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
@@ -5988,12 +5988,21 @@ function cleanLeftoverReport(raw: any, staff: any[]): { report?: any; error?: st
       if (periods.some((pd: any) => pd.from >= pd.to)) return { error: 'Power cut: the power must come back after it went' };
       out.push({ kind, periods, note: text(x.note) });
     } else if (kind === 'long_break') {
-      const why = text(x.why);
-      if (why.length < 3) return { error: 'Long break: say why it went past the hour' };
-      const genuine = ['yes', 'no', 'unsure'].includes(x.genuine) ? x.genuine : null;
-      if (!genuine) return { error: 'Long break: say whether the reason was genuine' };
-      const extraMin = Math.round(Number(x.extraMin));
-      out.push({ kind, people: people(x.people), extraMin: Number.isFinite(extraMin) && extraMin > 0 && extraMin <= 480 ? extraMin : null, why, genuine });
+      // One entry per person who went over (several people can), each with their own reason.
+      const entries: any[] = [];
+      for (const en of (Array.isArray(x.entries) ? x.entries : []).slice(0, 12)) {
+        const id = en?.personId ? String(en.personId) : null;
+        if (id && !names.has(id)) continue;
+        const name = id ? names.get(id)! : '';
+        const why = text(en?.why);
+        if (why.length < 3) return { error: `Long break${name ? ` (${name})` : ''}: say why it went past the hour` };
+        const genuine = ['yes', 'no', 'unsure'].includes(en?.genuine) ? en.genuine : null;
+        if (!genuine) return { error: `Long break${name ? ` (${name})` : ''}: say whether the reason was genuine` };
+        const minutes = Math.round(Number(en?.minutes));
+        entries.push({ id, name, minutes: Number.isFinite(minutes) && minutes > 0 && minutes <= 480 ? minutes : null, why, genuine });
+      }
+      if (!entries.length) return { error: 'Long break: say who took it' };
+      out.push({ kind, entries });
     } else if (kind === 'late_start') {
       const why = text(x.why);
       if (why.length < 3) return { error: 'Late start: say why work started late' };
@@ -6022,6 +6031,26 @@ function cleanLeftoverReport(raw: any, staff: any[]): { report?: any; error?: st
   return { report: { reasons: out } };
 }
 
+// The house's staff on a day: check-in, shift start, minutes late beyond the grace, leave.
+async function staffOnDay(productionHouseId: string, date: string) {
+  const staff = await houseStaff(productionHouseId);
+  return Promise.all(staff.map(async (e: any) => {
+    const id = String(e.employeeId);
+    const [punch, settings, leaves] = await Promise.all([
+      kv.get(`punch:${id}:${date}`).catch(() => null),
+      kv.get(`kpi-settings:${id}`).catch(() => null),
+      kv.getByPrefix(`leave:${id}:`).catch(() => []),
+    ]);
+    const shiftStart = parseHHMM(settings?.shiftStart) !== null ? settings.shiftStart : DEFAULT_SHIFTS.production.start;
+    const grace = Number.isFinite(settings?.graceMin) ? settings.graceMin : DEFAULT_GRACE_MIN;
+    const inAt: string | null = punch?.in?.at || null;
+    const inMin = inAt ? Math.round(((Date.parse(inAt) + IST_OFFSET_MS) % 86400000) / 60000) : null;
+    const late = inMin !== null ? inMin - (parseHHMM(shiftStart) as number) : null;
+    const onLeave = (leaves || []).some((l: any) => l?.status === 'approved' && String(l.leaveDate).slice(0, 10) === date && l.leaveType !== 'half');
+    return { id, name: String(e.name || id), shiftStart, checkInAt: inAt, inMin, lateMin: late !== null && late > grace ? late : 0, onLeave };
+  }));
+}
+
 // What the leftover form needs: the house's staff with today's check-in and lateness, and its
 // machines from the equipment register.
 app.get('/make-server-c2dd9b9d/production-ledger/:houseId/:date/day-context', async (c) => {
@@ -6037,22 +6066,8 @@ app.get('/make-server-c2dd9b9d/production-ledger/:houseId/:date/day-context', as
     const productionHouseId = await canonicalProductionHouseId(c.req.param('houseId'));
     const date = c.req.param('date');
     if (!productionHouseId || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return c.json({ error: 'Pick a production house and date' }, 400);
-    const [staff, assets] = await Promise.all([houseStaff(productionHouseId), getAllByPrefixWithRetry('asset:')]);
-    const people = await Promise.all(staff.map(async (e: any) => {
-      const id = String(e.employeeId);
-      const [punch, settings, leaves] = await Promise.all([
-        kv.get(`punch:${id}:${date}`).catch(() => null),
-        kv.get(`kpi-settings:${id}`).catch(() => null),
-        kv.getByPrefix(`leave:${id}:`).catch(() => []),
-      ]);
-      const shiftStart = parseHHMM(settings?.shiftStart) !== null ? settings.shiftStart : DEFAULT_SHIFTS.production.start;
-      const grace = Number.isFinite(settings?.graceMin) ? settings.graceMin : DEFAULT_GRACE_MIN;
-      const inAt = punch?.in?.at || null;
-      const inMin = inAt ? Math.round(((Date.parse(inAt) + IST_OFFSET_MS) % 86400000) / 60000) : null;
-      const late = inMin !== null ? inMin - (parseHHMM(shiftStart) as number) : null;
-      const onLeave = (leaves || []).some((l: any) => l?.status === 'approved' && String(l.leaveDate).slice(0, 10) === date && l.leaveType !== 'half');
-      return { id, name: e.name || id, shiftStart, checkInAt: inAt, lateMin: late !== null && late > grace ? late : 0, onLeave };
-    }));
+    const [day, assets] = await Promise.all([staffOnDay(productionHouseId, date), getAllByPrefixWithRetry('asset:')]);
+    const people = day.map(({ inMin: _inMin, ...p }) => p);
     const machines = (assets || [])
       .filter((a: any) => a?.id && a.locationKind === 'production' && a.locationId === productionHouseId && !a.dismissed && a.condition !== 'disposed')
       .map((a: any) => ({ id: a.id, name: a.name, condition: a.condition }))
@@ -6154,6 +6169,9 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
         reason.repairAlertId = alert.id;
       }
       leftoverReport = { ...clean.report, leftoverKg, by: submittedByName, at: getNowIST() };
+      const late = clean.report.reasons.find((x: any) => x.kind === 'late_start');
+      const issues = late ? lateStartIssues(late, await staffOnDay(productionHouseId, date)) : [];
+      if (issues.length) leftoverReport.lateCheck = { issues, at: getNowIST() };
     }
 
     const record = {
@@ -6171,6 +6189,15 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     };
     await kv.set(`production-ledger:${productionHouseId}:${date}`, record);
     await cascadeRecomputeProductionLedger(productionHouseId, date);
+    // A late start that doesn't match the check-ins goes to the incharges and the owner as a
+    // production check; closing again with it fixed closes the check.
+    if (rawLeftover) {
+      const issues: string[] = leftoverReport?.lateCheck?.issues || [];
+      await afterResponse('Late start check', () => flagLedgerDay(expenseReviewDeps,
+        { key: `production-ledger:${productionHouseId}:${date}`, id: record.id, date, house: productionHouseId, loggedBy: submittedByName },
+        ['lateMismatch'],
+        issues.length ? [{ kind: 'lateMismatch', title: 'Late start doesn\'t match the check-ins', message: issues.join(' ') }] : []));
+    }
 
     return c.json({ success: true, entry: record });
   } catch (error) {

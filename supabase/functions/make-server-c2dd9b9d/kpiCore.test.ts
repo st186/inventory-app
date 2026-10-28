@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   addDays, atWorkplace, checkApprovedAmount, clampAiAmount, cleanSettingsInput, computeMonthKpis, haversineM, istDate,
-  extraMinutesOf, istMidnightMs, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
+  extraMinutesOf, istMidnightMs, lateStartIssues, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
   variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, type MonthInput, type PunchRecord,
 } from './kpiCore.ts';
 
@@ -265,6 +265,24 @@ test('extra hours: confirmed time adds points (capped), the rest waits; producti
   assert.equal(r.total, Math.min(100, Math.round((withoutExtra.total! + 4) * 10) / 10));
   const many = computeMonthKpis({ ...base, extraHours: ['2026-10-01', '2026-10-02', '2026-10-03'].map((d) => ({ date: d, minutes: 900, status: 'confirmed' as const })) });
   assert.equal(many.extra!.points, 5); // 45 h, capped at +5
+});
+
+test('a late start given at the close is held against the check-ins', () => {
+  const day = [
+    { id: 'A', name: 'Asha', shiftStart: '08:00', inMin: 9 * 60 + 42, lateMin: 102, onLeave: false }, // late
+    { id: 'B', name: 'Bina', shiftStart: '08:00', inMin: 7 * 60 + 58, lateMin: 0, onLeave: false }, // on time
+    { id: 'C', name: 'Chotu', shiftStart: '08:00', inMin: null, lateMin: 0, onLeave: true },
+    { id: 'D', name: 'Dipu', shiftStart: '08:00', inMin: null, lateMin: 0, onLeave: false }, // no check-in
+  ];
+  assert.deepEqual(lateStartIssues({ people: [{ id: 'A' }] }, day), []); // named the late one: nothing to raise
+  const issues = lateStartIssues({ people: [{ id: 'B' }, { id: 'C' }, { id: 'D' }], startedAt: '10:00' }, day);
+  assert.equal(issues.length, 5);
+  assert.match(issues.join(' '), /Bina is named as late but checked in at 7:58 AM, on time for 8:00 AM/);
+  assert.match(issues.join(' '), /Chotu is named as late but was on leave/);
+  assert.match(issues.join(' '), /Dipu is named as late but has no check-in/);
+  assert.match(issues.join(' '), /Asha checked in at 9:42 AM \(102 min late\) but isn't named/);
+  assert.match(issues.join(' '), /started at 10:00 AM, but Bina had checked in by 7:58 AM/);
+  assert.match(lateStartIssues({ people: [] }, day.slice(1)).join(' '), /nobody is named and no check-in was late/);
 });
 
 test('rider rides', () => {

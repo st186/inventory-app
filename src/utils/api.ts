@@ -805,11 +805,12 @@ export interface LeftoverReason {
   kind: LeftoverKind;
   periods?: { from: string; to: string }[];
   startedAt?: string | null; people?: any[]; why?: string; genuine?: 'yes' | 'no' | 'unsure' | '';
-  extraMin?: number | null; // long break: about how many minutes past the hour
+  entries?: { id: string | null; name: string; minutes: number | null; why: string; genuine: 'yes' | 'no' | 'unsure' }[]; // long break, one per person
   assetId?: string | null; machine?: string; downFrom?: string; downTo?: string | null; stillDown?: boolean; alternative?: string; raiseRepair?: boolean; repairAlertId?: string;
   note?: string;
 }
-export interface LeftoverReport { reasons: LeftoverReason[]; leftoverKg?: number; by?: string; at?: string }
+// lateCheck: what the server found holding a late start against the check-ins (raised as a production check).
+export interface LeftoverReport { reasons: LeftoverReason[]; leftoverKg?: number; by?: string; at?: string; lateCheck?: { issues: string[]; at?: string } }
 export interface LedgerDayContext {
   date: string;
   staff: { id: string; name: string; shiftStart: string; checkInAt: string | null; lateMin: number; onLeave: boolean }[];
@@ -2595,7 +2596,7 @@ export interface ProductionFlag {
   loggedBy?: string;
   decidedBy?: string;
   decidedAt?: string;
-  entry: { date: string; pieces: number; approvalStatus: string | null } | null;
+  entry: { date: string; pieces: number | null; approvalStatus: string | null } | null; // pieces null: a day-close check
 }
 
 export async function getProductionFlags(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<ProductionFlag[]> {
