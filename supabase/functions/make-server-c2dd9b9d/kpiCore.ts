@@ -13,6 +13,8 @@ export const CLOCK_SKEW_MS = 10 * 60 * 1000; // phone clock this far from the se
 export const TIMESHEET_DUE_DAYS = 1; // a day's timesheet is on time if sent by the end of the next day
 export const CASH_TOLERANCE_INR = 100; // cash over/short within ₹100 counts as matching
 export const SHIP_BY_MIN = 15 * 60; // stock requests should ship by 3 PM (same cut-off as the SLA screen)
+export const DAY_CLOSE_BY_MIN = 25 * 60; // a day's sales and expenses are on time if saved by 1 AM after it (the store shuts at 10:30 PM)
+export const REQUEST_BY_MIN = 8 * 60; // a stock request is on time if sent by 8 AM on the day it is for (production starts at 8)
 export const STOCK_OUT_PENALTY = 15; // points off per item that ran out at the store
 export const PHOTO_FLAG_PENALTY = 5; // points off the photo-check KPI per "needs cleaning" photo
 export const WASTAGE_FULL_MARKS_PCT = 2; // production wastage at or under 2% scores 100 ...
@@ -21,7 +23,8 @@ export const AI_MAX_SHIFT = 0.15; // the AI may move the formula amount by at mo
 
 export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
-  | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips';
+  | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -40,6 +43,10 @@ export const KPI_LABELS: Record<KpiId, string> = {
   wastage: 'Low wastage',
   shippedOnTime: 'Shipped on time',
   trips: 'Rides completed',
+  salesOnTime: 'Sales saved on time',
+  expensesOnTime: 'Expenses entered on time',
+  productionApproved: 'Production approved on time',
+  requestOnTime: 'Stock request sent on time',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -62,6 +69,12 @@ export const DEFAULT_WEIGHTS: Record<RoleGroup, Partial<Record<KpiId, number>>> 
   rider: { attendance: 20, punctuality: 10, trips: 70 },
 };
 
+// KPIs are picked per person (owner, 28 Oct 2026): each list follows what the person actually
+// does, not just their role. The role's list above is only the starting point; a KPI added
+// outside it starts at ADDED_KPI_WEIGHT.
+export const ALL_KPIS = Object.keys(KPI_LABELS) as KpiId[];
+export const ADDED_KPI_WEIGHT = 10;
+
 // Default shift by workplace (owner, 27 Oct 2026): store 3:00-10:30 PM, production house 8 AM-8 PM.
 export const DEFAULT_SHIFTS: Record<WorkplaceKind, { start: string; end: string }> = {
   store: { start: '15:00', end: '22:30' },
@@ -79,7 +92,8 @@ export type KpiSettings = {
   graceMin: number;
   hasVariablePay: boolean;
   variablePayMax: number; // ₹ per month
-  weights: Partial<Record<KpiId, number>>; // only the person's role KPIs; missing = default
+  kpis: KpiId[]; // the person's KPIs in order (nothing saved = their role's list)
+  weights: Partial<Record<KpiId, number>>; // one per KPI in `kpis`; missing = default
   isDefault?: boolean; // nothing saved yet - every value is a default
   updatedBy?: string;
   updatedAt?: string;
@@ -159,8 +173,9 @@ export function roleGroupOf(emp: any, kind: WorkplaceKind): RoleGroup {
   if (d === 'rider' || emp?.role === 'rider') return 'rider';
   if (d === 'store_incharge') return 'store_incharge';
   if (d === 'production_incharge') return 'production_incharge';
+  if (d === 'operations_manager' || d === 'operations_incharge') return 'operations';
   if (d === 'production_ops' || emp?.department === 'production' || (kind === 'production' && emp?.role !== 'manager')) return 'production_staff';
-  if (emp?.role === 'manager' || d === 'operations_manager' || d === 'operations_incharge') return 'operations';
+  if (emp?.role === 'manager') return 'operations';
   return 'store_staff';
 }
 
@@ -222,10 +237,12 @@ export const atWorkplace = (distanceM: number, accuracyM: number | null | undefi
 export function resolveSettings(saved: any, employeeId: string, kind: WorkplaceKind, group: RoleGroup): KpiSettings {
   const shift = DEFAULT_SHIFTS[kind];
   const allowed = DEFAULT_WEIGHTS[group];
+  const picked = Array.isArray(saved?.kpis) ? (saved.kpis as any[]).filter((id): id is KpiId => typeof id === 'string' && id in KPI_LABELS) : [];
+  const kpis = picked.length ? [...new Set(picked)] : (Object.keys(allowed) as KpiId[]);
   const weights: Partial<Record<KpiId, number>> = {};
-  for (const id of Object.keys(allowed) as KpiId[]) {
+  for (const id of kpis) {
     const w = saved?.weights?.[id];
-    weights[id] = typeof w === 'number' && w >= 0 ? w : allowed[id]!;
+    weights[id] = typeof w === 'number' && w >= 0 ? w : allowed[id] ?? ADDED_KPI_WEIGHT;
   }
   return {
     employeeId,
@@ -235,6 +252,7 @@ export function resolveSettings(saved: any, employeeId: string, kind: WorkplaceK
     graceMin: Number.isFinite(saved?.graceMin) ? saved.graceMin : DEFAULT_GRACE_MIN,
     hasVariablePay: !!saved?.hasVariablePay,
     variablePayMax: Number.isFinite(saved?.variablePayMax) ? saved.variablePayMax : 0,
+    kpis,
     weights,
     isDefault: !saved,
     updatedBy: saved?.updatedBy,
@@ -262,6 +280,12 @@ export function cleanSettingsInput(body: any, moneyFields: boolean): { ok: true;
     const g = Number(body.graceMin);
     if (!Number.isInteger(g) || g < 0 || g > 60) return { ok: false, error: 'Grace minutes must be between 0 and 60' };
     out.graceMin = g;
+  }
+  if (body.kpis !== undefined) {
+    if (!Array.isArray(body.kpis)) return { ok: false, error: 'Pick the KPIs' };
+    const ids = [...new Set(body.kpis.filter((k: any) => typeof k === 'string' && k in KPI_LABELS))];
+    if (!ids.length) return { ok: false, error: 'Pick at least one KPI' };
+    out.kpis = ids;
   }
   if (body.weights !== undefined) {
     if (!body.weights || typeof body.weights !== 'object') return { ok: false, error: 'Weights are not valid' };
@@ -380,6 +404,9 @@ export type MonthInput = {
   ledgerWastedKg?: { date: string; kg: number }[];
   requests?: any[]; // stock requests from the stores that house supplies
   trips?: any[]; // the rider's rides
+  storeRequests?: any[]; // stock requests sent from the person's own store
+  expenses?: any[]; // expense entries (inventory and overhead) the person logged
+  approvals?: any[]; // production entries from the house that supplies the person's store
 };
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
@@ -406,13 +433,17 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'wastage': return `Weigh carefully and reuse leftover dough and stuffing; keep wastage at ${WASTAGE_FULL_MARKS_PCT}% or less.`;
     case 'shippedOnTime': return 'Ship every stock request by 3 PM on the day it is needed.';
     case 'trips': return 'Finish every ride you take on and confirm the delivery.';
+    case 'salesOnTime': return `Save the day's sales and cash count by ${fmt12(DAY_CLOSE_BY_MIN)} after closing.`;
+    case 'expensesOnTime': return `Enter every expense on the day it is paid (by ${fmt12(DAY_CLOSE_BY_MIN)} after closing), so the cash count matches.`;
+    case 'productionApproved': return 'Check each day\'s production entry and approve it before it approves itself after 24 hours.';
+    case 'requestOnTime': return `Send the stock request by ${fmt12(REQUEST_BY_MIN)} on the day it is for, so production can plan.`;
   }
 }
 
 export function computeMonthKpis(input: MonthInput): MonthKpis {
   const { month, today, settings, group, kind } = input;
   const weights = settings.weights;
-  const ids = Object.keys(DEFAULT_WEIGHTS[group]) as KpiId[];
+  const ids = settings.kpis?.length ? settings.kpis : (Object.keys(DEFAULT_WEIGHTS[group]) as KpiId[]);
   const notes: string[] = [];
   const flags: Record<string, number> = {};
 
@@ -646,6 +677,72 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     else set('shippedOnTime', pct(onTimeShip, shipped), `${onTimeShip} of ${shipped} stock requests shipped by 3 PM on the day asked.`);
   }
 
+  // Store duties: the day's sales saved, expenses entered and stock asked for on time.
+  const dayCloseDue = (d: string) => istMidnightMs(d) + DAY_CLOSE_BY_MIN * 60000;
+  if (ids.includes('salesOnTime')) {
+    const byDay = new Map<string, any>();
+    for (const s of input.sales || []) if (s?.date) byDay.set(String(s.date).slice(0, 10), s);
+    let considered = 0, onTimeDays = 0, missing = 0, unknown = 0;
+    for (const d of days) {
+      const s = byDay.get(d);
+      if (!s) continue; // no sales at all: the store was shut
+      const byPerson = !['', 'pos-sync', 'cash-topup-approval'].includes(String(s.createdBy || '')) || !!s.updatedBy;
+      if (!byPerson) { considered++; missing++; continue; }
+      // First save by a person (stamped from Oct 2026); before that, the save time the app wrote
+      // as approvedAt on a day that needed no approval, else the last edit.
+      const savedAt = s.firstSavedAt || (!s.approvalRequired && s.approvedAt) || s.updatedAt;
+      if (!savedAt || Number.isNaN(Date.parse(savedAt))) { unknown++; continue; }
+      considered++;
+      if (Date.parse(savedAt) <= dayCloseDue(d)) onTimeDays++;
+    }
+    if (!considered) set('salesOnTime', null, unknown ? 'Days saved before the save time was recorded - not counted.' : 'No sales days to check yet.');
+    else set('salesOnTime', pct(onTimeDays, considered), `Sales and cash count saved by ${fmt12(DAY_CLOSE_BY_MIN)} after closing on ${onTimeDays} of ${considered} days.${missing ? ` ${plural(missing, 'day')} not saved at all.` : ''}${unknown ? ` ${plural(unknown, 'older day')} without a save time not counted.` : ''}`);
+  }
+  if (ids.includes('expensesOnTime')) {
+    // Entry ids start with the time they were made (Date.now()), so older entries without a
+    // createdAt still have one.
+    const enteredAt = (e: any) => {
+      const t = Date.parse(e?.createdAt);
+      if (Number.isFinite(t)) return t;
+      const m = /^(\d{13})-/.exec(String(e?.id || ''));
+      return m ? Number(m[1]) : null;
+    };
+    let n = 0, ok = 0, lateDays = 0;
+    for (const e of input.expenses || []) {
+      const d = String(e?.date || '').slice(0, 10);
+      if (!d || d < from || d > to) continue;
+      const t = enteredAt(e);
+      if (t === null) continue;
+      n++;
+      if (t <= dayCloseDue(d)) ok++;
+      else lateDays += (t - dayCloseDue(d)) / 86400000;
+    }
+    if (!n) set('expensesOnTime', null, 'No expenses entered in this period.');
+    else set('expensesOnTime', pct(ok, n), `${ok} of ${plural(n, 'expense entry', 'expense entries')} entered by ${fmt12(DAY_CLOSE_BY_MIN)} after the day paid.${n > ok ? ` The late ones came ${Math.max(1, Math.round(lateDays / (n - ok)))} day(s) late on average.` : ''}`);
+  }
+  if (ids.includes('productionApproved')) {
+    let decided = 0, byPerson = 0;
+    for (const p of input.approvals || []) {
+      const d = String(p?.date || '').slice(0, 10);
+      if (!d || d < from || d > to || p.approvalStatus !== 'approved') continue;
+      decided++;
+      if (!/^auto-approved/i.test(String(p.approvedBy || ''))) byPerson++;
+    }
+    if (!decided) set('productionApproved', null, 'No production entries to approve in this period.');
+    else set('productionApproved', pct(byPerson, decided), `${byPerson} of ${plural(decided, 'production entry', 'production entries')} checked and approved by a person.${decided > byPerson ? ` ${decided - byPerson} approved themselves after 24 hours with nobody checking.` : ''}`);
+  }
+  if (ids.includes('requestOnTime')) {
+    let n = 0, ok = 0;
+    for (const r of input.storeRequests || []) {
+      const d = String(r?.requestDate || '').slice(0, 10);
+      if (!d || d < from || d > to || !r.createdAt || Number.isNaN(Date.parse(r.createdAt))) continue;
+      n++;
+      if (Date.parse(r.createdAt) <= istMidnightMs(d) + REQUEST_BY_MIN * 60000) ok++;
+    }
+    if (!n) set('requestOnTime', null, 'No stock requests sent in this period.');
+    else set('requestOnTime', pct(ok, n), `${ok} of ${plural(n, 'stock request')} sent by ${fmt12(REQUEST_BY_MIN)} on the day they were for.`);
+  }
+
   // Riders: rides finished.
   if (ids.includes('trips')) {
     let delivered = 0, unfinished = 0, cancelled = 0;
@@ -664,7 +761,7 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     id,
     label: KPI_LABELS[id],
     score: results[id]?.score ?? null,
-    weight: weights[id] ?? DEFAULT_WEIGHTS[group][id] ?? 0,
+    weight: weights[id] ?? DEFAULT_WEIGHTS[group][id] ?? ADDED_KPI_WEIGHT,
     explanation: results[id]?.explanation || 'No data.',
     tip: tipFor(id, settings, kind),
   }));

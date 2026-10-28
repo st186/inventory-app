@@ -1700,6 +1700,14 @@ app.get('/make-server-c2dd9b9d/sales', async (c) => {
 });
 
 // Add sales data
+// When a person first saved a day's sales (the "Sales saved on time" KPI); later edits keep it.
+// A day a person saved before this was stamped keeps the last save time the record shows.
+function firstSavedAtOf(existing: any): string {
+  if (existing?.firstSavedAt) return existing.firstSavedAt;
+  const byPerson = !!existing && (!!existing.updatedBy || !['', 'pos-sync', 'cash-topup-approval'].includes(String(existing.createdBy || '')));
+  return (byPerson && (existing.updatedAt || (!existing.approvalRequired && existing.approvedAt))) || new Date().toISOString();
+}
+
 app.post('/make-server-c2dd9b9d/sales', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
   if ('error' in authResult) {
@@ -1768,6 +1776,7 @@ app.post('/make-server-c2dd9b9d/sales', async (c) => {
       // isPlaceholderSale in paytmRules.ts).
       updatedBy: employeeId || userId,
       updatedAt: new Date().toISOString(),
+      firstSavedAt: firstSavedAtOf(existingSale),
       // Same reasoning as PUT /sales/:id below: usedOnlineMoney only ever moves via the
       // cash-topup-approval route, never a general sales save - a new row starts at 0 and an
       // existing one keeps whatever approved top-ups already credited it.
@@ -1871,6 +1880,7 @@ app.put('/make-server-c2dd9b9d/sales/:id', async (c) => {
       // isPlaceholderSale in paytmRules.ts).
       updatedBy: editorId,
       updatedAt: new Date().toISOString(),
+      firstSavedAt: firstSavedAtOf(existingSale),
       // CONFIRMED ROOT CAUSE (found 2026-10-16, real case: a ₹540 approved store_inventory
       // cash top-up for Rohan/Bunny Momos 1 on 2026-10-12 showed as ₹0 in the Store Cash in
       // Hand breakdown): usedOnlineMoney is a running ledger only ever meant to move via the

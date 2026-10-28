@@ -195,6 +195,51 @@ test('production KPIs', () => {
   assert.equal(k.shippedOnTime.score, 66.7);
 });
 
+test('per-person KPI lists and the store-duty KPIs', () => {
+  const base = crewMonth();
+  // A picked list replaces the role's; a KPI outside the role's list starts at 10.
+  const settings = resolveSettings({ weeklyOff: [2], kpis: ['attendance', 'salesOnTime', 'expensesOnTime', 'requestOnTime', 'productionApproved', 'bogus'], weights: { attendance: 40 } }, 'BM008', 'store', 'store_incharge');
+  assert.deepEqual(settings.kpis, ['attendance', 'salesOnTime', 'expensesOnTime', 'requestOnTime', 'productionApproved']);
+  assert.equal(settings.weights.attendance, 40);
+  assert.equal(settings.weights.requestOnTime, 10);
+  assert.equal(settings.weights.stockOuts, undefined);
+  assert.equal(cleanSettingsInput({ kpis: [] }, true).ok, false);
+  assert.deepEqual((cleanSettingsInput({ kpis: ['hygiene', 'x', 'hygiene'] }, true) as any).value.kpis, ['hygiene']);
+  const sales = [
+    { date: '2026-10-01', createdBy: 'BM008', firstSavedAt: at('2026-10-01', '23:40') },
+    { date: '2026-10-02', createdBy: 'BM008', firstSavedAt: at('2026-10-03', '00:50') }, // 12:50 AM: on time
+    { date: '2026-10-03', createdBy: 'BM008', approvedAt: at('2026-10-04', '01:30') }, // older day, saved 1:30 AM: late
+    { date: '2026-10-04', createdBy: 'pos-sync' }, // never saved by a person
+    { date: '2026-10-05', createdBy: 'BM008' }, // no save time: not counted
+  ];
+  const ms = (d: string, hhmm: string) => Date.parse(at(d, hhmm));
+  const expenses = [
+    { date: '2026-10-01', id: `${ms('2026-10-01', '18:00')}-abc` }, // time taken from the id
+    { date: '2026-10-02', createdAt: at('2026-10-05', '10:00') }, // days late
+    { date: '2026-10-20', id: `${ms('2026-10-20', '18:00')}-xyz` }, // after the counted days
+  ];
+  const storeRequests = [
+    { requestDate: '2026-10-02', createdAt: at('2026-10-02', '01:05') },
+    { requestDate: '2026-10-03', createdAt: at('2026-10-03', '09:30') }, // after 8 AM
+  ];
+  const approvals = [
+    { date: '2026-10-01', approvalStatus: 'approved', approvedBy: 'Ops person' },
+    { date: '2026-10-02', approvalStatus: 'approved', approvedBy: 'Auto-approved (no action within 24 hours)' },
+    { date: '2026-10-03', approvalStatus: 'pending' },
+  ];
+  const r = computeMonthKpis({ ...base, group: 'store_incharge', settings, sales, expenses, storeRequests, approvals });
+  assert.deepEqual(r.kpis.map((x) => x.id), settings.kpis);
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.salesOnTime.score, 50); // 2 of 4 counted days
+  assert.match(k.salesOnTime.explanation, /1 day not saved/);
+  assert.equal(k.expensesOnTime.score, 50);
+  assert.equal(k.requestOnTime.score, 50);
+  assert.equal(k.productionApproved.score, 50);
+  assert.match(k.productionApproved.explanation, /approved themselves/);
+  // An operations incharge in the production department is operations, not production staff.
+  assert.equal(roleGroupOf({ role: 'manager', designation: 'operations_incharge', department: 'production' }, 'mixed'), 'operations');
+});
+
 test('rider rides', () => {
   const base = crewMonth();
   const settings = resolveSettings(null, 'BM020', 'none', 'rider');

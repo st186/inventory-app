@@ -377,11 +377,20 @@ function SettingsEditor({ person: p, canEditMoney, onClose, onSaved }: { person:
   const [hasVariablePay, setHasVariablePay] = useState(s.hasVariablePay);
   const [variablePayMax, setVariablePayMax] = useState<number | null>(s.variablePayMax || null);
   const [weights, setWeights] = useState<Record<string, string>>(Object.fromEntries(Object.entries(s.weights).map(([k, v]) => [k, String(v)])));
+  // Each person's KPIs follow their actual duties (owner, 28 Oct 2026), ticked here.
+  const [picked, setPicked] = useState<kpi.KpiId[]>(s.kpis?.length ? s.kpis : (Object.keys(s.weights) as kpi.KpiId[]));
   const [saving, setSaving] = useState(false);
-  const labels = Object.fromEntries(p.kpis.kpis.map((k) => [k.id, k.label]));
-  const weightSum = Object.values(weights).reduce((a, b) => a + (Number(b) || 0), 0);
+  const weightSum = picked.reduce((a, id) => a + (Number(weights[id]) || 0), 0);
+  const toggle = (id: kpi.KpiId, on: boolean) => {
+    setPicked((list) => (on ? [...list.filter((x) => x !== id), id] : list.filter((x) => x !== id)));
+    if (on && weights[id] === undefined) setWeights((w) => ({ ...w, [id]: String(kpi.ADDED_KPI_WEIGHT) }));
+  };
 
   const save = async () => {
+    if (!picked.length) {
+      toast.error('Tick at least one KPI');
+      return;
+    }
     setSaving(true);
     try {
       await teamKpiApi.saveKpiSettings(p.employeeId, {
@@ -389,7 +398,8 @@ function SettingsEditor({ person: p, canEditMoney, onClose, onSaved }: { person:
         shiftEnd,
         weeklyOff,
         graceMin: Number(graceMin),
-        weights: Object.fromEntries(Object.entries(weights).map(([k, v]) => [k, Number(v) || 0])) as kpi.KpiSettings['weights'],
+        kpis: picked,
+        weights: Object.fromEntries(picked.map((id) => [id, Number(weights[id]) || 0])) as kpi.KpiSettings['weights'],
         ...(canEditMoney ? { hasVariablePay, variablePayMax: Number(variablePayMax) || 0 } : {}),
       });
       toast.success('Settings saved');
@@ -461,27 +471,43 @@ function SettingsEditor({ person: p, canEditMoney, onClose, onSaved }: { person:
             )}
           </div>
         )}
-        <div className="flex flex-col gap-2">
-          <p className="text-body-sm font-medium text-text">
-            KPI weights <span className={cn('num font-normal', weightSum === 100 ? 'text-text-3' : 'text-warning')}>· total {weightSum}{weightSum === 100 ? '' : ' (re-scaled, but 100 is easiest to read)'}</span>
-          </p>
-          <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
-            {Object.keys(weights).map((id) => (
-              <label key={id} className="flex min-h-12 items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-1.5">
-                <span className="text-label text-text">{labels[id] || id}</span>
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={100}
-                  value={weights[id]}
-                  onChange={(e) => setWeights({ ...weights, [id]: e.target.value })}
-                  aria-label={`${labels[id] || id} weight`}
-                  className="num h-11 w-20 text-right"
-                />
-              </label>
-            ))}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-0.5">
+            <p className="text-body-sm font-medium text-text">
+              KPIs and weights <span className={cn('num font-normal', weightSum === 100 ? 'text-text-3' : 'text-warning')}>· total {weightSum}{weightSum === 100 ? '' : ' (re-scaled, but 100 is easiest to read)'}</span>
+            </p>
+            <p className="text-label text-text-3">Tick the KPIs that match {p.name}'s work. A KPI with no data in a month is left out and the rest re-weighted.</p>
           </div>
+          {kpi.KPI_SECTIONS.map((section) => (
+            <fieldset key={section.title} className="flex flex-col gap-2">
+              <legend className="mb-1 text-label font-medium text-text-2">{section.title}</legend>
+              <div className="flex flex-col gap-2">
+                {section.ids.map((id) => {
+                  const on = picked.includes(id);
+                  return (
+                    <div key={id} className={cn('flex min-h-12 items-center justify-between gap-2 rounded-md border px-3 py-1', on ? 'border-border bg-surface' : 'border-dashed border-border bg-surface-2/40')}>
+                      <label className="flex min-h-11 flex-1 cursor-pointer items-center gap-3">
+                        <Checkbox checked={on} onCheckedChange={(c) => toggle(id, c === true)} />
+                        <span className={cn('text-label', on ? 'text-text' : 'text-text-3')}>{kpi.KPI_LABELS[id]}</span>
+                      </label>
+                      {on && (
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          max={100}
+                          value={weights[id] ?? ''}
+                          onChange={(e) => setWeights({ ...weights, [id]: e.target.value })}
+                          aria-label={`${kpi.KPI_LABELS[id]} weight`}
+                          className="num h-11 w-20 text-right"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ))}
         </div>
       </div>
     </ResponsiveModal>

@@ -19,7 +19,7 @@ import { askClaudeForJson, AiError } from './insights.ts';
 import {
   FLAG_LABELS, KPI_LABELS, ROLE_LABELS, AI_MAX_SHIFT, addDays, checkApprovedAmount, clampAiAmount, cleanSettingsInput,
   computeMonthKpis, isMonth, istDate, monthDays, variablePayFormula,
-  type MonthKpis, type RoleGroup,
+  type KpiId, type MonthKpis,
 } from './kpiCore.ts';
 import {
   P, actorOf, loadConfig, loadPlaces, profileOf, registerAttendanceRoutes,
@@ -67,24 +67,28 @@ function houseOf(emp: any, places: Places): string | null {
 // Month-wide data shared by everyone on the team screen, loaded once and only when a role needs it.
 type Shared = {
   month: string; today: string; places: Places; punchSince: string | null;
-  sales: any[]; production: any[]; requests: any[]; trips: any[];
+  sales: any[]; production: any[]; requests: any[]; trips: any[]; expenses: any[];
   checks: Map<string, { date: string; row: any }[]>;
   stockOuts: Map<string, Promise<any[]>>;
   ledger: Map<string, Promise<{ made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] }>>;
 };
 
-async function loadShared(deps: KpiDeps, month: string, groups: Set<RoleGroup>, places: Places, punchSince: string | null): Promise<Shared> {
+// `needs`: every KPI someone on the screen has, so only the data those KPIs read is loaded.
+async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, places: Places, punchSince: string | null): Promise<Shared> {
   const days = monthDays(month);
   const first = days[0];
   const last = days[days.length - 1];
   const inMonth = (d: string) => d >= first && d <= last;
-  const prod = groups.has('production_incharge') || groups.has('production_staff');
-  const [sales, production, requests, trips, checkRows] = await Promise.all([
-    groups.has('store_incharge') ? deps.getAllByPrefix('sales:') : Promise.resolve([]),
-    prod ? deps.getAllByPrefix('production:') : Promise.resolve([]),
-    prod ? deps.getAllByPrefix('production_request_') : Promise.resolve([]),
-    groups.has('rider') ? deps.getAllByPrefix('rider-trip:') : Promise.resolve([]),
+  const need = (...ids: KpiId[]) => ids.some((id) => needs.has(id));
+  const none = Promise.resolve([] as any[]);
+  const [sales, production, requests, trips, checkRows, inventory, overheads] = await Promise.all([
+    need('cashCount', 'cashAccuracy', 'salesOnTime') ? deps.getAllByPrefix('sales:') : none,
+    need('productionLogged', 'wastage', 'productionApproved') ? deps.getAllByPrefix('production:') : none,
+    need('shippedOnTime', 'requestOnTime') ? deps.getAllByPrefix('production_request_') : none,
+    need('trips') ? deps.getAllByPrefix('rider-trip:') : none,
     rowsByPrefix(`workplace-check:${month}-`),
+    need('expensesOnTime') ? deps.getAllByPrefix('inventory:') : none,
+    need('expensesOnTime') ? deps.getAllByPrefix('overhead:') : none,
   ]);
   const checks = new Map<string, { date: string; row: any }[]>();
   for (const { key, value } of checkRows) {
@@ -102,6 +106,7 @@ async function loadShared(deps: KpiDeps, month: string, groups: Set<RoleGroup>, 
     production: (production || []).filter((p: any) => p?.date && inMonth(String(p.date).slice(0, 10))),
     requests: (requests || []).filter((r: any) => r?.requestDate && inMonth(String(r.requestDate).slice(0, 10))),
     trips: (trips || []).filter((t: any) => t?.date && inMonth(String(t.date).slice(0, 10))),
+    expenses: [...(inventory || []), ...(overheads || [])].filter((e: any) => e?.date && inMonth(String(e.date).slice(0, 10))),
     checks,
     stockOuts: new Map(),
     ledger: new Map(),
@@ -119,15 +124,16 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
   const first = `${month}-01`;
   const store = storeOf(emp, places);
   const house = houseOf(emp, places);
+  const has = new Set(profile.settings.kpis);
   let stockOuts: any[] = [];
-  if (profile.group === 'store_incharge' && store) {
+  if (has.has('stockOuts') && store) {
     if (!shared.stockOuts.has(store)) shared.stockOuts.set(store, deps.kv.getByPrefix<any>(`stock-out:${store}:`));
     stockOuts = await shared.stockOuts.get(store)!;
   }
   const housesStores = house ? [...places.storeHouse.entries()].filter(([, h]) => h === house).map(([s]) => s) : [];
   // The house's production ledger for the month, once per house: kg made and kg written off.
   let ledger: { made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] } = { made: [], wasted: [] };
-  if (house && (profile.group === 'production_incharge' || profile.group === 'production_staff')) {
+  if (house && has.has('wastage')) {
     if (!shared.ledger.has(house)) {
       shared.ledger.set(house, Promise.all([
         deps.kv.getByPrefix<any>(`production-ledger-item:${house}:${month}-`),
@@ -143,6 +149,9 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     }
     ledger = await shared.ledger.get(house)!;
   }
+  // Production entries are approved for the house that supplies the person's store.
+  const supplyHouse = house || (store ? places.storeHouse.get(store) || null : null);
+  const ids = new Set([id, emp.authUserId].filter(Boolean).map(String));
   return computeMonthKpis({
     month, today: shared.today, emp: { employeeId: id, joiningDate: emp.joiningDate || null },
     group: profile.group, kind: profile.kind, settings: profile.settings, punchSince: shared.punchSince,
@@ -158,6 +167,9 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     trips: shared.trips.filter((t: any) => t.riderEmployeeId === id),
     ledgerMadeKg: ledger.made,
     ledgerWastedKg: ledger.wasted,
+    storeRequests: store ? shared.requests.filter((r: any) => r.storeId === store) : [],
+    expenses: shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || ''))),
+    approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
   });
 }
 
@@ -243,7 +255,7 @@ export function registerKpiRoutes(app: any, deps: KpiDeps) {
   const onePerson = async (emp: any, month: string) => {
     const [places, cfg, saved] = await Promise.all([loadPlaces(deps.kv), loadConfig(deps.kv), deps.kv.get<any>(`kpi-settings:${emp.employeeId}`)]);
     const profile = profileOf(emp, places, saved);
-    const shared = await loadShared(deps, month, new Set([profile.group]), places, cfg.punchSince);
+    const shared = await loadShared(deps, month, new Set(profile.settings.kpis), places, cfg.punchSince);
     const kpis = await personKpis(deps, emp, profile, shared);
     const formula = variablePayFormula(kpis.total, profile.settings.hasVariablePay ? profile.settings.variablePayMax : 0);
     return { profile, kpis, formula, cfg };
@@ -316,7 +328,7 @@ export function registerKpiRoutes(app: any, deps: KpiDeps) {
       const reviews = new Map(reviewRows.map((x) => [x.key.slice(`kpi-review:${month}:`.length), x.value]));
       const pays = new Map(payRows.map((x) => [x.key.slice(`variable-pay:${month}:`.length), x.value]));
       const profiles = staff.map((e: any) => profileOf(e, places, saved.get(String(e.employeeId))));
-      const shared = await loadShared(deps, month, new Set(profiles.map((p) => p.group)), places, cfg.punchSince);
+      const shared = await loadShared(deps, month, new Set(profiles.flatMap((p) => p.settings.kpis)), places, cfg.punchSince);
       const people = await mapLimit(staff, 6, async (emp: any) => {
         const i = staff.indexOf(emp);
         const profile = profiles[i];

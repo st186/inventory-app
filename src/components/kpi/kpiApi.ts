@@ -37,7 +37,37 @@ const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return {
 // ---- Types (mirror kpiCore.ts) ----
 
 export type KpiId = 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
-  | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips';
+  | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
+  | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime';
+
+export const KPI_LABELS: Record<KpiId, string> = {
+  attendance: 'Attendance',
+  punctuality: 'On time',
+  fullShift: 'Full shift',
+  timesheet: 'Timesheet on time',
+  workplace: 'Photo checks on time',
+  hygiene: 'Hygiene (photo score)',
+  cashCount: 'Cash count saved',
+  cashAccuracy: 'Cash matches',
+  stockOuts: 'No stock-outs',
+  productionLogged: 'Production logged',
+  wastage: 'Low wastage',
+  shippedOnTime: 'Shipped on time',
+  trips: 'Rides completed',
+  salesOnTime: 'Sales saved on time',
+  expensesOnTime: 'Expenses entered on time',
+  productionApproved: 'Production approved on time',
+  requestOnTime: 'Stock request sent on time',
+};
+
+// The KPIs the owner picks from for each person, grouped as in KPI settings (riders have none).
+export const KPI_SECTIONS: { title: string; ids: KpiId[] }[] = [
+  { title: 'Everyone', ids: ['attendance', 'punctuality', 'fullShift', 'timesheet'] },
+  { title: 'Photo checks', ids: ['workplace', 'hygiene'] },
+  { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy'] },
+  { title: 'Production', ids: ['productionApproved', 'productionLogged', 'wastage', 'shippedOnTime'] },
+];
+export const ADDED_KPI_WEIGHT = 10;
 
 export type PunchEvent = {
   at: string; source: 'manual' | 'geofence' | 'manager'; verified: boolean;
@@ -74,6 +104,7 @@ export type MonthKpis = {
 export type KpiSettings = {
   employeeId: string; shiftStart: string; shiftEnd: string; weeklyOff: number[]; graceMin: number;
   hasVariablePay: boolean; variablePayMax: number; weights: Partial<Record<KpiId, number>>;
+  kpis?: KpiId[]; // the person's KPIs (picked per person; nothing saved = their role's list)
   isDefault?: boolean; updatedBy?: string; updatedAt?: string;
 };
 export type KpiReview = {
