@@ -12,7 +12,7 @@ isn't checked in there is an "after hours" alert). Alerts and settings: app › 
 - One PC can watch several cameras: one `[camera:<id>]` section each (a thread per camera).
 - New PC (the store): copy the kit (this folder + its camera_watch.ini) and double-click
   `Install Bunny cameras.bat` - it asks for the camera account and IPs, installs Python + OpenCV,
-  copies the program to C:BunnyCamera and makes it start with Windows.
+  copies the program to C:\BunnyCamera and makes it start with Windows.
 - Run without a window: `pythonw camera_watch.py`. It starts with Windows from
   `shell:startup\Bunny camera watcher.bat`.
 - Tapo C200 links: `rtsp://USER:PASS@IP:554/stream1` (full) and `/stream2` (small). The PC must
@@ -21,7 +21,7 @@ isn't checked in there is an "after hours" alert). Alerts and settings: app › 
 ## Recording for our own kitchen dataset (owner, 29 Oct 2026)
 
 `recorder.py` records each camera's own video, untouched and without sound, in 10-minute pieces:
-`D:\BunnyCameraecordings\<camera>\<date>\HH-MM-SS.mp4`, plus one `still.jpg` a day. The times,
+`D:\BunnyCamera\recordings\<camera>\<date>\HH-MM-SS.mp4`, plus one `still.jpg` a day. The times,
 days and folder are in the `[record]` section of `camera_watch.ini`. The first run is 8 AM to 8 PM,
 30 Oct to 5 Nov 2026, and it stops by itself after that. It needs FFmpeg (`winget install Gyan.FFmpeg`)
 and starts with Windows from the same Startup file as the watcher. It stops if the disk has less than
