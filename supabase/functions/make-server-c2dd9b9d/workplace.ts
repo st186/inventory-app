@@ -16,6 +16,12 @@
 //   workplace-results-sent:{date}:{employeeId}          when the person was last told their photos were checked
 //   push-photo:{token}                                  a photo shown inside a push notification (a day; pushPhotoUrl)
 //   workplace-settings                                  AI scoring on/off and the auto-flag score
+// Owner, 29 Oct 2026: a check can ask for several photos (minPhotos: "3-4 photos of the walls") or
+// for named shots in order (shots: the sheet machine "full", "at the cut-out", "on the belt"); it
+// is done only when that many are in, and on time if the last one needed came in the window. And a
+// photo guide: sample photos per check (and per shot) showing how to take it, kept in the bucket at
+// samples/{kind}-{location}/ (never cleaned up), shown to whoever takes the photo and on More >
+// Photo guide for anyone new.
 // Event stalls (events.ts) are a third kind of place, 'event': on the event days the incharge gets
 // a short stall checklist by default (or the one the owner saves for that event).
 // Photos: Drive "Workplace photos/YYYY-MM/YYYY-MM-DD/<location name>/" (+ "thumbs/"), or bucket
@@ -48,10 +54,18 @@ type Deps = {
 type LocationKind = 'store' | 'production' | 'event';
 // coverId: who takes the photo on a day the assignee is on leave (see coverOn). from: the first day
 // it's due, so a check added after the day's window doesn't count as missed that day.
-type TemplateItem = { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[]; from?: string };
+type Shot = { label: string; labelBn?: string };
+type Sample = { id: string; path: string; thumbPath?: string; type: string; shot?: number; at: string; by: string };
+type TemplateItem = {
+  id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[]; from?: string;
+  minPhotos?: number; shots?: Shot[]; samples?: Sample[];
+};
 // activeFrom/activeTo: an event's checklist only applies on the event days (taken from the event).
 type Template = { locationKind: LocationKind; locationId: string; items: TemplateItem[]; updatedAt?: string; updatedBy?: string; activeFrom?: string; activeTo?: string };
-type Assigned = { id: string; name: string; nameBn: string; hint?: string; start: string; end: string; locationKind: LocationKind; locationId: string; coveringFor?: string; coveringForName?: string };
+type Assigned = {
+  id: string; name: string; nameBn: string; hint?: string; start: string; end: string; locationKind: LocationKind; locationId: string; coveringFor?: string; coveringForName?: string;
+  minPhotos?: number; shots?: Shot[]; samples?: { id: string; shot?: number }[];
+};
 type Flag = { status: 'ok' | 'needs_cleaning'; note: string; by: string; byId?: string; at: string; auto?: boolean; fixedAt?: string };
 type CheckItem = {
   name: string; nameBn?: string; path: string; uploadedAt: string; late: boolean; flag?: Flag;
@@ -90,6 +104,9 @@ const MAX_DATA_URL_CHARS = Math.ceil((MAX_PHOTO_BYTES * 4) / 3) + 64;
 const EARLY_UPLOAD_MINUTES = 30; // a photo hours before the window proves nothing about 3-4 PM
 const MAX_RETAKES = 10; // per item per day, so a stuck camera button can't fill the storage
 const MAX_PHOTOS = 6; // per check: a few walls or shelves, not an album
+const MAX_SAMPLES = 6; // sample photos per check (one per named shot)
+// Photos a check needs before it counts as done: its named shots, or minPhotos, at least one.
+const needOf = (a: { minPhotos?: number; shots?: Shot[] } | null | undefined) => Math.min(MAX_PHOTOS, Math.max(1, a?.shots?.length || 0, Number(a?.minPhotos) || 1));
 const STUCK_PENDING_MINUTES = 3; // a photo still waiting for the AI this long after upload is scored by the cron
 const LEFTOVERS_PER_RUN = 6; // ... at most this many per cron run
 const KEEP_BUCKET_DAYS = 60; // bucket fallback only - Drive photos are kept
@@ -316,6 +333,8 @@ function assignedOn(templates: Template[], date: string, employeeId?: string, co
       if (employeeId && who !== employeeId) continue;
       out.push({
         id: it.id, name: it.name, nameBn: it.nameBn, ...(it.hint ? { hint: it.hint } : {}), start: it.start, end: it.end,
+        ...(it.minPhotos && it.minPhotos > 1 ? { minPhotos: it.minPhotos } : {}), ...(it.shots?.length ? { shots: it.shots } : {}),
+        ...(it.samples?.length ? { samples: it.samples.map((x) => ({ id: x.id, ...(x.shot !== undefined ? { shot: x.shot } : {}) })) } : {}),
         locationKind: t.locationKind, locationId: t.locationId, assigneeId: who,
         ...(coveringFor ? { coveringFor, coveringForName: cover!.names.get(coveringFor) || coveringFor } : {}),
       });
@@ -326,11 +345,13 @@ function assignedOn(templates: Template[], date: string, employeeId?: string, co
 const stripAssignee = ({ assigneeId: _a, ...rest }: Assigned & { assigneeId?: string }): Assigned => rest;
 
 // ---------------- One person's day ----------------
+// A check is done once it has all the photos it needs (one, unless it asks for more).
 function recount(row: CheckRow) {
   const uploaded = Object.keys(row.items || {});
+  const complete = uploaded.filter((k) => photosOf(row.items[k]).length >= needOf((row.assigned || []).find((a) => a.id === k)));
   row.required = new Set([...(row.assigned || []).map((a) => a.id), ...uploaded]).size;
-  row.done = uploaded.length;
-  row.onTime = uploaded.filter((k) => !row.items[k].late).length;
+  row.done = complete.length;
+  row.onTime = complete.filter((k) => !row.items[k].late).length;
 }
 
 function syncRow(row: CheckRow | null, date: string, employeeId: string, assigned: Assigned[]): CheckRow {
@@ -348,8 +369,8 @@ const rowChanged = (a: CheckRow | null, b: CheckRow) =>
 
 type Status = 'done' | 'done_late' | 'upcoming' | 'due' | 'late' | 'missed';
 // late = window over and no photo yet (still accepted today, marked late); missed = day over.
-function statusOf(date: string, today: string, nowMin: number, a: { start: string; end: string }, uploaded?: CheckItem): Status {
-  if (uploaded) return uploaded.late ? 'done_late' : 'done';
+function statusOf(date: string, today: string, nowMin: number, a: { start: string; end: string; minPhotos?: number; shots?: Shot[] }, uploaded?: CheckItem): Status {
+  if (uploaded && photosOf(uploaded).length >= needOf(a)) return uploaded.late ? 'done_late' : 'done';
   if (date < today) return 'missed';
   if (date > today || !a.start) return 'upcoming';
   if (nowMin < toMin(a.start)) return 'upcoming';
@@ -817,6 +838,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     if (!raw) return c.json({ error: 'No checklist sent' }, 400);
     if (raw.length > MAX_ITEMS) return c.json({ error: `At most ${MAX_ITEMS} checks per place` }, 400);
     const staff = new Set((await loadEmployees(kv)).map(empIdOf));
+    const before = await kv.get<Template>(templateKey(loc.kind, loc.id));
     const seen = new Set<string>();
     const items: TemplateItem[] = [];
     for (const r of raw) {
@@ -837,12 +859,128 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       seen.add(id);
       const hint = str(r?.hint, 160);
       const from = str(r?.from, 10);
-      items.push({ id, name, nameBn: str(r?.nameBn, 60), ...(hint ? { hint } : {}), assigneeId, ...(coverId ? { coverId } : {}), start, end, days, ...(DATE.test(from) ? { from } : {}) });
+      const shots: Shot[] = (Array.isArray(r?.shots) ? r.shots : []).slice(0, MAX_PHOTOS)
+        .map((x: any) => ({ label: str(x?.label, 40), labelBn: str(x?.labelBn, 40) || undefined })).filter((x: Shot) => x.label);
+      const minPhotos = Math.min(MAX_PHOTOS, Math.max(1, Math.round(Number(r?.minPhotos) || 1)));
+      // Sample photos are added and removed on their own (POST/DELETE /workplace/sample); kept here.
+      const samples = before?.items?.find((x) => x.id === id)?.samples;
+      items.push({
+        id, name, nameBn: str(r?.nameBn, 60), ...(hint ? { hint } : {}), assigneeId, ...(coverId ? { coverId } : {}), start, end, days, ...(DATE.test(from) ? { from } : {}),
+        ...(minPhotos > 1 ? { minPhotos } : {}), ...(shots.length ? { shots } : {}), ...(samples?.length ? { samples } : {}),
+      });
     }
     const template: Template = { locationKind: loc.kind, locationId: loc.id, items, updatedAt: new Date().toISOString(), updatedBy: actor!.name };
     await kv.set(templateKey(loc.kind, loc.id), template);
     // The event days are taken from the event each time the checklist is read (loadTemplate).
     return c.json({ template, isDefault: false });
+  });
+
+  // ---- Photo guide: sample photos per check (owner, 29 Oct 2026) ----
+  // Added from a new photo (image) or one already taken (from: date, employeeId, photoId), by the
+  // owner or an operations manager. A named shot has one sample (a new one replaces it).
+  app.post(`${P}/workplace/sample`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!actor!.canSetup) return c.json({ error: 'Only the owner and operations managers can set sample photos' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    const kind = body.kind; const locId = str(body.id, 80); const itemId = str(body.itemId, 40);
+    if (!isKind(kind) || !locId) return c.json({ error: 'Pick a store or production house' }, 400);
+    const template = await kv.get<Template>(templateKey(kind, locId));
+    const item = template?.items?.find((x) => x.id === itemId);
+    if (!template || !item) return c.json({ error: 'Save the checklist first, then add sample photos' }, 404);
+    const shot = Number.isInteger(body.shot) && body.shot >= 0 && body.shot < (item.shots?.length || 0) ? Number(body.shot) : undefined;
+    let image: { bytes: Uint8Array; type: string; ext: string } | null = null;
+    let thumbImage: { bytes: Uint8Array; type: string; ext: string } | null = null;
+    if (body.image) {
+      const parsed = parseImage(body.image, MAX_PHOTO_BYTES);
+      if ('error' in parsed) return c.json({ error: parsed.error }, 400);
+      image = parsed;
+      const t = body.thumb ? parseImage(body.thumb, MAX_THUMB_BYTES) : null;
+      thumbImage = t && !('error' in t) ? t : null;
+    } else if (body.from && DATE.test(String(body.from.date || ''))) {
+      const row = await kv.get<CheckRow>(checkKey(String(body.from.date), str(body.from.employeeId, 80)));
+      const src = row?.items?.[str(body.from.itemId || itemId, 40)];
+      const photo = src ? photosOf(src).find((x) => x.id === str(body.from.photoId, 40)) || photosOf(src)[0] : undefined;
+      if (!photo) return c.json({ error: 'That photo was not found' }, 404);
+      const read = async (thumb: boolean) => {
+        const f = await readPhoto(deps, photo, thumb);
+        if (!f) return null;
+        const bytes = f.body instanceof Uint8Array ? f.body : new Uint8Array(await new Response(f.body).arrayBuffer());
+        const type = sniff(bytes) || f.type;
+        return { bytes, type, ext: type === 'image/png' ? 'png' : type === 'image/webp' ? 'webp' : 'jpg' };
+      };
+      image = await read(false);
+      if (!image) return c.json({ error: 'That photo is no longer kept' }, 404);
+      thumbImage = await read(true);
+    } else return c.json({ error: 'Send a photo' }, 400);
+    try {
+      await ensureBucket(deps.storage);
+      const sid = `s${Date.now().toString(36)}${randomId()}`;
+      const base = `samples/${kind}-${safeSeg(locId)}/${safeSeg(itemId)}-${sid}`;
+      const { error: upErr } = await deps.storage.from(BUCKET).upload(`${base}.${image.ext}`, image.bytes, { contentType: image.type, upsert: false });
+      if (upErr) throw new Error('upload failed');
+      let thumbPath: string | undefined;
+      if (thumbImage) {
+        const { error: tErr } = await deps.storage.from(BUCKET).upload(`${base}-thumb.${thumbImage.ext}`, thumbImage.bytes, { contentType: thumbImage.type, upsert: false });
+        if (!tErr) thumbPath = `${base}-thumb.${thumbImage.ext}`;
+      }
+      const sample: Sample = { id: sid, path: `${base}.${image.ext}`, ...(thumbPath ? { thumbPath } : {}), type: image.type, ...(shot !== undefined ? { shot } : {}), at: new Date().toISOString(), by: actor!.name };
+      const replaced = (item.samples || []).filter((x) => shot !== undefined && x.shot === shot);
+      item.samples = [...(item.samples || []).filter((x) => !replaced.includes(x)), sample].slice(-MAX_SAMPLES);
+      await kv.set(templateKey(kind, locId), { ...template, updatedAt: new Date().toISOString(), updatedBy: actor!.name });
+      for (const old of replaced) await deps.storage.from(BUCKET).remove([old.path, ...(old.thumbPath ? [old.thumbPath] : [])]).catch(() => undefined);
+      return c.json({ item });
+    } catch (err: any) {
+      console.log('Workplace sample upload failed:', String(err?.message || err).slice(0, 160));
+      return c.json({ error: 'Could not save the sample photo - try again' }, 502);
+    }
+  });
+
+  app.delete(`${P}/workplace/sample`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!actor!.canSetup) return c.json({ error: 'Only the owner and operations managers can change sample photos' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    const kind = body.kind; const locId = str(body.id, 80);
+    if (!isKind(kind) || !locId) return c.json({ error: 'Pick a store or production house' }, 400);
+    const template = await kv.get<Template>(templateKey(kind, locId));
+    const item = template?.items?.find((x) => x.id === str(body.itemId, 40));
+    const sample = item?.samples?.find((x) => x.id === str(body.sampleId, 40));
+    if (!template || !item || !sample) return c.json({ error: 'That sample photo was not found' }, 404);
+    item.samples = (item.samples || []).filter((x) => x.id !== sample.id);
+    await kv.set(templateKey(kind, locId), { ...template, updatedAt: new Date().toISOString(), updatedBy: actor!.name });
+    await deps.storage.from(BUCKET).remove([sample.path, ...(sample.thumbPath ? [sample.thumbPath] : [])]).catch(() => undefined);
+    return c.json({ item });
+  });
+
+  // A sample photo, for anyone signed in (they show how to take the photo; nothing private).
+  app.get(`${P}/workplace/sample/:kind/:locId/:itemId/:sampleId`, async (c: any) => {
+    const { error } = await actorOf(deps, c); if (error) return error;
+    const kind = c.req.param('kind');
+    if (!isKind(kind)) return c.json({ error: 'Bad place' }, 400);
+    const template = await kv.get<Template>(templateKey(kind, c.req.param('locId')));
+    const sample = template?.items?.find((x) => x.id === c.req.param('itemId'))?.samples?.find((x) => x.id === c.req.param('sampleId'));
+    if (!sample) return c.json({ error: 'No sample photo' }, 404);
+    const path = (c.req.query('size') === 'thumb' && sample.thumbPath) || sample.path;
+    const { data, error: dlErr } = await deps.storage.from(BUCKET).download(path);
+    if (dlErr || !data) return c.json({ error: 'The sample photo is missing' }, 404);
+    return c.body(new Uint8Array(await data.arrayBuffer()), 200, { 'Content-Type': data.type || sample.type, 'Cache-Control': 'private, max-age=86400' });
+  });
+
+  // The photo guide (More > Photo guide): every place's checks with their shots and sample photos,
+  // for anyone signed in - a new person learns how each photo should look.
+  app.get(`${P}/workplace/guide`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    const [templates, locs] = await Promise.all([loadAllTemplates(kv), loadLocations(kv)]);
+    const places = templates
+      .filter((t) => t.locationKind !== 'event' && findLoc(locs, t.locationKind, t.locationId))
+      .map((t) => ({
+        kind: t.locationKind, id: t.locationId, name: findLoc(locs, t.locationKind, t.locationId)!.name,
+        items: t.items.map((it) => ({
+          id: it.id, name: it.name, nameBn: it.nameBn, hint: it.hint || '', start: it.start, end: it.end, need: needOf(it),
+          shots: it.shots || [], samples: (it.samples || []).map((x) => ({ id: x.id, ...(x.shot !== undefined ? { shot: x.shot } : {}) })),
+          mine: !!actor!.employeeId && (it.assigneeId === actor!.employeeId || it.coverId === actor!.employeeId),
+        })),
+      }));
+    return c.json({ places, canSetup: actor!.canSetup });
   });
 
   // The signed-in person's checks for today.
@@ -920,6 +1058,10 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     const photos = adding ? [...prevPhotos, shot] : replaceId ? prevPhotos.map((p) => (p.id === replaceId ? shot : p)) : [shot];
     const dropped = adding ? [] : replaceId ? prevPhotos.filter((p) => p.id === replaceId) : prevPhotos;
     const late = nowMin > toMin(a.end);
+    // On time means the last photo the check needs came in the window: once all were in, a retake
+    // or an extra keeps it as it was; until then, each photo carries its own time.
+    const need = needOf(a);
+    const wasComplete = prevPhotos.length >= need;
     // Another photo leaves a reviewer's verdict as it was. A retake marks a reviewer's
     // needs-cleaning fixed (it stays until they look again) and drops their OK, which was about the
     // old photo. The AI's own flag is worked out again from the photos (settleFlag).
@@ -929,7 +1071,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     const entry: CheckItem = {
       name: a.name, nameBn: a.nameBn, ...stored, uploadedAt: nowIso, firstUploadedAt: prev?.firstUploadedAt || prev?.uploadedAt || nowIso,
       // A retake keeps an earlier on-time photo on time (e.g. re-shooting after a flag).
-      late: prev ? prev.late && late : late,
+      late: wasComplete ? prev!.late && late : late,
       locationKind: a.locationKind, locationId: a.locationId,
       ...(retake ? { retakes: (prev!.retakes || 0) + 1 } : prev?.retakes ? { retakes: prev.retakes } : {}),
       ...(prev?.wasFlagged ? { wasFlagged: true } : {}),
@@ -950,7 +1092,9 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
     // Anything the background check leaves behind is scored by the 15-minute cron (scoreLeftovers).
     if (aiOn) {
       await inBackground('Workplace photo check', async () => {
-        const r = await scoreOne(deps, settings, { key, itemId: a.id, photoId: shot.id, hint: a.hint, base64: photo.base64, mediaType: photo.type });
+        // The AI is told which shot this is ("on the conveyor belt"), when the check names them.
+        const shotLabel = a.shots?.[photos.findIndex((x) => x.id === shot.id)]?.label;
+        const r = await scoreOne(deps, settings, { key, itemId: a.id, photoId: shot.id, hint: [a.hint, shotLabel].filter(Boolean).join(' · ') || undefined, base64: photo.base64, mediaType: photo.type });
         if (r) await afterScore(deps, settings, { date: today, employeeId: forEmployeeId, itemId: a.id, it: r.it, photo: r.photo });
       });
     }

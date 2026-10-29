@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Camera, Cloud, Factory, HardDrive, ListChecks, Plus, Sparkles, Store, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Camera, Cloud, Factory, HardDrive, ListChecks, Plus, Sparkles, Store, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { getTemplate, saveSettings, saveTemplate, type Person, type TemplateItem, type WorkplaceAccess, type WorkplaceSettings } from './workplaceApi';
-import { DAY_LETTERS, DAY_NAMES } from './workplaceUtils';
+import { addSample, getTemplate, needOf, removeSample, saveSettings, saveTemplate, type Person, type TemplateItem, type WorkplaceAccess, type WorkplaceLocation, type WorkplaceSettings } from './workplaceApi';
+import { DAY_LETTERS, DAY_NAMES, compressPhoto } from './workplaceUtils';
+import { SampleTile } from './SamplePhoto';
 import { Button } from '../ui/button';
 import { IconButton } from '../ui/icon-button';
 import { Input } from '../ui/input';
@@ -88,6 +89,8 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<TemplateItem | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  // Checks saved on the server (sample photos can only be added to those).
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
 
   const place = access.locations.find((l) => locKey(l) === loc) || null;
 
@@ -99,6 +102,7 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
       .then((r) => {
         if (cancelled) return;
         setItems(r.template.items.map((i) => ({ ...i, hint: i.hint || '' })));
+        setSavedIds(new Set(r.isDefault ? [] : r.template.items.map((i) => i.id)));
         setPeople(r.people || []);
         setIsDefault(r.isDefault);
         setUpdated({ at: r.template.updatedAt, by: r.template.updatedBy });
@@ -165,6 +169,7 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
     try {
       const r = await saveTemplate(place.kind, place.id, items.map((i) => ({ ...i, hint: i.hint?.trim() || undefined })));
       setItems(r.template.items.map((i) => ({ ...i, hint: i.hint || '' })));
+      setSavedIds(new Set(r.template.items.map((i) => i.id)));
       setIsDefault(false);
       setUpdated({ at: r.template.updatedAt, by: r.template.updatedBy });
       setDirty(false);
@@ -324,6 +329,15 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
                 <PersonOptions people={people.filter((pp) => pp.id !== draft.assigneeId)} />
               </NativeSelect>
             </Field>
+            <PhotosEditor draft={draft} setDraft={setDraft} />
+            {place && (
+              <SamplesEditor place={place} draft={draft} saved={savedIds.has(draft.id)}
+                onSamples={(samples) => {
+                  // Saved on the server already: update the list and the draft, without asking to save.
+                  setDraft((d) => (d ? { ...d, samples } : d));
+                  setItems((list) => list.map((x) => (x.id === draft.id ? { ...x, samples } : x)));
+                }} />
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="From">
                 <Input type="time" value={draft.start} onChange={(e) => setDraft({ ...draft, start: e.target.value })} />
@@ -385,6 +399,84 @@ export function WorkplaceSetup({ access, onSettings }: Props) {
       >
         <NumberStepper label="Score" value={threshold} onChange={setThreshold} min={1} max={10} editable unit="/ 10" />
       </ResponsiveModal>
+    </div>
+  );
+}
+
+// How many photos a check needs, and its named shots in order (owner, 29 Oct 2026: "momo sheet
+// machine - full, near the cut-out and on the conveyor belt").
+function PhotosEditor({ draft, setDraft }: { draft: TemplateItem; setDraft: (d: TemplateItem) => void }) {
+  const shots = draft.shots || [];
+  const setShots = (next: { label: string; labelBn?: string }[]) => setDraft({ ...draft, shots: next });
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-4">
+      <Field label="Photos needed" helper="It counts as done (and on time) once this many are in. Named shots below count too.">
+        <NativeSelect value={String(needOf(draft))} onChange={(e) => setDraft({ ...draft, minPhotos: Number(e.target.value) })}>
+          {[1, 2, 3, 4, 5, 6].filter((n) => n >= shots.length || n === 1).map((n) => <option key={n} value={n}>{n === 1 ? '1 photo' : `${n} photos`}</option>)}
+        </NativeSelect>
+      </Field>
+      <div className="flex flex-col gap-2">
+        <span className="text-body-sm font-medium text-text">Named shots <span className="font-normal text-text-3">· optional, in order</span></span>
+        {shots.map((sh, i) => (
+          <div key={i} className="grid grid-cols-[1.5rem_1fr_1fr_auto] items-center gap-2">
+            <span className="num text-body-sm text-text-2">{i + 1}</span>
+            <Input value={sh.label} maxLength={40} placeholder="e.g. Inside the bowl" aria-label={`Shot ${i + 1} (English)`} onChange={(e) => setShots(shots.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+            <Input value={sh.labelBn || ''} maxLength={40} lang="bn" placeholder="বাংলায়" aria-label={`Shot ${i + 1} (Bengali)`} onChange={(e) => setShots(shots.map((x, j) => (j === i ? { ...x, labelBn: e.target.value } : x)))} />
+            <IconButton variant="ghost" size="sm" label={`Remove shot ${i + 1}`} icon={<X />} onClick={() => setShots(shots.filter((_, j) => j !== i))} />
+          </div>
+        ))}
+        {shots.length < 6 && <Button variant="secondary" size="sm" className="self-start" leadingIcon={<Plus />} onClick={() => setShots([...shots, { label: '' }])}>Add a shot</Button>}
+      </div>
+    </div>
+  );
+}
+
+// Sample photos for the photo guide: one per named shot, or a few for the check. Saved at once.
+function SamplesEditor({ place, draft, saved, onSamples }: { place: WorkplaceLocation; draft: TemplateItem; saved: boolean; onSamples: (s: TemplateItem['samples']) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const slots = draft.shots?.length ? draft.shots.map((sh, i) => ({ key: `s${i}`, shot: i as number | undefined, label: sh.label || `Shot ${i + 1}` })) : [{ key: 'all', shot: undefined, label: 'This check' }];
+  const take = async (shot: number | undefined, key: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(key);
+    try {
+      const { image, thumb } = await compressPhoto(file);
+      const r = await addSample({ kind: place.kind, id: place.id, itemId: draft.id, ...(shot !== undefined ? { shot } : {}), image, thumb });
+      onSamples(r.item.samples);
+      toast.success('Sample photo saved');
+    } catch (err) { toast.error((err as Error).message || 'Could not save the sample photo'); } finally { setBusy(null); }
+  };
+  const drop = async (sampleId: string) => {
+    setBusy(sampleId);
+    try { const r = await removeSample({ kind: place.kind, id: place.id, itemId: draft.id, sampleId }); onSamples(r.item.samples); } catch (err) { toast.error((err as Error).message || 'Could not remove it'); } finally { setBusy(null); }
+  };
+  return (
+    <div className="flex flex-col gap-2 border-t border-border pt-4">
+      <span className="text-body-sm font-medium text-text">Sample photos <span className="font-normal text-text-3">· the photo guide</span></span>
+      {!saved ? (
+        <p className="text-label text-text-3">Save the checklist first, then add sample photos here - or tap "Use as the sample photo" on a good photo in Review.</p>
+      ) : slots.map((slot) => {
+        const mine = (draft.samples || []).filter((x) => (slot.shot === undefined ? true : x.shot === slot.shot));
+        return (
+          <div key={slot.key} className="flex flex-wrap items-center gap-2">
+            {draft.shots?.length ? <span className="w-full text-label text-text-2">{slot.label}</span> : null}
+            {mine.map((x) => (
+              <div key={x.id} className="relative">
+                <SampleTile kind={place.kind} locId={place.id} itemId={draft.id} sampleId={x.id} label={`Sample: ${slot.label}`} className="size-16" />
+                <IconButton variant="secondary" size="sm" label="Remove this sample" icon={<X />} loading={busy === x.id} onClick={() => drop(x.id)} className="absolute -right-2 -top-2" />
+              </div>
+            ))}
+            {(slot.shot !== undefined ? mine.length === 0 : mine.length < 6) && (
+              <label className={cn('flex size-16 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-md border border-dashed border-border-strong bg-surface-2 text-text-2 hover:bg-surface-3', busy === slot.key && 'opacity-60')}>
+                <Camera className="size-5" aria-hidden="true" />
+                <span className="text-caption font-medium">{busy === slot.key ? 'Saving' : 'Sample'}</span>
+                <input type="file" accept="image/*" capture="environment" className="sr-only" disabled={!!busy} onChange={(e) => take(slot.shot, slot.key, e)} />
+              </label>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

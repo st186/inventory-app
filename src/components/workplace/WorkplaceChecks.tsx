@@ -57,7 +57,7 @@ export function WorkplaceChecks({ initialTab, initialLocation }: { initialTab?: 
         <>
           {tabs.length > 1 && <SegmentedControl aria-label={t('more.myChecks')} value={tab} onValueChange={setTab} options={tabs} />}
           {tab === 'mine' && <MyWorkplaceChecks threshold={access.settings.aiThreshold} />}
-          {tab === 'review' && canReview && <WorkplaceReview locations={access.locations} threshold={access.settings.aiThreshold} initialLocation={initialLocation} />}
+          {tab === 'review' && canReview && <WorkplaceReview locations={access.locations} threshold={access.settings.aiThreshold} initialLocation={initialLocation} canSetup={access.canSetup} />}
           {tab === 'setup' && canSetup && <WorkplaceSetup access={access} onSettings={(settings) => setAccess({ ...access, settings })} />}
         </>
       )}

@@ -122,6 +122,7 @@ export type ScreenSpec =
   | { screen: 'OpeningChecklist' }
   | { screen: 'Contacts' }
   | { screen: 'ShoppingLists' }
+  | { screen: 'PhotoGuide' }
   | { screen: 'AuditDashboard'; view: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll' };
 
 /** Counts shown on a tab (only where the data is already loaded by App.tsx). */
@@ -389,6 +390,8 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   add('contacts', 'more.contacts', 'contacts', { screen: 'Contacts' }, null, 'contacts');
   // Shopping lists: each list's timeline - sent, reached the shopper, vendors, shopping, prices (owner, 29 Oct 2026).
   if (kind === 'owner' || kind === 'ops') add('shopping', 'more.shopping', 'expenses', { screen: 'ShoppingLists' }, null, 'shopping');
+  // Photo guide: how each workplace photo should look, with sample photos (owner, 29 Oct 2026).
+  if (can.workplace && kind !== 'rider') add('photo-guide', 'more.photoGuide', 'checks', { screen: 'PhotoGuide' }, null, 'photo-guide');
 
   // --- Tabs and the More / Me lists (design review b4) -----------------------------------------
   const has = (path: string) => !!destinations[path];
@@ -417,7 +420,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     more = [
       group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening'),
       group('more.assets', 'equipment', 'investments'),
-      group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'recipes-costs'),
+      group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'photo-guide', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
       group('more.help', 'contacts'),
     ];
@@ -433,7 +436,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     more = [
       group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'my-kpis'),
       group('more.assets', 'equipment'),
-      group('more.setup', 'items', 'hierarchy', 'workplace-setup'),
+      group('more.setup', 'items', 'hierarchy', 'workplace-setup', 'photo-guide'),
       group('more.data', 'reports', 'audit-report'),
       group('more.help', 'contacts'),
     ];
@@ -449,7 +452,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('me', 'nav.me', 'me', []),
     ];
     more = [
-      group('more.myWork', 'my-pay', 'my-attendance', 'my-kpis', 'my-checks'),
+      group('more.myWork', 'my-pay', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide'),
       // Manage Items stays reachable by link only on employee logins, as before.
       group('more.business', 'insights', ...(staff ? [] : ['items']), 'equipment', 'reports', ...(staff ? [] : ['audit-report'])),
       group('more.help', 'contacts'),
@@ -462,7 +465,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
     ];
-    more = [group('more.myWork', 'my-attendance', 'my-kpis', 'my-checks', 'recipes'), group('more.help', 'contacts')];
+    more = [group('more.myWork', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide', 'recipes'), group('more.help', 'contacts')];
   } else if (kind === 'rider') {
     add('me', 'nav.me', 'me', moreSpec, null);
     // Rides: history and payments (WP7); Home keeps the current ride.

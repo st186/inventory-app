@@ -25,6 +25,7 @@ const OpeningOverview = lazy(() => import('../../opening/OpeningChecklist').then
 const SiteAuditsScreen = lazy(() => import('../../audits/SiteAuditsScreen').then((m) => ({ default: m.SiteAuditsScreen })));
 const ContactsScreen = lazy(() => import('../../contacts/ContactsScreen').then((m) => ({ default: m.ContactsScreen })));
 const ShoppingListsScreen = lazy(() => import('../../supplies/ShoppingLists').then((m) => ({ default: m.ShoppingListsScreen })));
+const PhotoGuideScreen = lazy(() => import('../../workplace/PhotoGuide').then((m) => ({ default: m.PhotoGuideScreen })));
 
 class ScreenBoundary extends Component<{ children: ReactNode }, { error: Error | null; attempt: number }> {
   state = { error: null as Error | null, attempt: 0 };
@@ -161,6 +162,9 @@ export const DestinationView = memo(function DestinationView({ dest, params, ren
         break;
       case 'ShoppingLists':
         content = <ShoppingListsScreen />;
+        break;
+      case 'PhotoGuide':
+        content = <PhotoGuideScreen />;
         break;
       case 'OpeningChecklist':
         content = <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 px-4 py-4 lg:px-8"><OpeningOverview /></div>;

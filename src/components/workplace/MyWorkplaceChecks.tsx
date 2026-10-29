@@ -10,8 +10,9 @@ import { SkeletonListRows } from '../ui/skeleton';
 import { cn } from '../ui/utils';
 import { useT } from '../../utils/i18n';
 import { getTodayIST } from '../../utils/timezone';
-import { MAX_PHOTOS, photosOfView, type CheckPhoto, type MyCheck, type MyChecks } from './workplaceApi';
+import { MAX_PHOTOS, needOf, photosOfView, shotLabel, type CheckPhoto, type MyCheck, type MyChecks } from './workplaceApi';
 import { AuthedPhoto } from './AuthedPhoto';
+import { SampleTile } from './SamplePhoto';
 import { compressPhoto, fmt12, liveStatus, minToTime, nowMinutesIST, timeOfIso, toMin } from './workplaceUtils';
 import { teamWorkplaceApi } from '../team/teamApi';
 import { CheckStatusChip, HygieneChip, VERDICT_KEYS, checkName, issuesFor, scoreTone } from '../team/checks/checkParts';
@@ -21,7 +22,8 @@ import { CheckStatusChip, HygieneChip, VERDICT_KEYS, checkName, issuesFor, score
 // it afterwards, so the person keeps shooting and gets a notification when the round is checked.
 // Uploads and removals still go one at a time, in order, so two quick shots can't overwrite each
 // other's record on the server. A check can have several photos (walls, shelves, stacks of crates),
-// each retaken or removed on its own.
+// each retaken or removed on its own. Owner, 29 Oct 2026: a check can ask for several photos or
+// named shots in order (each with its sample photo from the photo guide); it is done once all are in.
 
 type Upload = { key: string; itemId: string; image: string; thumb: string; replacePhotoId?: string; state: 'sending' | 'failed'; error?: string };
 const POLL_MS = 8000;
@@ -69,8 +71,9 @@ export function MyWorkplaceChecks({ threshold }: { threshold: number }) {
   const today = getTodayIST();
   const nowMin = nowMinutesIST();
   const early = data?.earlyMinutes ?? 30;
-  const items = (data?.items || []).map((it) => ({ ...it, status: liveStatus(data!.date, today, nowMin, it.start, it.end, it.hasPhoto, it.late) }));
-  const done = items.filter((i) => i.hasPhoto).length;
+  const complete = (it: MyCheck) => photosOfView(it).length >= needOf(it);
+  const items = (data?.items || []).map((it) => ({ ...it, status: liveStatus(data!.date, today, nowMin, it.start, it.end, complete(it), it.late) }));
+  const done = items.filter(complete).length;
   const checking = items.reduce((n, it) => n + photosOfView(it).filter((p) => p.aiStatus === 'pending').length, 0);
 
   // While the AI is still looking (it answers in the background), check back now and then.
@@ -189,12 +192,41 @@ export function MyWorkplaceChecks({ threshold }: { threshold: number }) {
               const failed = mine.filter((u) => u.state === 'failed');
               const any = photos.length + mine.length > 0;
               const canAdd = !notOpen && photos.length + added.length < MAX_PHOTOS;
+              const need = needOf(it);
+              const nextIndex = photos.length + added.length;
+              const nextShot = it.shots?.[nextIndex];
+              const sampleOf = (shot?: number) => (it.samples || []).find((x) => (it.shots?.length ? x.shot === shot : true));
+              const general = it.shots?.length ? [] : it.samples || [];
+              const sampleProps = { kind: it.locationKind, locId: it.locationId, itemId: it.id };
               return (
                 <li key={it.id} className={cn('flex flex-col gap-3 rounded-lg border bg-surface p-3', flagged ? 'border-danger-border' : 'border-border')}>
                   <div className="flex min-w-0 flex-col gap-1">
                     <p className="text-body-md font-semibold text-text">{checkName(it, lang)}</p>
                     {it.hint && <p className="text-label text-text-2">{it.hint}</p>}
                     {it.coveringForName && <p className="text-label font-medium text-primary">{t('team.check.covering', { name: it.coveringForName })}</p>}
+                    {need > 1 && <p className={cn('num text-label font-medium', photos.length >= need ? 'text-success' : 'text-text')}>{t('team.check.photosNeeded', { done: Math.min(photos.length, need), need })}</p>}
+                    {!!it.shots?.length && (
+                      <ol className="mt-1 flex flex-col gap-1.5">
+                        {it.shots.map((sh, i) => {
+                          const sample = sampleOf(i);
+                          const got = photos.length > i;
+                          return (
+                            <li key={i} className="flex items-center gap-2">
+                              {got ? <CheckCircle2 className="size-5 shrink-0 text-success" aria-hidden="true" />
+                                : <span className="num flex size-5 shrink-0 items-center justify-center rounded-full border border-border-strong text-caption text-text-2">{i + 1}</span>}
+                              <span className={cn('min-w-0 flex-1 text-body-sm', got ? 'text-text-2' : 'text-text')}>{shotLabel(sh, lang)}</span>
+                              {sample && <SampleTile {...sampleProps} sampleId={sample.id} label={`${t('team.check.sample')}: ${shotLabel(sh, lang)}`} className="size-12" />}
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    )}
+                    {general.length > 0 && (
+                      <div className="mt-1 flex flex-col gap-1">
+                        <span className="text-label font-medium text-text-2">{t('team.check.likeThis')}</span>
+                        <div className="flex gap-2">{general.map((x) => <SampleTile key={x.id} {...sampleProps} sampleId={x.id} label={`${t('team.check.sample')}: ${checkName(it, lang)}`} className="size-14" />)}</div>
+                      </div>
+                    )}
                     <div className="flex flex-wrap items-center gap-1.5">
                       <CheckStatusChip status={it.status} start={it.start} end={it.end} />
                       {it.aiStatus === 'pending' ? <CheckingChip /> : <HygieneChip photo={it} threshold={threshold} />}
@@ -225,7 +257,7 @@ export function MyWorkplaceChecks({ threshold }: { threshold: number }) {
                       {canAdd && (
                         <label className={cn(TILE, 'flex cursor-pointer flex-col items-center justify-center gap-1 border-dashed border-border-strong bg-surface-2 text-text-2 outline-none focus-within:ring-2 focus-within:ring-ring hover:bg-surface-3')}>
                           <Plus className="size-6" aria-hidden="true" />
-                          <span className="text-caption font-medium">{t('team.check.addPhoto')}</span>
+                          <span className="line-clamp-2 px-1 text-center text-caption font-medium">{nextShot ? shotLabel(nextShot, lang) : t('team.check.addPhoto')}</span>
                           <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => take(it, e)} />
                         </label>
                       )}
@@ -260,7 +292,8 @@ export function MyWorkplaceChecks({ threshold }: { threshold: number }) {
                         t('team.check.opensAt', { time: fmt12(minToTime(opensAt)) })
                       ) : (
                         <>
-                          <Camera className="size-5" aria-hidden="true" /> {t('team.check.take')}
+                          <Camera className="size-5" aria-hidden="true" />
+                          {nextShot ? t('team.check.takeShot', { n: 1, label: shotLabel(nextShot, lang) }) : need > 1 ? t('team.check.takeAtLeast', { n: need }) : t('team.check.take')}
                         </>
                       )}
                       <input type="file" accept="image/*" capture="environment" className="sr-only" disabled={notOpen} onChange={(e) => take(it, e)} />

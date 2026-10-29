@@ -47,10 +47,21 @@ export function photosOfView(v: PhotoView): CheckPhoto[] {
 
 // coverId: who takes the photo on a day the assignee is on leave (empty: their incharge, or someone else there).
 // from: the first day it's due (a check added after the day's window starts the next day).
-export interface TemplateItem { id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[]; from?: string }
+// Owner, 29 Oct 2026: a check can ask for several photos (minPhotos) or named shots in order, and
+// carry sample photos (the photo guide) - per shot when it has shots.
+export interface Shot { label: string; labelBn?: string }
+export interface SampleRef { id: string; shot?: number; at?: string; by?: string }
+export interface TemplateItem {
+  id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[]; from?: string;
+  minPhotos?: number; shots?: Shot[]; samples?: SampleRef[];
+}
+// Photos a check needs before it counts as done (the server's needOf).
+export const needOf = (a: { minPhotos?: number; shots?: Shot[] }) => Math.min(MAX_PHOTOS, Math.max(1, a.shots?.length || 0, Number(a.minPhotos) || 1));
+export const shotLabel = (s: Shot | undefined, lang: string) => (s ? (lang === 'bn' && s.labelBn ? s.labelBn : s.label) : '');
 
 export interface MyCheck extends PhotoView {
   id: string; name: string; nameBn: string; hint?: string; start: string; end: string;
+  minPhotos?: number; shots?: Shot[]; samples?: SampleRef[];
   locationKind: LocationKind; locationId: string; locationName: string; status: CheckStatus;
   coveringForName?: string; // standing in for someone on leave
 }
@@ -150,3 +161,15 @@ export function loadPhotoUrl(path: string, version = ''): Promise<string> {
   }
   return p;
 }
+
+// ---- Photo guide: sample photos (owner, 29 Oct 2026) ----
+export const samplePath = (kind: string, locId: string, itemId: string, sampleId: string, thumb: boolean) =>
+  `/workplace/sample/${kind}/${encodeURIComponent(locId)}/${encodeURIComponent(itemId)}/${encodeURIComponent(sampleId)}${thumb ? '?size=thumb' : ''}`;
+// From a new photo (image + thumb), or one already taken (from).
+export const addSample = (p: { kind: LocationKind; id: string; itemId: string; shot?: number; image?: string; thumb?: string; from?: { date: string; employeeId: string; itemId: string; photoId: string } }) =>
+  call<{ item: TemplateItem }>('/workplace/sample', { method: 'POST', body: JSON.stringify(p) });
+export const removeSample = (p: { kind: LocationKind; id: string; itemId: string; sampleId: string }) =>
+  call<{ item: TemplateItem }>('/workplace/sample', { method: 'DELETE', body: JSON.stringify(p) });
+export interface GuideItem { id: string; name: string; nameBn: string; hint: string; start: string; end: string; need: number; shots: Shot[]; samples: SampleRef[]; mine: boolean }
+export interface GuidePlace { kind: LocationKind; id: string; name: string; items: GuideItem[] }
+export const getGuide = () => call<{ places: GuidePlace[]; canSetup: boolean }>('/workplace/guide');
