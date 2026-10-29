@@ -4,6 +4,7 @@
 // aiLookAtCamera) counts people and judges each item yes / no / unclear; only a clear "no" raises a
 // PPE alert. Alerts go to the place's incharge and the owner with the photo; whoever opens one
 // marks it correct, false alarm or (after hours) one of us, so we can see how well it works.
+// The operations managers get every camera's alerts too.
 // Who is there: the app's shift check-ins (movement after hours while someone is checked in there
 // is them working late, not an intruder) and face recognition on the camera PC only
 // (tools/cctv/faces.py - the face numbers never leave it; it sends the names it recognised). After
@@ -89,11 +90,14 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     if (cam.placeKind === 'store') return (await deps.kv.get<any>(`store:${cam.placeId}`))?.name || 'Store';
     return (await deps.kv.getByPrefix<any>('production_house_')).find((h) => h?.id === cam.placeId)?.name || 'Production';
   };
+  // The owner, the operations managers (owner, 29 Oct 2026: "send the notifications of these
+  // cameras to operation manager also") and the incharge of the camera's place.
   async function recipients(cam: Camera) {
     const all = await deps.getAllByPrefix('unified-employee:');
     const designation = cam.placeKind === 'store' ? 'store_incharge' : 'production_incharge';
     return all.filter((e: any) => e?.authUserId && !['inactive', 'archived'].includes(e.status) && (
       e.role === 'cluster_head'
+      || (e.role === 'manager' && !['store_incharge', 'production_incharge'].includes(e.designation))
       || (e.designation === designation && [e.storeId, e.productionHouseId, ...(e.assignedStoreIds || []), ...(e.assignedProductionHouseIds || [])].map(String).includes(cam.placeId))
     ));
   }
