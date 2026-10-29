@@ -1,10 +1,9 @@
 // The server calls the Team screens make - the same functions from utils/api.ts, kpi/kpiApi.ts
 // and workplace/workplaceApi.ts, called with the same arguments.
 //
-// One addition, for development only: the Team preview page (team-preview.html, src/gallery)
-// sets globalThis.__BUNNY_TEAM_PREVIEW__ to made-up answers so the screens can be looked at
-// without signing in. `import.meta.env.DEV` is false in a production build, so the check folds
-// away and every call goes straight to the real function.
+// One addition: the Team preview page (team-preview.html, src/gallery) and practice mode
+// (components/learn, on made-up data) set globalThis.__BUNNY_TEAM_PREVIEW__ to made-up answers. In
+// the real app neither is loaded, so every call goes straight to the real function.
 import * as api from '../../utils/api';
 import * as kpi from '../kpi/kpiApi';
 import * as wp from '../workplace/workplaceApi';
@@ -17,7 +16,7 @@ export type TeamPreviewMock = {
 };
 
 function previewMock(): TeamPreviewMock | undefined {
-  if (!import.meta.env.DEV) return undefined;
+  if (!import.meta.env.DEV && !(globalThis as { __BUNNY_PRACTICE__?: unknown }).__BUNNY_PRACTICE__) return undefined;
   return (globalThis as { __BUNNY_TEAM_PREVIEW__?: TeamPreviewMock }).__BUNNY_TEAM_PREVIEW__;
 }
 

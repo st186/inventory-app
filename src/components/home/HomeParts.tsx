@@ -6,8 +6,10 @@ import { useT, type I18nKey } from '../../utils/i18n';
 import { getNowIST, getTodayIST } from '../../utils/timezone';
 import { useForegroundInterval } from '../../utils/appVisibility';
 import { useShell } from '../shell/ShellContext';
+import { LearnCard } from '../learn/LearnScreen';
 
-/** The column every Home screen sits in: one column on phones, wider from 1024 px. */
+/** The column every Home screen sits in: one column on phones, wider from 1024 px. Learn the app's
+ *  progress card sits on top until every chapter is done (components/learn). */
 export function HomePage({ wide = false, className, children }: { wide?: boolean; className?: string; children?: ReactNode }) {
   const { lang } = useT();
   return (
@@ -19,6 +21,7 @@ export function HomePage({ wide = false, className, children }: { wide?: boolean
         className,
       )}
     >
+      <LearnCard />
       {children}
     </div>
   );

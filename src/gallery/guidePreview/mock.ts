@@ -1,7 +1,11 @@
-// Dev-only (guide-preview.html): a stand-in session and made-up answers for every server call the
-// guide's screens make, so the real app can be photographed for the how-to guides without signing
-// in. Built on the other previews' made-up data (money, stock, team); calls none of them answer are
+// Made-up answers for every server call the app's screens make, for one role. Used two ways:
+//  - guide-preview.html (dev only): a stand-in session, so the real app can be photographed for the
+//    how-to guides without signing in;
+//  - practice mode in the app (components/learn): the person's own phone runs the same screens on
+//    this data, and nothing at all goes to the server (installGuideMock's practice rules).
+// Built on the other previews' made-up data (money, stock, team); calls none of them answer are
 // answered here, and anything still unknown gets {} and a console line ("[guide] no answer").
+// Practice changes (a tick, a sent alert, an approval) are remembered until the page reloads.
 // Every name, number and amount is invented.
 import { projectId } from '../../utils/supabase/info';
 import { installMockFetch } from '../moneyPreviewData';
@@ -32,8 +36,10 @@ for (const group of Object.values(teamMock)) {
   }
 }
 
+// Practice mode: set by main.tsx before this file loads. The real session is never touched.
+const PRACTICE = (globalThis as { __BUNNY_PRACTICE__?: { persona: string } }).__BUNNY_PRACTICE__;
 const AUTH_KEY = `sb-${projectId}-auth-token`;
-if (!localStorage.getItem(AUTH_KEY)) {
+if (!PRACTICE && !localStorage.getItem(AUTH_KEY)) {
   const exp = Math.floor(Date.now() / 1000) + 7 * 86400;
   localStorage.setItem(AUTH_KEY, JSON.stringify({
     access_token: 'preview-token', refresh_token: 'preview-refresh', token_type: 'bearer', expires_in: 7 * 86400, expires_at: exp,
@@ -46,8 +52,8 @@ const at = (hhmm: string, date = today) => istIso(date, hhmm);
 
 const STORE = { kind: 'store', id: 'STORE-1', name: 'Bunny Momos 1' };
 const HOUSE = { kind: 'production', id: 'PH-1', name: 'Production house' };
-// Whose guide this is (main.tsx reads the same ?persona=).
-export const PERSONA = new URLSearchParams(location.search).get('persona') || 'store-incharge';
+// Whose guide this is (main.tsx reads the same ?persona=), or whose practice.
+export const PERSONA = PRACTICE?.persona || new URLSearchParams(location.search).get('persona') || 'store-incharge';
 const PEOPLE: Record<string, { id: string; name: string }> = {
   'store-incharge': { id: 'DEMO-22', name: 'Store Incharge' }, 'production-incharge': { id: 'DEMO-32', name: 'Production Incharge' },
   operations: { id: 'DEMO-10', name: 'Ops Manager' }, 'store-crew': { id: 'DEMO-41', name: 'Counter Crew' },
@@ -67,10 +73,11 @@ const OPENING_ITEMS = [
   ['griller', 'Griller working', 'গ্রিলার চালু', 'Equipment working', 'যন্ত্রপাতি চালু'], ['porch', 'Front porch clean, drain clear', 'সামনের জায়গা পরিষ্কার, নালা খোলা'],
   ['dustbin', 'Dustbin set up', 'ডাস্টবিন রাখা'], ['drinks', 'Water and cold drinks stocked', 'জল ও কোল্ড ড্রিংকসের স্টক'],
 ];
+const OPENING_TICKS = new Map<string, { at: string; byId: string; byName: string } | null>();
 const opening = () => {
   const items = OPENING_ITEMS.map(([id, name, nameBn, group, groupBn], i) => ({
     id, name, nameBn, ...(group ? { group, groupBn } : {}),
-    tick: i < 5 ? { at: at(`14:${String(40 + i * 2).padStart(2, '0')}`), byId: INCHARGE.id, byName: INCHARGE.name } : null,
+    tick: OPENING_TICKS.has(id) ? OPENING_TICKS.get(id)! : i < 5 ? { at: at(`14:${String(40 + i * 2).padStart(2, '0')}`), byId: INCHARGE.id, byName: INCHARGE.name } : null,
   }));
   return {
     date: today, storeId: 'STORE-1', storeName: STORE.name, doerId: INCHARGE.id, doerName: INCHARGE.name, doerAs: 'assignee', dueBy: '16:00',
@@ -91,6 +98,7 @@ const HOUSE_ALERTS = [
   supplyAlert('al4', HOUSE, 'Gas cylinder', 'out', 1, 'pcs', PEOPLE['production-incharge'], '09:05', { category: 'fuel', status: 'listed', listId: 'L-1' }),
 ];
 const ALERTS = AT_HOUSE ? HOUSE_ALERTS : AT_STORE ? STORE_ALERTS : [...STORE_ALERTS, ...HOUSE_ALERTS];
+const nowHHMM = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(11, 16);
 
 // Tomorrow's shopping list: operations writes it at night, the production incharge buys it in the morning.
 const line = (id: string, item: string, qty: number, unit: string, vendor: [string, string] | null, extra: Record<string, unknown> = {}) => ({
@@ -134,7 +142,7 @@ const VENDORS = [
 ].map((v) => ({ ...v, createdAt: at('10:00', addDays(today, -20)), updatedAt: at('10:00', addDays(today, -2)) }));
 
 // One check on an expense: tandoori masala logged for the store, which buys it for the production house.
-const FLAGS = [
+let FLAGS = [
   {
     id: 'x1:place', expenseId: 'x1', expenseKey: 'inventory:u:x1', source: 'inventory', kind: 'place', date: addDays(today, -1), place: 'store:STORE-1',
     title: 'Not usually bought here', message: 'Tandoori masala is bought for Production house (4 times in 90 days), never for Bunny Momos 1. If it was bought for Production house, delete it here and log it there.',
@@ -279,6 +287,19 @@ export const STORE_MY_CHECKS = {
     };
   }),
 };
+// Approvals: an approved or rejected timesheet or leave stays decided (practice).
+const DECIDED = new Map<string, string>();
+const apiGroup = (teamMock as Record<string, Record<string, (...a: unknown[]) => unknown>>).api;
+if (apiGroup) {
+  const decide = (status: string) => async (id: unknown) => { DECIDED.set(String(id), status); };
+  const withDecided = (fn: (...a: unknown[]) => unknown) => async (...a: unknown[]) =>
+    ((await fn(...a)) as { id: string; status: string }[]).map((x) => (DECIDED.has(x.id) ? { ...x, status: DECIDED.get(x.id)! } : x));
+  for (const name of ['getTimesheets', 'getLeaves', 'getAllLeaves']) if (apiGroup[name]) apiGroup[name] = withDecided(apiGroup[name]);
+  apiGroup.approveTimesheet = decide('approved');
+  apiGroup.rejectTimesheet = decide('rejected');
+  apiGroup.approveLeave = decide('approved');
+  apiGroup.rejectLeave = decide('rejected');
+}
 const workplaceGroup = (teamMock as Record<string, Record<string, (...a: unknown[]) => unknown>>).workplace;
 if (workplaceGroup && (AT_HOUSE || PERSONA === 'store-crew')) {
   const names = new Map([...HOUSE_CHECKS, ...STORE_CHECKS].map(([id, name]) => [id, name]));
@@ -335,6 +356,12 @@ export const guideRoutes: Route[] = [
   { method: 'GET', re: /\/app-version$/, reply: () => ({ latestVersion: null, features: [] }) },
   { method: 'GET', re: /\/opening-checklist\/today$/, reply: () => ({ date: today, mine: PERSONA === 'store-incharge' ? [opening()] : [], ...(LEADS ? { overview: [opening()] } : {}) }) },
   {
+    method: 'POST', re: /\/opening-checklist\/tick$/, reply: (_m, b) => {
+      OPENING_TICKS.set(b.itemId, b.done ? { at: new Date().toISOString(), byId: ME.id, byName: ME.name } : null);
+      return { checklist: opening() };
+    },
+  },
+  {
     method: 'GET', re: /\/shift\/cover-today$/, reply: () => (PERSONA === 'operations'
       ? { setUp: true, date: today, cover: true, reasons: ['Counter Crew on leave'], storeId: 'STORE-1', storeName: STORE.name, start: '17:00', end: '22:00', productionEnd: '16:30', punch: null }
       : { setUp: false, date: today, cover: false, reasons: [] }),
@@ -348,6 +375,21 @@ export const guideRoutes: Route[] = [
   },
   { method: 'GET', re: /\/supply-vendors$/, reply: () => ({ vendors: VENDORS, specs: [] }) },
   { method: 'GET', re: /\/supply-alerts$/, reply: () => ({ alerts: ALERTS, canManage: LEADS, myPlace: AT_HOUSE ? HOUSE : AT_STORE ? STORE : null, ...(LEADS ? { places: [STORE, HOUSE] } : {}) }) },
+  {
+    method: 'POST', re: /\/supply-alerts$/, reply: (_m, b) => {
+      const place = b.placeKind === 'production' ? HOUSE : b.placeKind === 'store' ? STORE : AT_HOUSE ? HOUSE : STORE;
+      const alert = supplyAlert(`al-${Date.now()}`, place, b.item || 'Item', b.level === 'out' ? 'out' : 'low', b.qty ?? null, b.unit ?? null, ME, nowHHMM(), b.note ? { note: b.note } : {});
+      ALERTS.unshift(alert);
+      return { alert, merged: false };
+    },
+  },
+  {
+    method: 'POST', re: /\/supply-alerts\/([^/]+)\/close$/, reply: (m, b) => {
+      const alert = ALERTS.find((a) => a.id === decodeURIComponent(m[1]));
+      if (alert) Object.assign(alert, { status: b.outcome === 'dropped' ? 'dropped' : 'done', updatedAt: new Date().toISOString() });
+      return { alert };
+    },
+  },
   {
     // The photo checklist each place uses (Setup), with who does it.
     method: 'GET', re: /\/workplace\/template$/, reply: (_m, _b, url) => {
@@ -367,6 +409,9 @@ export const guideRoutes: Route[] = [
   { method: 'GET', re: /\/production-flags$/, reply: () => ({ flags: [] }) },
   { method: 'GET', re: /\/complaints$/, reply: () => ({ complaints: [] }) },
   { method: 'GET', re: /\/expense-flags$/, reply: () => ({ flags: AT_HOUSE ? [] : FLAGS }) },
+  // A flag answered, or its entry deleted, is done with.
+  { method: 'POST', re: /\/expense-flags\/([^/]+)\/[a-z-]+$/, reply: (m) => { FLAGS = FLAGS.filter((f) => f.id !== decodeURIComponent(m[1])); return { success: true }; } },
+  { method: 'DELETE', re: /\/(?:inventory|overheads)\/([^/?]+)/, reply: (m) => { FLAGS = FLAGS.filter((f) => f.expenseId !== decodeURIComponent(m[1])); return { success: true }; } },
   { method: 'GET', re: /\/repair-alerts$/, reply: () => ({ alerts: [] }) },
 ];
 
@@ -377,13 +422,16 @@ export function installGuideMock() {
   const moneyFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
     if (!href.includes('/functions/v1/')) {
-      if (href.includes('/auth/v1/')) return json({});
+      // Practice: the person's real sign-in keeps refreshing (so they are still signed in after),
+      // and nothing else reaches the server - no table, no storage, no upload anywhere.
+      if (href.includes('/auth/v1/')) return PRACTICE ? moneyFetch(input, init) : json({});
+      if (PRACTICE && (href.includes('supabase.co') || method !== 'GET')) return json({});
       return moneyFetch(input, init);
     }
     const url = new URL(href, location.href);
     const path = url.pathname.replace(/^.*make-server-c2dd9b9d/, '');
-    const method = (init?.method || 'GET').toUpperCase();
     let body: any = null;
     try { body = init?.body ? JSON.parse(String(init.body)) : null; } catch { body = null; }
     for (const route of [...guideRoutes, ...stockRoutes]) {

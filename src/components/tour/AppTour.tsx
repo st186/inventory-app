@@ -1,6 +1,7 @@
 // The app tour (owner, 29 Oct 2026): on someone's first open it walks them round their own app -
 // Home's cards, each tab, the top bar - in English and Bengali; More/Me › App tour plays it again.
-// "Seen" is kept on the phone per login, so it shows once per person per device.
+// "Seen" is kept on the phone per login, so it shows once per person per device. For a role with
+// Learn the app chapters (components/learn), chapter 1 takes its place on the first open.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '../../utils/i18n';
 import { CoachMarks, firstVisible, type CoachStep } from '../ui/coach-marks';
@@ -13,11 +14,11 @@ export function startAppTour() {
   window.dispatchEvent(new Event(START));
 }
 
-const seenKey = (who: string) => `bunny-tour:v1:${who}`;
+export const seenKey = (who: string) => `bunny-tour:v1:${who}`;
 // The dev previews (*-preview.html) never start it on their own.
-const autoOff = () => /-preview\.html$/.test(window.location.pathname);
+export const autoOff = () => /-preview\.html$/.test(window.location.pathname);
 
-function Title({ text }: { text: Two }) {
+export function Title({ text }: { text: Two }) {
   return (
     <>
       <span lang="en">{text.en}</span>
@@ -25,7 +26,7 @@ function Title({ text }: { text: Two }) {
     </>
   );
 }
-function Body({ text }: { text: Two }) {
+export function Body({ text }: { text: Two }) {
   return (
     <>
       <p lang="en" className="text-text">{text.en}</p>
@@ -34,7 +35,8 @@ function Body({ text }: { text: Two }) {
   );
 }
 
-export function AppTour() {
+/** auto: start by itself on someone's first open (off where Learn the app's chapter 1 does that). */
+export function AppTour({ auto = true }: { auto?: boolean }) {
   const { nav, router, user, preview } = useShell();
   const { t } = useT();
   const [open, setOpen] = useState(false);
@@ -69,7 +71,7 @@ export function AppTour() {
 
   // First open: once per person on this phone.
   useEffect(() => {
-    if (preview || autoOff()) return;
+    if (!auto || preview || autoOff()) return;
     let seen = true;
     try { seen = !!window.localStorage.getItem(seenKey(who)); } catch { /* storage off: don't nag */ }
     if (seen) return;
@@ -77,7 +79,7 @@ export function AppTour() {
     // and gets the tour on a later open.
     const timer = window.setTimeout(() => { if (routerRef.current.route.path === 'home') begin(); }, 1800);
     return () => window.clearTimeout(timer);
-  }, [preview, who, begin]);
+  }, [auto, preview, who, begin]);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -92,10 +94,4 @@ export function AppTour() {
       labels={{ next: t('tour.next'), back: t('tour.back'), skip: t('tour.skip'), done: t('tour.done'), step: (i, n) => t('tour.step', { n: i, total: n }) }}
     />
   );
-}
-
-/** More/Me › App tour opened as a page (a link or the desktop sidebar): play the tour. */
-export function AppTourLauncher() {
-  useEffect(() => { startAppTour(); }, []);
-  return null;
 }

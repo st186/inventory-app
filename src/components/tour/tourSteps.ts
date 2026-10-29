@@ -73,8 +73,8 @@ export function tourSteps(nav: NavModel): TourStep[] {
     id: 'again', selector: `[data-tour="tab-${list}"]`,
     title: b('See this again any time', 'আবার দেখতে চাইলে'),
     body: list === 'me'
-      ? b('Open Me › App tour to play this tour again.', 'Me › App tour খুলে এই পরিচিতি আবার দেখুন।')
-      : b('Open More › App tour to play this tour again.', 'More › App tour খুলে এই পরিচিতি আবার দেখুন।'),
+      ? b('Open Me › Learn the app to play this tour again.', 'Me › Learn the app খুলে এই পরিচিতি আবার দেখুন।')
+      : b('Open More › Learn the app to play this tour again.', 'More › Learn the app খুলে এই পরিচিতি আবার দেখুন।'),
   });
   return steps;
 }
