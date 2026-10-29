@@ -14,7 +14,7 @@ import { useStockRequests, type StockRequestsProps } from './stock/useStockReque
 import { StoreRequestForm } from './stock/StoreRequestForm';
 import { RequestStatusCard } from './stock/RequestStatusCard';
 import { RequestDetailBody } from './stock/RequestDetail';
-import { ProductionQueue, MomoTotalsToday, RequestRow } from './stock/ProductionQueue';
+import { ProductionQueue, MomoTotalsToday, ExtrasToday, RequestRow } from './stock/ProductionQueue';
 import { RequestSheet } from './stock/RequestSheet';
 import { AllRequests, RequestOversight } from './stock/RequestHistory';
 import { StoreStockOnHand, StockJobs } from './stock/StockStatusSection';
@@ -126,6 +126,7 @@ export function ProductionRequests(props: ProductionRequestsProps) {
           </div>
           <div className="flex min-w-0 flex-col gap-6">
             <MomoTotalsToday vm={vm} />
+            <ExtrasToday vm={vm} />
             <StoreStockOnHand vm={vm} />
             <StockJobs vm={vm} />
             <AllRequests vm={vm} />

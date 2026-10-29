@@ -5,6 +5,9 @@ import { Toaster } from '../components/ui/sonner';
 import { ConfirmProvider } from '../components/ui/confirm';
 import '../styles/fonts.css';
 import '../index.css';
+import { installPerfPreviewMock } from './perfPreviewMock';
+
+installPerfPreviewMock();
 
 createRoot(document.getElementById('root')!).render(
   <>

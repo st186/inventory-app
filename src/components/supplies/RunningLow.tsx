@@ -44,7 +44,7 @@ export function RunningLowCard() {
   const statusText = (a: api.SupplyAlert) => t(`supply.status.${a.status}`);
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+    <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" data-tour="low">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <PackageMinus className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden="true" />

@@ -1,15 +1,18 @@
 // The figures behind the stock request screen, moved out of the JSX they used to be worked out
 // in (ProductionRequests.tsx before the new look) with the same rules, so they can be checked:
-// the store's stock on hand this month, and the "requests by momo type" report.
+// the store's stock on hand, and the "requests by momo type" report.
 import { getStockFilterRange, type StockFilterPreset } from './requestPeriods';
+import { salesPieces, storeExpected, type Baseline } from './countMath';
+import { sumShippedPieces } from './recalibrationMath';
+import { RECEIVED_STATUSES, receivedAtIST } from '../../utils/requestStock';
 
 export type FinishedProduct = { key: string; camelKey: string; label: string; legacySalesKey: string; unit?: string };
 type Row = Record<string, any>;
 
 // ---------------------------------------------------------------------------------------------
-// Store stock on hand: opening balance (last count on or before the 1st) + received this month
-// (shipped amounts of delivered requests) - sold this month; a count made during the month
-// replaces the opening balance from its date on.
+// Store stock on hand: each store's last stock count that wasn't rejected + momos delivered since
+// - sold since - wastage logged since (countMath.storeExpected, the figure the stock count expects).
+// Received and sold are also shown for this month, with the opening being what that leaves.
 
 export type StoreStockLine = { camelKey: string; label: string; received: number; sold: number; stock: number; opening: number; totalAvailable: number };
 export type StoreStockResult = {
@@ -18,120 +21,55 @@ export type StoreStockResult = {
   lines: StoreStockLine[];
   totalStockSum: number;
 };
+/** A store's starting point for On hand (useStockRequests). */
+export type StoreBase = { storeId: string; base: Baseline; wastage: Row[] };
 
 export function computeStoreStock({
   productionRequests,
   salesData,
   finishedProducts,
-  storeOpeningBalance,
-  mostRecentRecalibration,
+  storeBases,
   matchesStoreScope,
 }: {
   productionRequests: Row[];
   salesData: Row[];
   finishedProducts: FinishedProduct[];
   /** null while it is still loading. */
-  storeOpeningBalance: Record<string, number> | null;
-  mostRecentRecalibration: { date: string; stock: Record<string, number> } | null;
+  storeBases: StoreBase[] | null;
   matchesStoreScope: (storeId?: string | null) => boolean;
 }): StoreStockResult | null {
   const { start: rangeStart, end: rangeEnd } = getStockFilterRange('thisMonth', { from: '', to: '' });
-  const inRange = (dateStr: string | undefined) => !!dateStr && dateStr.substring(0, 10) >= rangeStart && dateStr.substring(0, 10) <= rangeEnd;
+  // Not shown until the counts have loaded.
+  if (storeBases === null) return null;
+  const inRange = (day: string | null | undefined) => !!day && day.substring(0, 10) >= rangeStart && day.substring(0, 10) <= rangeEnd;
 
-  const deliveredRequests = productionRequests.filter((req) => {
-    // Only delivered / part delivered requests have reached the store.
-    if (req.status !== 'delivered' && req.status !== 'partially-delivered') return false;
-    const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
-    if (!inRange(deliveryDate)) return false;
-    // Momos delivered to an event stall (events.ts) are the event's stock, not a store's.
-    if (req.eventId) return false;
-    return matchesStoreScope(req.storeId);
-  });
-
-  // The shipped amount when the ship step recorded one, else what was asked for.
-  const totalReceived = deliveredRequests.reduce((acc: Record<string, number>, req) => {
-    finishedProducts.forEach(({ camelKey }) => {
-      const shipped = req.shippedQuantities?.[camelKey];
-      const newFormat = req[camelKey] || 0;
-      const oldFormat = req[camelKey + 's'] || 0;
-      const value = shipped !== undefined ? shipped : newFormat + oldFormat;
-      acc[camelKey] = (acc[camelKey] || 0) + value;
-    });
-    return acc;
-  }, {});
-
-  const storeSales = salesData.filter((s) => inRange(s.date) && matchesStoreScope(s.storeId));
-  const salesOf = (sale: Row, legacySalesKey: string) => {
-    let salesValue = sale.data?.[legacySalesKey] || 0;
-    // Older records spell it "Corn Cheese Momos".
-    if (legacySalesKey === 'Cheese Corn Momos' && salesValue === 0) salesValue = sale.data?.['Corn Cheese Momos'] || 0;
-    return salesValue;
-  };
-  const totalSales = storeSales.reduce((acc: Record<string, number>, sale) => {
-    finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
-      acc[camelKey] = (acc[camelKey] || 0) + salesOf(sale, legacySalesKey);
-    });
-    return acc;
-  }, {});
-
-  const openingBalance = storeOpeningBalance || finishedProducts.reduce((acc: Record<string, number>, { camelKey }) => {
-    acc[camelKey] = 0;
-    return acc;
-  }, {});
-
-  // Not shown until the opening balance has loaded.
-  if (storeOpeningBalance === null) return null;
-
-  const storeStock: Record<string, number> = {};
-  if (mostRecentRecalibration) {
-    // A count during the month: count + received after it - sold from its day on (sales have
-    // no time, so the count's own day counts as after).
-    const recalDateOnly = mostRecentRecalibration.date.substring(0, 10);
-    const receivedAfterRecal: Record<string, number> = {};
-    const soldAfterRecal: Record<string, number> = {};
-    deliveredRequests.forEach((req) => {
-      const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
-      const deliveryDateOnly = deliveryDate ? deliveryDate.substring(0, 10) : '';
-      if (deliveryDateOnly && deliveryDateOnly > recalDateOnly) {
-        finishedProducts.forEach(({ camelKey }) => {
-          const shipped = req.shippedQuantities?.[camelKey];
-          const value = shipped !== undefined ? shipped : req[camelKey] || 0;
-          receivedAfterRecal[camelKey] = (receivedAfterRecal[camelKey] || 0) + value;
-        });
-      }
-    });
-    storeSales.forEach((sale) => {
-      const saleDateOnly = sale.date ? sale.date.substring(0, 10) : '';
-      if (saleDateOnly && saleDateOnly >= recalDateOnly) {
-        finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
-          soldAfterRecal[camelKey] = (soldAfterRecal[camelKey] || 0) + salesOf(sale, legacySalesKey);
-        });
-      }
-    });
-    finishedProducts.forEach(({ camelKey }) => {
-      storeStock[camelKey] = (mostRecentRecalibration.stock[camelKey] || 0) + (receivedAfterRecal[camelKey] || 0) - (soldAfterRecal[camelKey] || 0);
-    });
-  } else {
-    finishedProducts.forEach(({ camelKey }) => {
-      storeStock[camelKey] = (openingBalance[camelKey] || 0) + (totalReceived[camelKey] || 0) - (totalSales[camelKey] || 0);
-    });
+  // This month, by India delivery day: shipped amounts of delivered requests (event stalls' are theirs).
+  const monthReceived = sumShippedPieces(productionRequests.filter((req) =>
+    RECEIVED_STATUSES.includes(req.status) && !req.eventId && matchesStoreScope(req.storeId) && inRange(receivedAtIST(req))));
+  const monthSold: Record<string, number> = {};
+  for (const sale of salesData) {
+    if (!inRange(sale.date) || !matchesStoreScope(sale.storeId)) continue;
+    for (const { camelKey } of finishedProducts) monthSold[camelKey] = (monthSold[camelKey] || 0) + salesPieces(sale, camelKey);
   }
 
-  const totalReceivedSum = Object.values(totalReceived).reduce((sum, val) => sum + val, 0);
-  const totalOpeningBalanceSum = Object.values(openingBalance).reduce((sum, val) => sum + val, 0);
-  const totalRecalibrationSum = mostRecentRecalibration
-    ? Object.values(mostRecentRecalibration.stock || {}).reduce((sum: number, val: any) => sum + val, 0)
-    : 0;
+  const stock: Record<string, number> = {};
+  for (const { storeId, base, wastage } of storeBases) {
+    const { expected } = storeExpected({ base, storeId, requests: productionRequests, sales: salesData, wastage });
+    for (const { camelKey } of finishedProducts) stock[camelKey] = (stock[camelKey] || 0) + (expected[camelKey] || 0);
+  }
 
+  const lines = finishedProducts.map(({ camelKey, label }) => {
+    const received = monthReceived[camelKey] || 0;
+    const sold = monthSold[camelKey] || 0;
+    const now = stock[camelKey] || 0;
+    const opening = now - received + sold;
+    return { camelKey, label, received, sold, stock: now, opening, totalAvailable: opening + received };
+  });
   return {
     rangeStart,
     rangeEnd,
-    totalStockSum: totalReceivedSum + totalOpeningBalanceSum + totalRecalibrationSum,
-    lines: finishedProducts.map(({ camelKey, label }) => {
-      const received = totalReceived[camelKey] || 0;
-      const opening = openingBalance[camelKey] || 0;
-      return { camelKey, label, received, sold: totalSales[camelKey] || 0, stock: storeStock[camelKey] || 0, opening, totalAvailable: opening + received };
-    }),
+    totalStockSum: lines.reduce((sum, l) => sum + l.received + Math.abs(l.stock) + Math.max(0, l.opening), 0),
+    lines,
   };
 }
 
@@ -171,91 +109,48 @@ export function computeMomoTypeReport({
   customRange: { from: string; to: string };
   now?: Date;
 }): MomoTypeReport {
-  const today = now.toISOString().split('T')[0];
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  const thisWeekStart = new Date(now);
-  thisWeekStart.setDate(now.getDate() - now.getDay());
-  thisWeekStart.setHours(0, 0, 0, 0);
-  const lastWeekStart = new Date(thisWeekStart);
-  lastWeekStart.setDate(thisWeekStart.getDate() - 7);
-  const lastWeekEnd = new Date(thisWeekStart);
-  lastWeekEnd.setDate(thisWeekStart.getDate() - 1);
-  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-
-  let filteredForCards = requests;
-  let periodLabel = '';
-  const between = (a: Date, b: Date) => requests.filter((r) => {
-    const reqDate = new Date(r.requestDate);
-    return reqDate >= a && reqDate <= b;
+  // India days (YYYY-MM-DD, like requestDate), whatever the phone's clock zone: by the UTC date it is
+  // still yesterday until 5:30 AM, which showed yesterday's request as "Today" (owner, 29 Oct 2026).
+  const today = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
+  const shift = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+  const monthStart = (back: number) => { const d = new Date(`${today.slice(0, 7)}-01T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - back); return d.toISOString().slice(0, 10); };
+  const monthEnd = (back: number) => shift(monthStart(back - 1), -1);
+  const yesterday = shift(today, -1);
+  const weekStart = shift(today, -new Date(`${today}T00:00:00Z`).getUTCDay()); // Sunday
+  const dayOfMonth = Number(today.slice(8, 10));
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const between = (a: string, b: string) => requests.filter((r) => {
+    const day = String(r.requestDate || '').slice(0, 10);
+    return day >= a && day <= b;
   });
-  if (filter === 'today') {
-    filteredForCards = requests.filter((r) => r.requestDate === today);
-    periodLabel = 'Today';
-  } else if (filter === 'yesterday') {
-    filteredForCards = requests.filter((r) => r.requestDate === yesterday);
-    periodLabel = 'Yesterday';
-  } else if (filter === 'thisWeek') {
-    filteredForCards = between(thisWeekStart, now);
-    periodLabel = 'This Week';
-  } else if (filter === 'lastWeek') {
-    filteredForCards = between(lastWeekStart, lastWeekEnd);
-    periodLabel = 'Last Week';
-  } else if (filter === 'thisMonth') {
-    filteredForCards = between(thisMonthStart, now);
-    periodLabel = 'This Month';
-  } else if (filter === 'lastMonth') {
-    filteredForCards = between(lastMonthStart, lastMonthEnd);
-    periodLabel = 'Last Month';
-  } else if (filter === 'custom') {
-    filteredForCards = between(new Date(customRange.from), new Date(customRange.to));
-    periodLabel = `${customRange.from} to ${customRange.to}`;
-  }
 
-  let comparisonFilteredRequests: Row[] = [];
-  let comparisonLabel = '';
-  if (filter === 'today') {
-    comparisonFilteredRequests = requests.filter((r) => r.requestDate === yesterday);
-    comparisonLabel = 'vs Yesterday';
-  } else if (filter === 'yesterday') {
-    const dayBeforeYesterday = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    comparisonFilteredRequests = requests.filter((r) => r.requestDate === dayBeforeYesterday);
-    comparisonLabel = 'vs Day Before';
-  } else if (filter === 'thisWeek') {
-    const prevWeekStart = new Date(thisWeekStart);
-    prevWeekStart.setDate(thisWeekStart.getDate() - 7);
-    const prevWeekEnd = new Date(thisWeekStart);
-    prevWeekEnd.setDate(thisWeekStart.getDate() - 1);
-    comparisonFilteredRequests = between(prevWeekStart, prevWeekEnd);
-    comparisonLabel = 'vs Last Week';
-  } else if (filter === 'lastWeek') {
-    const weekBefore = new Date(lastWeekStart);
-    weekBefore.setDate(lastWeekStart.getDate() - 7);
-    const weekBeforeEnd = new Date(lastWeekStart);
-    weekBeforeEnd.setDate(lastWeekStart.getDate() - 1);
-    comparisonFilteredRequests = between(weekBefore, weekBeforeEnd);
-    comparisonLabel = 'vs Week Before';
-  } else if (filter === 'thisMonth') {
-    const currentDayOfMonth = now.getDate();
-    comparisonFilteredRequests = between(new Date(now.getFullYear(), now.getMonth() - 1, 1), new Date(now.getFullYear(), now.getMonth() - 1, currentDayOfMonth));
-    comparisonLabel = `vs Last Month (Day 1-${currentDayOfMonth})`;
-  } else if (filter === 'lastMonth') {
-    const lastMonthDays = lastMonthEnd.getDate();
-    comparisonFilteredRequests = between(new Date(now.getFullYear(), now.getMonth() - 2, 1), new Date(now.getFullYear(), now.getMonth() - 2, lastMonthDays));
-    comparisonLabel = `vs Month Before (Day 1-${lastMonthDays})`;
-  } else if (filter === 'custom') {
-    const customStart = new Date(customRange.from);
-    const customEnd = new Date(customRange.to);
-    const daysDiff = Math.ceil((customEnd.getTime() - customStart.getTime()) / (1000 * 60 * 60 * 24));
-    const comparisonStart = new Date(customStart);
-    comparisonStart.setDate(customStart.getDate() - daysDiff - 1);
-    const comparisonEnd = new Date(customStart);
-    comparisonEnd.setDate(customStart.getDate() - 1);
-    comparisonFilteredRequests = between(comparisonStart, comparisonEnd);
-    comparisonLabel = 'vs Previous Period';
-  }
+  // [period, period before] for each choice.
+  const ranges: Record<StockFilterPreset, { label: string; from: string; to: string; cmpLabel: string; cmpFrom: string; cmpTo: string }> = {
+    today: { label: 'Today', from: today, to: today, cmpLabel: 'vs Yesterday', cmpFrom: yesterday, cmpTo: yesterday },
+    yesterday: { label: 'Yesterday', from: yesterday, to: yesterday, cmpLabel: 'vs Day Before', cmpFrom: shift(today, -2), cmpTo: shift(today, -2) },
+    thisWeek: { label: 'This Week', from: weekStart, to: today, cmpLabel: 'vs Last Week', cmpFrom: shift(weekStart, -7), cmpTo: shift(weekStart, -1) },
+    lastWeek: { label: 'Last Week', from: shift(weekStart, -7), to: shift(weekStart, -1), cmpLabel: 'vs Week Before', cmpFrom: shift(weekStart, -14), cmpTo: shift(weekStart, -8) },
+    thisMonth: {
+      label: 'This Month', from: monthStart(0), to: today, cmpLabel: `vs Last Month (Day 1-${dayOfMonth})`,
+      cmpFrom: monthStart(1), cmpTo: [shift(monthStart(1), dayOfMonth - 1), monthEnd(1)].sort()[0],
+    },
+    lastMonth: {
+      label: 'Last Month', from: monthStart(1), to: monthEnd(1), cmpLabel: `vs Month Before (Day 1-${Number(monthEnd(1).slice(8, 10))})`,
+      cmpFrom: monthStart(2), cmpTo: monthEnd(2),
+    },
+    custom: (() => {
+      const base = { label: `${customRange.from} to ${customRange.to}`, from: customRange.from, to: customRange.to, cmpLabel: 'vs Previous Period' };
+      // No dates picked yet: nothing to compare (and no date maths on blanks).
+      if (!DAY.test(customRange.from) || !DAY.test(customRange.to)) return { ...base, cmpFrom: '', cmpTo: '' };
+      const days = Math.max(0, Math.round((Date.parse(`${customRange.to}T00:00:00Z`) - Date.parse(`${customRange.from}T00:00:00Z`)) / 86400000));
+      return { ...base, cmpFrom: shift(customRange.from, -days - 1), cmpTo: shift(customRange.from, -1) };
+    })(),
+  };
+  const range = ranges[filter];
+  const filteredForCards = range ? between(range.from, range.to) : requests;
+  const periodLabel = range?.label || '';
+  const comparisonFilteredRequests = range ? between(range.cmpFrom, range.cmpTo) : [];
+  const comparisonLabel = range?.cmpLabel || '';
 
   const totalsRequested: Record<string, number> = {};
   const totalsDelivered: Record<string, number> = {};

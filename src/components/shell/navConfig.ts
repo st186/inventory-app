@@ -86,7 +86,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance' | 'payslips' | 'performance' | 'cameras';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -120,6 +120,14 @@ export type ScreenSpec =
   | { screen: 'Complaints' }
   | { screen: 'SiteAudits' }
   | { screen: 'OpeningChecklist' }
+  | { screen: 'Contacts' }
+  | { screen: 'Compliance' }
+  | { screen: 'Payslips' }
+  | { screen: 'Performance' }
+  | { screen: 'Cameras' }
+  | { screen: 'AppTour' }
+  | { screen: 'ShoppingLists' }
+  | { screen: 'PhotoGuide' }
   | { screen: 'AuditDashboard'; view: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll' };
 
 /** Counts shown on a tab (only where the data is already loaded by App.tsx). */
@@ -383,6 +391,22 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   if (kind === 'owner' || kind === 'ops') add('audits', 'more.audits', 'audit', { screen: 'SiteAudits' }, null, 'audits');
   // Store opening checklist: progress, picking who opens, and Set up (owner, 28 Oct 2026).
   if (kind === 'owner' || kind === 'ops') add('opening', 'more.opening', 'audit', { screen: 'OpeningChecklist' }, null, 'opening');
+  // Compliance calendar (owner, 29 Oct 2026): licences, safety checks and certificates with their due dates.
+  if (kind === 'owner' || kind === 'ops') add('compliance', 'more.compliance', 'compliance', { screen: 'Compliance' }, null, 'compliance');
+  // Payslips and monthly performance notes (owner, 29 Oct 2026): every staff member downloads their
+  // payslips again and reads their notes here; managers and the owner write the notes.
+  if (kind !== 'owner') add('payslips', 'more.payslips', 'payslips', { screen: 'Payslips' }, null, 'payslips');
+  add('performance', 'more.performance', 'performance', { screen: 'Performance' }, null, 'performance');
+  // Cameras (owner, 29 Oct 2026): PPE and after-hours alerts with photos; incharges see their place's.
+  if (kind === 'owner' || kind === 'ops' || kind === 'store-incharge' || kind === 'production-incharge') add('cameras', 'more.cameras', 'cameras', { screen: 'Cameras' }, null, 'cameras');
+  // Emergency contacts (owner, 29 Oct 2026): everyone can find and call a number; the owner, ops and incharges keep it up to date.
+  add('contacts', 'more.contacts', 'contacts', { screen: 'Contacts' }, null, 'contacts');
+  // App tour (owner, 29 Oct 2026): plays the first-open walk-through again.
+  add('tour', 'more.tour', 'tour', { screen: 'AppTour' }, null, 'tour');
+  // Shopping lists: each list's timeline - sent, reached the shopper, vendors, shopping, prices (owner, 29 Oct 2026).
+  if (kind === 'owner' || kind === 'ops') add('shopping', 'more.shopping', 'expenses', { screen: 'ShoppingLists' }, null, 'shopping');
+  // Photo guide: how each workplace photo should look, with sample photos (owner, 29 Oct 2026).
+  if (can.workplace && kind !== 'rider') add('photo-guide', 'more.photoGuide', 'checks', { screen: 'PhotoGuide' }, null, 'photo-guide');
 
   // --- Tabs and the More / Me lists (design review b4) -----------------------------------------
   const has = (path: string) => !!destinations[path];
@@ -409,10 +433,11 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events', 'complaints', 'audits', 'opening'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening', 'compliance', 'performance', 'cameras'),
       group('more.assets', 'equipment', 'investments'),
-      group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'recipes-costs'),
+      group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'photo-guide', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
+      group('more.help', 'contacts', 'tour'),
     ];
   } else if (kind === 'ops') {
     add('more', 'nav.more', 'more', moreSpec, null);
@@ -424,10 +449,11 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'my-kpis'),
+      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'compliance', 'my-kpis', 'payslips', 'performance', 'cameras'),
       group('more.assets', 'equipment'),
-      group('more.setup', 'items', 'hierarchy', 'workplace-setup'),
+      group('more.setup', 'items', 'hierarchy', 'workplace-setup', 'photo-guide'),
       group('more.data', 'reports', 'audit-report'),
+      group('more.help', 'contacts', 'tour'),
     ];
   } else if (kind === 'store-incharge' || kind === 'production-incharge') {
     add('me', 'nav.me', 'me', moreSpec, null);
@@ -441,9 +467,10 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('me', 'nav.me', 'me', []),
     ];
     more = [
-      group('more.myWork', 'my-pay', 'my-attendance', 'my-kpis', 'my-checks'),
+      group('more.myWork', 'my-pay', 'payslips', 'performance', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide'),
       // Manage Items stays reachable by link only on employee logins, as before.
-      group('more.business', 'insights', ...(staff ? [] : ['items']), 'equipment', 'reports', ...(staff ? [] : ['audit-report'])),
+      group('more.business', 'insights', ...(staff ? [] : ['items']), 'equipment', 'cameras', 'reports', ...(staff ? [] : ['audit-report'])),
+      group('more.help', 'contacts', 'tour'),
     ];
   } else if (kind === 'crew') {
     add('me', 'nav.me', 'me', moreSpec, null);
@@ -453,7 +480,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
     ];
-    more = [group('more.myWork', 'my-attendance', 'my-kpis', 'my-checks', 'recipes')];
+    more = [group('more.myWork', 'payslips', 'performance', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide', 'recipes'), group('more.help', 'contacts', 'tour')];
   } else if (kind === 'rider') {
     add('me', 'nav.me', 'me', moreSpec, null);
     // Rides: history and payments (WP7); Home keeps the current ride.
@@ -465,7 +492,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('me', 'nav.me', 'me', []),
     ];
     // Riders are paid per trip: no KPIs (owner, 28 Oct 2026).
-    more = [group('more.myWork', 'rider-profile')];
+    more = [group('more.myWork', 'rider-profile', 'payslips', 'performance'), group('more.help', 'contacts', 'tour')];
   }
 
   const finalTabs = tabs.filter((t): t is NavTab => !!t);

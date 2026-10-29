@@ -11,6 +11,7 @@
 
 import Anthropic from 'npm:@anthropic-ai/sdk';
 import { addDaysISO as eventDay, STAFF_WINDOW_AFTER_DAYS, STAFF_WINDOW_BEFORE_DAYS } from './eventRules.ts';
+import { BIG_BUY_REASONS } from './bigBuyReasons.ts';
 import {
   FORECAST_TYPES, forecastDays, learnEffects, prepareHistory, addDaysISO, weekdayOf, WEEKDAY_SHORT,
   backtest, summarizeAccuracy, tuneSettings, roundUpToBag,
@@ -332,7 +333,9 @@ const VOICE_PROMPT = `You turn one spoken sentence from staff at Bunny Momos, a 
 
 Numbers: Bengali digits ০১২৩৪৫৬৭৮৯ are 0-9. Number words: এক 1, দুই/দু 2, তিন 3, চার 4, পাঁচ 5, ছয় 6, সাত 7, আট 8, নয় 9, দশ 10, বিশ 20, পঞ্চাশ 50, একশো/শো 100, হাজার 1000 (তিন হাজার চারশো = 3400); দেড় 1.5, আড়াই 2.5, সাড়ে = plus a half (সাড়ে তিন = 3.5, সাড়ে তিনশো = 350); পোয়া = 250 g. টাকা / taka / rupees = rupees. কেজি/kilo = kg, গ্রাম = g, লিটার = L, পিস/টা = pieces, আঁটি/bundle = bundle, প্যাকেট = packet.
 
-Packs: "5 burger packs each having 4 burgers at 200" means packs 5, perPack 4, unit pcs, quantity 20. A price said after the whole line ("at 200", "200 taka diye") is the TOTAL for the line; it is per pack only when they say each / per / প্রতি / করে / "packet 200 kore".
+Packs: "5 burger packs each having 4 burgers at 200" means packs 5, perPack 4, unit pcs, quantity 20.
+
+Size of each piece or pack: "each piece 500 g", "এক পিসের ওয়েট ৫০০ গ্রাম", "500 gram er packet", "1 kg er packet", "1 litre each" go in weightEachGrams (grams; 1 kg = 1000; for liquids 1 L = 1000). It is the size of ONE, not the total. A price said after the whole line ("at 200", "200 taka diye") is the TOTAL for the line; it is per pack only when they say each / per / প্রতি / করে / "packet 200 kore".
 
 Only fill what was actually said; leave everything else null. Apart from quantity = packs x perPack, never calculate one value from another.`;
 
@@ -494,7 +497,7 @@ const ASK_TOOLS = [
   { name: 'get_wastage', description: 'Store momo wastage per day in a date range, with reason codes.', input_schema: dateRange },
   { name: 'get_store_requests', description: 'Stock requests from the store to the production house in a date range: status and pieces sent per type.', input_schema: dateRange },
   { name: 'get_production', description: 'Momos made per type per day at the production house in a date range.', input_schema: dateRange },
-  { name: 'get_expenses', description: 'Costs by category in a date range, the way the profit figures count them (equipment and the scooter spread over 36 months, loan EMIs left out), plus cash actually spent, one-time purchases and loan repayments. No salaries.', input_schema: dateRange },
+  { name: 'get_expenses', description: 'Costs by category in a date range, the way the profit figures count them (equipment and the scooter spread over 36 months, loan EMIs left out), plus cash actually spent, one-time purchases and loan repayments. No salaries. Also the big buys the team explained (a festival stock-up, buying ahead of a shop closing, a bulk buy, a price rise) with their reasons: use them to explain spikes in spending.', input_schema: dateRange },
 ];
 
 async function runTool(deps: Deps, storeId: string | null, name: string, input: any) {
@@ -565,6 +568,14 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
         }
       }
       const foodAndPackaging = Object.entries(profitCost).filter(([k]) => FOOD_CATEGORIES.has(k)).reduce((t, [, v]) => t + v, 0);
+      // Big buys the team said were right, and why (expenseReview.ts, owner 29 Oct 2026).
+      const explainedBigBuys = [...inv, ...ovh]
+        .filter((r: any) => r?.explained && typeof r.date === 'string' && r.date >= from && r.date <= to && inScope(r))
+        .map((r: any) => ({
+          date: r.date, item: String(r.itemName || r.description || r.category || ''), amount: Math.round(Number(r.totalCost ?? r.amount) || 0),
+          place: r.entityType === 'production_house' ? 'production house' : 'store', reason: BIG_BUY_REASONS[r.explained.reason] || r.explained.reason, note: r.explained.note || undefined,
+        }))
+        .slice(0, 40);
       return {
         from, to,
         costsCountedInProfit: profitCost,
@@ -572,6 +583,7 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
         cashSpentByCategory: cashSpent,
         oneTimePurchasesInRange: oneTimePurchases,
         loanRepaymentsInRange: Math.round(loanRepayments),
+        explainedBigBuys,
         notes: [
           'costsCountedInProfit is what Analytics and the profit figures use: equipment, furniture, electricals and the scooter are spread over 36 months, the software subscription over 12 months, bulk packaging over 120 days.',
           'cashSpentByCategory is money paid out in the range. One-time purchases (equipment, the scooter) are not a cost of the month they were paid - quote their monthlyCostInProfit instead.',
@@ -1088,7 +1100,7 @@ ${JSON.stringify({
             type: 'array',
             items: {
               type: 'object', additionalProperties: false,
-              required: ['name', 'quantity', 'unit', 'packs', 'perPack', 'amount', 'pricePerPack'],
+              required: ['name', 'quantity', 'unit', 'packs', 'perPack', 'amount', 'pricePerPack', 'weightEachGrams'],
               properties: {
                 name: { type: 'string', description: 'The item in plain English as a shop list would name it: Chicken, Onion, Coriander Leaves, Maida, Coke, Burger' },
                 quantity: { ...num, description: 'Total quantity in `unit` (for packs: packs x pieces per pack)' },
@@ -1097,6 +1109,7 @@ ${JSON.stringify({
                 perPack: { ...num, description: 'Pieces in each pack ("each having 4 burgers" -> 4), else null' },
                 amount: { ...num, description: 'Total rupees paid for this line. If only a per-pack or per-piece price was said, null' },
                 pricePerPack: { ...num, description: 'Price of ONE pack or piece, only when they said each / per / প্রতি / করে / ta ("200 each"), else null' },
+                weightEachGrams: { ...num, description: 'Weight (or volume) of ONE piece or pack in grams, only when said ("each piece 500 g", "এক পিসের ওয়েট ৫০০ গ্রাম" -> 500, "1 kg er packet" -> 1000, "1 litre each" -> 1000), else null' },
               },
             },
           },
@@ -1305,6 +1318,68 @@ const hygieneSchema = {
   required: ['score', 'verdict', 'issues', 'issuesBengali', 'whatIsShown', 'severe'],
   additionalProperties: false,
 };
+
+// A camera still (cctv.ts): who is in view and, for each person, whether the kitchen PPE is on.
+// "unclear" whenever the item can't be seen (turned away, out of frame, too small) - only a clear
+// "no" raises an alert.
+const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people. Also, for each person: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet), what they are doing right now (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking), and whether a phone is in their hand or at their ear.';
+const yesNo = { type: 'string', enum: ['yes', 'no', 'unclear'] };
+const cameraSchema = {
+  type: 'object',
+  properties: {
+    peopleCount: { type: 'integer', description: 'People in the frame' },
+    people: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          where: { type: 'string', description: 'Where in the frame, a few words' }, cap: yesNo, gloves: yesNo, apron: yesNo,
+          top: { type: 'string', enum: ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'] },
+          activity: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] },
+          phone: { type: 'string', enum: ['in_hand', 'at_ear', 'none', 'unclear'] },
+        },
+        required: ['where', 'cap', 'gloves', 'apron', 'top', 'activity', 'phone'],
+        additionalProperties: false,
+      },
+    },
+    note: { type: 'string', description: 'One short sentence on what the frame shows' },
+  },
+  required: ['peopleCount', 'people', 'note'],
+  additionalProperties: false,
+};
+export type CameraLook = {
+  peopleCount: number;
+  people: { where: string; cap: string; gloves: string; apron: string; top: string; activity: string; phone: string }[];
+  note: string;
+};
+
+export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType: string; place: string }): Promise<CameraLook> {
+  const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
+  const res = await callClaude(deps, {
+    purpose: 'camera',
+    system: CAMERA_SYSTEM,
+    effort: 'low',
+    noThinking: true,
+    maxTokens: 1200,
+    format: { type: 'json_schema', schema: cameraSchema },
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: frame.mediaType, data: frame.base64 } },
+        { type: 'text', text: `Camera: ${frame.place.slice(0, 80)}.` },
+      ],
+    }],
+  });
+  let parsed: any = null;
+  try { parsed = JSON.parse(textOf(res)); } catch { /* handled below */ }
+  if (!parsed || typeof parsed.peopleCount !== 'number') throw new AiError('The camera check returned nothing.', 502);
+  const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
+  const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => ({
+    where: String(p?.where || '').slice(0, 60), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
+    top: String(p?.top || 'other').slice(0, 20), activity: String(p?.activity || 'other').slice(0, 20), phone: String(p?.phone || 'unclear').slice(0, 20),
+  }));
+  return { peopleCount: Math.max(people.length, Math.min(30, Math.round(parsed.peopleCount))), people, note: String(parsed.note || '').slice(0, 200) };
+}
 
 export async function aiScorePhoto(
   kv: Kv,

@@ -14,7 +14,8 @@ import { StatGrid, StatTile } from './ui/stat-tile';
 import { StatusChip } from './ui/status-chip';
 import { getSupabaseClient } from '../utils/supabase/client';
 import { getTodayIST, addDays, formatDateIST } from '../utils/timezone';
-import { SENT_STATUSES, shippedAtIST, shippedPieces, toISTTimestamp } from '../utils/requestStock';
+import { houseExpected, lastCount, type Baseline, type CountRecord } from './stock/countMath';
+import { countHistory } from './stock/countData';
 import { eventsApi, type EventMomoReturn } from '../utils/eventsApi';
 
 type Props = {
@@ -40,11 +41,8 @@ type ProductionHouseStock = {
   pendingApproval: number;
 };
 
-// A production house's last stock count (recalibration), mapped to stock keys.
-type StockCount = { date: string; isOpeningBalance: boolean; items: Record<string, number> };
-
-// Requests are fetched from a week before the earliest count (a request asked for before the
-// count can ship after it); a house with no count at all needs the whole history.
+// Requests are fetched from a week before the earliest count the figures start from (a request
+// asked for before the count can ship after it); a house with no count needs the whole history.
 const FULL_HISTORY_FROM = '2020-01-01';
 
 export function ProductionHouseStockStatus({ context, productionHouses, onNavigateToManageItems }: Props) {
@@ -59,7 +57,8 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     return () => { cancelled = true; };
   }, []);
   const [loading, setLoading] = useState(true);
-  const [stockCounts, setStockCounts] = useState<Record<string, StockCount>>({});
+  // Every stock count per house; the one a day's figures start from is picked per day.
+  const [countHistories, setCountHistories] = useState<Record<string, CountRecord[]> | null>(null);
   const [requestsFrom, setRequestsFrom] = useState<string | null>(null);
 
   // Helper function to get fresh access token
@@ -74,101 +73,59 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     }
   };
 
-  // Each house's last stock count, then the requests shipped since the earliest of them.
+  // The last count each house's figures start from on the selected day (not rejected, made by
+  // the end of that day).
+  const baseFor = (houseId: string): Baseline => lastCount(countHistories?.[houseId] || [], context.inventoryItems || [], `${selectedDate}T23:59:59`);
+  const neededFrom = (): string => {
+    const days = productionHouses.map(house => baseFor(house.id)?.date.substring(0, 10));
+    return days.some(day => !day) ? FULL_HISTORY_FROM : addDays(days.reduce((a, b) => (a! < b! ? a : b))!, -7);
+  };
+
+  // Each house's stock counts (also those saved under a linked store's id).
   useEffect(() => {
     if (productionHouses.length === 0) {
       setLoading(false);
       return;
     }
     let cancelled = false;
-    const load = async () => {
+    (async () => {
       const token = await getFreshAccessToken();
       if (!token) {
         console.error('No access token available');
         if (!cancelled) setLoading(false);
         return;
       }
-
-      // Map camelCase item names from the count to the stock keys used here.
-      const keyMapping: Record<string, StockKey> = {
-        chickenMomo: 'chicken',
-        chickenCheeseMomo: 'chickenCheese',
-        vegMomo: 'veg',
-        cheeseCornMomo: 'cheeseCorn',
-        paneerMomo: 'paneer',
-        vegKurkureMomo: 'vegKurkure',
-        chickenKurkureMomo: 'chickenKurkure',
-        schezwanMomo: 'schezwan',
-      };
-      const counts: Record<string, StockCount> = {};
+      const histories: Record<string, CountRecord[]> = {};
       for (const house of productionHouses) {
         try {
-          const recalResponse = await api.getLastRecalibration(token, house.id, 'production_house');
-          const record = recalResponse?.record;
-          // A rejected count is not a count to start from.
-          if (!record?.date || record.status === 'rejected') continue;
-          const items: Record<string, number> = {};
-          (record.items || []).forEach((item: any) => {
-            // itemId can be either the item's id or its name
-            const inventoryItem = context.inventoryItems?.find(invItem => invItem.id === item.itemId || invItem.name === item.itemId);
-            const name: string = inventoryItem?.name || item.itemId || '';
-            const camelKey = name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
-            const key = keyMapping[camelKey] || camelKey;
-            if ((STOCK_KEYS as readonly string[]).includes(key)) items[key] = Number(item.actualQuantity) || 0;
-          });
-          // The record's date is stored as IST wall-clock time.
-          counts[house.id] = {
-            date: record.date,
-            isOpeningBalance: record.isOpeningBalance ?? record.date.substring(8, 10) === '01',
-            items,
-          };
+          histories[house.id] = await countHistory(token, [house.id], 'production_house');
         } catch (error) {
-          console.error(`Error fetching the last stock count for ${house.name}:`, error);
+          console.error(`Error fetching the stock counts for ${house.name}:`, error);
         }
       }
-
-      const countDays = productionHouses.map(house => counts[house.id]?.date.substring(0, 10));
-      const from = countDays.some(day => !day)
-        ? FULL_HISTORY_FROM
-        : addDays(countDays.reduce((a, b) => (a! < b! ? a : b))!, -7);
-      try {
-        const requestsData = await api.fetchProductionRequests(token, from);
-        if (!cancelled) {
-          setProductionRequests(requestsData);
-          setRequestsFrom(from);
-        }
-      } catch (error) {
-        console.error('Error loading production requests:', error);
-      }
-      if (!cancelled) {
-        setStockCounts(counts);
-        setLoading(false);
-      }
-    };
-
-    load();
+      if (!cancelled) setCountHistories(histories);
+    })();
     return () => { cancelled = true; };
-  }, [productionHouses, context.inventoryItems]);
+  }, [productionHouses]);
 
-  // A date before a house's last count is worked out from all records, so it needs the
-  // shipments from before the count too.
+  // The requests shipped since the earliest count the selected day starts from.
   useEffect(() => {
-    if (!requestsFrom || requestsFrom === FULL_HISTORY_FROM) return;
-    const needsHistory = productionHouses.some(house => {
-      const countDay = stockCounts[house.id]?.date.substring(0, 10);
-      return !countDay || countDay > selectedDate;
-    });
-    if (!needsHistory) return;
+    if (productionHouses.length === 0 || countHistories === null) return;
+    const from = neededFrom();
+    if (requestsFrom && requestsFrom <= from) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     (async () => {
       const token = await getFreshAccessToken();
       try {
         if (token) {
-          const requestsData = await api.fetchProductionRequests(token, FULL_HISTORY_FROM);
+          const requestsData = await api.fetchProductionRequests(token, from);
           if (!cancelled) {
             setProductionRequests(requestsData);
-            setRequestsFrom(FULL_HISTORY_FROM);
+            setRequestsFrom(from);
           }
         }
       } catch (error) {
@@ -178,11 +135,12 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedDate, requestsFrom, stockCounts, productionHouses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, countHistories, productionHouses]);
 
-  // Stock for each production house on the selected date: its last stock count (if made on or
-  // before that date) + production since the count - momos shipped to its stores since the
-  // count. With no count, everything on record up to the date.
+  // Stock for each production house at the end of the selected day: its last stock count by then
+  // + momos made since (net of kurkure) - shipped since + event leftovers counted back in
+  // (stock/countMath.ts, the figure the stock count expects). With no count, everything on record.
   const productionHouseStocks = useMemo(() => {
     if (loading) return [];
     const stocks: ProductionHouseStock[] = [];
@@ -192,44 +150,23 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
       const isHouseEntry = (prod: { productionHouseId?: string; storeId?: string }) =>
         prod.productionHouseId === house.id || (!prod.productionHouseId && prod.storeId === house.id);
 
-      const count = stockCounts[house.id];
-      const countDay = count?.date.substring(0, 10) || null;
-      const fromCount = !!count && !!countDay && countDay <= selectedDate;
-
-      // A count on the 1st is that month's opening balance, so that day's production comes
-      // after it; a mid-month count may have been made after the day's production, so that
-      // day is left out (same rule as Monthly Stock Recalibration).
-      const productionInWindow = context.productionData.filter(prod => {
-        if (!isHouseEntry(prod) || prod.date > selectedDate) return false;
-        if (!fromCount) return true;
-        return count.isOpeningBalance ? prod.date >= countDay! : prod.date > countDay!;
-      });
-
-      // Momos have left the production house once shipped (in transit and part shipments count),
-      // in the shipped amounts.
-      const houseStoreIds = new Set(context.stores.filter(s => s.productionHouseId === house.id).map(s => s.id));
-      // An event stall's request (events.ts) names its production house itself.
-      const fromHouse = (req: any) => houseStoreIds.has(req.storeId) || (!!req.eventId && req.productionHouseId === house.id);
-      const shippedInWindow = productionRequests.filter(req => {
-        if (!SENT_STATUSES.includes(req.status) || !fromHouse(req)) return false;
-        const shippedAt = shippedAtIST(req);
-        if (!shippedAt || shippedAt.substring(0, 10) > selectedDate) return false;
-        return !fromCount || shippedAt >= count.date;
-      });
-
-      // Counted back in on or before the selected day (and after the count it starts from).
-      const backInWindow = eventReturns.filter(r => {
-        const at = r.receivedAt ? toISTTimestamp(r.receivedAt) : null;
-        return r.productionHouseId === house.id && !!at && at.substring(0, 10) <= selectedDate && (!fromCount || at >= count.date);
+      const base = baseFor(house.id);
+      const figures = houseExpected({
+        base,
+        ids: { productionHouseUUID: house.id, effectiveStoreId: house.id, originalStoreId: house.id },
+        productionData: context.productionData,
+        requests: productionRequests,
+        stores: context.stores,
+        returns: eventReturns,
+        until: selectedDate,
       });
 
       const stock = {} as Record<StockKey, ProductStock>;
       STOCK_KEYS.forEach(key => {
-        const opening = fromCount ? count.items[key] || 0 : 0;
-        const produced = productionInWindow.reduce((sum, prod) => sum + ((prod as any)[`${key}Momos`]?.final || 0), 0);
-        const sent = shippedInWindow.reduce((sum, req) => sum + shippedPieces(req, key), 0)
-          - backInWindow.reduce((sum, r) => sum + (Number((r.receivedQuantities as any)?.[key]) || 0), 0);
-        const available = Math.max(0, opening + produced - sent);
+        const opening = base?.stock[key] || 0;
+        const produced = figures.produced[key] || 0;
+        const sent = figures.sent[key] || 0;
+        const available = Math.max(0, figures.expected[key] || 0);
         const total = opening + produced;
         stock[key] = { opening, produced, sent, available, percentage: total > 0 ? (available / total) * 100 : 0 };
       });
@@ -264,7 +201,7 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
         productionHouseId: house.id,
         productionHouseName: house.name,
         date: selectedDate,
-        countedOn: fromCount ? countDay : null,
+        countedOn: base ? base.date.substring(0, 10) : null,
         stock,
         totalProduced,
         totalWastage,
@@ -274,7 +211,8 @@ export function ProductionHouseStockStatus({ context, productionHouses, onNaviga
     });
 
     return stocks;
-  }, [loading, context.productionData, context.stores, productionRequests, productionHouses, selectedDate, stockCounts, eventReturns]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, context.productionData, context.stores, productionRequests, productionHouses, selectedDate, countHistories, eventReturns]);
 
   const filteredStocks = selectedProductionHouse
     ? productionHouseStocks.filter(s => s.productionHouseId === selectedProductionHouse)

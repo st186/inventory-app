@@ -3,7 +3,8 @@
 // breakdown sheet, the cash top-up request sheet and rows. Figures come in ready-made; nothing
 // here calculates money.
 import * as React from 'react';
-import { AlertTriangle, Check, Clock, CloudOff, XCircle } from 'lucide-react';
+import { AlertTriangle, Check, Clock, CloudOff, Copy, XCircle } from 'lucide-react';
+import { toast } from 'sonner';
 import type { LucideIcon } from 'lucide-react';
 import type * as api from '../../utils/api';
 import { useT } from '../../utils/i18n';
@@ -275,19 +276,33 @@ export const TOPUP_REASON_LABELS: Record<api.CashTopupReason, string> = {
   event_cash: 'Event stall cash', // label only: event requests (events.ts) never touch this store's till
 };
 
+/** The short id the owner quotes when paying a top-up. */
+export const topupCode = (r: Pick<api.CashTopupRequest, 'id'>) => `#${r.id.slice(-6).toUpperCase()}`;
+
 /** One waiting top-up request. */
 export function TopupRow({ request, showRequester, children }: { request: api.CashTopupRequest; showRequester?: boolean; children?: React.ReactNode }) {
   const r = request;
+  const code = topupCode(r);
   const who = showRequester ? `${r.requestedByName}${r.requestedByEntityName ? ` (${r.requestedByEntityName})` : ''} · ` : '';
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(code); toast.success(`Copied ${code}`); } catch { toast.error('Could not copy'); }
+  };
   return (
     <div className="flex flex-col">
       <ListRow
         title={<span>{formatINR(r.requestedAmount)} <span className="font-normal text-text-2">for {formatDateIST(r.date)}</span></span>}
-        subtitle={`${who}${TOPUP_REASON_LABELS[r.reason]} · #${r.id.slice(-6).toUpperCase()} · ${formatDateTimeIST(r.requestDate, false)}`}
+        // The id goes first (owner, 29 Oct 2026: it's what the payment needs): the line is cut
+        // after two lines, and "Production house inventory" pushed it off the end.
+        subtitle={<><span className="num font-medium text-text-2">{code}</span> · {who}{TOPUP_REASON_LABELS[r.reason]} · {formatDateTimeIST(r.requestDate, false)}</>}
         trailing={<StatusChip status="approval.pending" />}
       />
       {r.reason === 'event_cash' && r.note && <p className="-mt-1 px-4 pb-2 text-label text-text-2">{r.note}</p>}
-      {children && <div className="flex flex-wrap gap-2 px-4 pb-3">{children}</div>}
+      {children && (
+        <div className="flex flex-wrap gap-2 px-4 pb-3">
+          {children}
+          <Button variant="ghost" size="sm" leadingIcon={<Copy />} onClick={copy}>Copy {code}</Button>
+        </div>
+      )}
     </div>
   );
 }

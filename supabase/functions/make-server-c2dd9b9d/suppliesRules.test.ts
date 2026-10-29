@@ -1,7 +1,7 @@
 // Tests for running low and shopping lists. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/suppliesRules.test.ts
 import assert from 'node:assert/strict';
-import { alertRecipients, deliverAt, itemKey, linesPreview, listProgress, placeOf } from './suppliesRules.ts';
+import { alertRecipients, amountFix, amountIssue, deliverAt, itemKey, learnSpecs, learnVendorItems, linesPreview, listProgress, placeOf, qtyLabel, vendorForItem } from './suppliesRules.ts';
 
 let n = 0;
 const test = (name: string, fn: () => void) => { fn(); n++; };
@@ -55,6 +55,50 @@ test('how far a list has got', () => {
   ];
   assert.deepEqual(listProgress({ lines }), { total: 5, got: 2, missing: 1, left: 2, toLog: 1 });
   assert.equal(linesPreview(lines, 2), 'Onion 5 kg, Tomato 3 kg (+3 more)');
+});
+
+test('which vendor an item comes from, and learning from a saved list', () => {
+  const v = (id: string, items: string[]) => ({ id, name: id, items, createdAt: '', updatedAt: '' });
+  const vendors = [v('veg', ['Ginger', 'Garlic']), v('kali', ['Ajinomoto']), v('butter', ['Butter'])];
+  assert.equal(vendorForItem(vendors, 'ginger'), 'veg');
+  assert.equal(vendorForItem(vendors, 'Onion'), null);
+  // Onion goes to the vegetable vendor from now on; garlic moves to Kalimata; a line with no vendor changes nothing.
+  const changed = learnVendorItems(vendors, [
+    { item: 'Onion', vendorId: 'veg' }, { item: 'garlic', vendorId: 'kali' }, { item: 'Butter', vendorId: null }, { item: 'Ginger', vendorId: 'gone' },
+  ]);
+  assert.deepEqual(changed.map((c) => [c.id, c.items]).sort(), [['kali', ['Ajinomoto', 'garlic']], ['veg', ['Ginger', 'Onion']]]);
+  assert.deepEqual(vendors[0].items, ['Ginger', 'Garlic']); // the originals are not changed
+  assert.equal(learnVendorItems(vendors, [{ item: 'Ginger', vendorId: 'veg' }]).length, 0);
+});
+
+test('pack sizes: labels and remembering how an item was written', () => {
+  assert.equal(qtyLabel({ qty: 2, unit: 'packet', packSize: 1, packUnit: 'L' }), '2 packets × 1 L');
+  assert.equal(qtyLabel({ qty: 400, unit: 'g' }), '400 g');
+  assert.equal(linesPreview([{ item: 'Oil', qty: 2, unit: 'packet', packSize: 1, packUnit: 'L' }]), 'Oil 2 packets × 1 L');
+  const specs = learnSpecs({ oil: { item: 'Oil', qty: 2, unit: 'pcs', at: 'a' } }, [
+    { item: 'oil', qty: 3, unit: 'packet', packSize: 1, packUnit: 'L' }, { item: 'Ginger', qty: 400, unit: 'g', packSize: 5, packUnit: 'kg' }, { item: 'Salt', qty: 0, unit: 'kg' },
+  ], 'b');
+  assert.deepEqual(specs.oil, { item: 'oil', qty: 3, unit: 'packet', packSize: 1, packUnit: 'L', at: 'b' });
+  assert.deepEqual(specs.ginger, { item: 'Ginger', qty: 400, unit: 'g', at: 'b' }); // no pack size on a weight
+  assert.equal(specs.salt, undefined);
+});
+
+test('expense amounts that do not say how much', () => {
+  const e = (name: string, qty: number, unit: string, category = 'staples', piecesPerCarton?: number, weightEachGrams?: number) => amountIssue({ name, qty, unit, category, piecesPerCarton, weightEachGrams });
+  assert.match(e('Butter', 8, 'pcs', 'dairy') || '', /doesn't say how big each pack is/);
+  assert.match(e('Chicken 65 masala', 3, 'pcs', 'spices_seasonings') || '', /each pack/);
+  assert.match(e('Oil', 2, 'packet') || '', /how big each packet is/);
+  assert.match(e('Carrot', 1, 'pcs', 'fresh_produce') || '', /by weight/);
+  assert.match(e('Cabbage', 2, 'bundle', 'fresh_produce') || '', /only leafy herbs/);
+  assert.match(e('Coriander Leaves', 2, 'pcs', 'fresh_produce') || '', /bundles or the weight/);
+  // Clear amounts.
+  for (const ok of [e('Butter', 2, 'kg', 'dairy'), e('Oil', 2, 'L'), e('Coriander Leaves', 2, 'bundle', 'fresh_produce'), e('Coriander Leaves', 400, 'g', 'fresh_produce'),
+    e('Lemon', 6, 'pcs', 'fresh_produce'), e('Maida', 10, 'kg'), e('Burger buns', 2, 'pcs', 'bread_buns'), e('Butter Paper', 2, 'pcs', 'packaging'),
+    e('Foil', 1, 'pcs', 'packaging'), e('Cheese slices', 2, 'pcs', 'dairy', 20),
+    e('Aromatic Powder', 10, 'pcs', 'spices_seasonings', undefined, 500), e('Butter', 8, 'pcs', 'dairy', undefined, 500)]) assert.equal(ok, null);
+  // The fix, from how the item was last written on a shopping list.
+  assert.deepEqual(amountFix(8, 840, { item: 'Butter', qty: 2, unit: 'packet', packSize: 500, packUnit: 'g', at: '' }), { quantity: 4, unit: 'kg', costPerUnit: 210, text: '8 × 500 g = 4 kg' });
+  assert.equal(amountFix(8, 840, null), null);
 });
 
 console.log(`suppliesRules: ${n} tests passed`);

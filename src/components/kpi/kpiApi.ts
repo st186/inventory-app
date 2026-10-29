@@ -14,12 +14,14 @@ async function token(refresh = false): Promise<string> {
 
 // Android throttles ordinary WebView requests while the app is in the background, which is when
 // the phone notices someone arriving - so there the native HTTP client is used (as for riders).
+// Not in practice mode (Learn the app): its made-up answers replace fetch, and the native client
+// would go round them to the real server - a practice check-in would be a real one.
 async function send(method: string, path: string, body?: any, retried = false): Promise<any> {
   const t = await token(retried);
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${t}`, ...regionHeaders() };
   let status: number;
   let data: any;
-  if (Capacitor.isNativePlatform()) {
+  if (Capacitor.isNativePlatform() && !(globalThis as { __BUNNY_PRACTICE__?: unknown }).__BUNNY_PRACTICE__) {
     const res = await CapacitorHttp.request({ url: `${API_BASE}${path}`, method, headers, data: body });
     status = res.status;
     data = typeof res.data === 'string' ? safeJson(res.data) : res.data;
@@ -39,7 +41,8 @@ const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return {
 export type KpiId = 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness' | 'expenseAccuracy'
+  | 'productionSupply' | 'shoppingListOnTime';
 
 export const KPI_LABELS: Record<KpiId, string> = {
   attendance: 'Attendance',
@@ -67,14 +70,17 @@ export const KPI_LABELS: Record<KpiId, string> = {
   cratesClean: 'Crates and containers clean',
   photoChecks: 'Photo checks (on time and clean)',
   storeReadiness: 'Store ready on time',
+  expenseAccuracy: 'Expenses entered correctly',
+  productionSupply: 'Production supply: full and on time',
+  shoppingListOnTime: 'Shopping list sent by 7 AM',
 };
 
 // The KPIs the owner picks from for each person, grouped as in KPI settings (riders have none).
 export const KPI_SECTIONS: { title: string; ids: KpiId[] }[] = [
   { title: 'Everyone', ids: ['attendance', 'punctuality', 'fullShift', 'timesheet'] },
   { title: 'Photo checks', ids: ['photoChecks', 'workplace', 'hygiene', 'placeClean', 'cratesClean'] },
-  { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy', 'posCash', 'storeCover'] },
-  { title: 'Production', ids: ['requestAccepted', 'productionApproved', 'productionLogged', 'wastage', 'shippedOnTime', 'productionCash'] },
+  { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'expenseAccuracy', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy', 'posCash', 'storeCover'] },
+  { title: 'Production', ids: ['requestAccepted', 'productionApproved', 'productionLogged', 'wastage', 'shippedOnTime', 'productionSupply', 'shoppingListOnTime', 'productionCash'] },
 ];
 export const ADDED_KPI_WEIGHT = 10;
 

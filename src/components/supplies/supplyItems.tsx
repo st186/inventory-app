@@ -13,7 +13,7 @@ import type { EntryKind, PlaceKind } from './suppliesApi';
 const CUSTOM_ITEMS_KEY = 'shared:custom-items'; // the copy Quick Add keeps on the phone
 // Running costs that are supplies someone fetches (not fuel, rent or repairs).
 export const SUPPLY_OVERHEADS = ['cleaning_supplies', 'office_supplies', 'utensils', 'hygiene_ppe', 'water_jar', 'puja_expense'];
-export const UNITS = ['g', 'kg', 'pcs', 'L', 'mL', 'packet', 'carton', 'box', 'roll', 'bundle'];
+export { UNITS } from './quantityNorms';
 export const itemKey = (s: string) => normalizeItemName(s || '');
 
 export interface ItemPick { item: string; itemBn?: string; entryType?: EntryKind; category?: string; entity?: ExpenseCandidate['entity'] }

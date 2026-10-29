@@ -4,8 +4,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Camera, ClipboardList, ClipboardPlus, Clock3, Factory, IdCard, PackageCheck, PackageOpen, Receipt, ReceiptText, Trash2, Truck, UserCheck, Wrench,
-  MessageSquareWarning,
+  MessageSquareWarning, ListChecks,
 } from 'lucide-react';
+import { getLastRecalibration } from '../../utils/api';
 import { ExplainComplaintSheet, useComplaintsToExplain } from '../complaints/ExplainComplaint';
 import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
@@ -38,6 +39,8 @@ import { OpeningChecklistCard } from '../opening/OpeningChecklist';
 import { RunningLowCard } from '../supplies/RunningLow';
 import { ShoppingCard } from '../supplies/Shopping';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
+import { DeliveryChecksCard } from './DeliveryChecks';
+import { addDays } from '../../utils/timezone';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
 const ON_THE_WAY = ['shipped', 'partially-shipped'];
@@ -58,6 +61,26 @@ function useTimesheetsWaiting(enabled: boolean, employeeId: string | null) {
   } : null, [enabled, employeeId, data]);
 }
 
+// The month-end momo count (owner, 29 Oct 2026: due on the month's last day; reminders from 6 PM
+// the day before, server send-stock-count-reminders). Shown from 6 PM the day before until it is
+// in; the store's latest count is fetched only on those two days.
+function useMonthEndCount(store: string | null, today: string, now: number, token: string) {
+  const nextMonth = new Date(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) + 32 * 86400000).toISOString().slice(0, 7);
+  const last = new Date(Date.parse(`${nextMonth}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  const eve = new Date(Date.parse(`${last}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  const show = !!store && (today === last || (today === eve && now >= 18 * 60));
+  const [countedAt, setCountedAt] = useState<string | null>(null);
+  useEffect(() => {
+    if (!show || !store || !token) return;
+    let alive = true;
+    getLastRecalibration(token, store, 'store')
+      .then((r: any) => { if (alive) setCountedAt(typeof r?.lastRecalibration === 'string' ? r.lastRecalibration : null); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [show, store, token]);
+  return { show, isLastDay: today === last, last, done: !!countedAt && countedAt >= `${eve}T18:00` };
+}
+
 function InchargeHome() {
   const { user, context, stores, nav, router } = useShell();
   const { t } = useT();
@@ -72,6 +95,7 @@ function InchargeHome() {
   const suppliedStoreIds = useMemo(() => (isProduction ? getAssignedStoreIds(user as any, stores as any) : []), [isProduction, user, stores]);
   const today = clock.today;
   const now = clock.minutes;
+  const monthEnd = useMonthEndCount(store, today, now, token);
 
   const profile = useProfileCompletion(token);
   const focusProfile = useFocusProfile();
@@ -150,12 +174,29 @@ function InchargeHome() {
         onOpen: () => setFlagsOpen(true),
       });
     }
-    if (!isProduction && store) {
-      const sentToday = mine.some((r) => r.requestDate === today);
+    if (monthEnd.show) {
       list.push({
-        key: 'stock-request', icon: ClipboardPlus, title: t('home.task.stockRequest'), due: 540,
-        meta: sentToday ? t('home.task.stockRequestSent') : t('home.task.stockRequestBy'),
-        status: sentToday ? 'done' : now > 540 ? 'late' : 'due',
+        key: 'stock-count', icon: ListChecks, title: t('home.task.stockCount'), due: monthEnd.isLastDay ? 1320 : 1439,
+        meta: monthEnd.done ? t('home.task.stockCountDone') : monthEnd.isLastDay ? t('home.task.stockCountToday') : t('home.task.stockCountTomorrow'),
+        status: monthEnd.done ? 'done' : monthEnd.isLastDay ? (now >= 20 * 60 ? 'late' : 'due') : 'later',
+        onOpen: () => open('stock/requests'),
+      });
+    }
+    if (!isProduction && store) {
+      // Each day's request goes the night before, by midnight (owner, 29 Oct 2026). A day that began
+      // with no request shows as late until noon, so it can still be sent.
+      const tomorrow = addDays(today, 1);
+      if (now < 720 && !mine.some((r) => r.requestDate === today)) {
+        list.push({
+          key: 'stock-request-today', icon: ClipboardPlus, title: t('home.task.stockRequestToday'), due: 0,
+          meta: t('home.task.stockRequestMissed'), status: 'late', onOpen: () => open('stock/requests'),
+        });
+      }
+      const sentTomorrow = mine.some((r) => r.requestDate === tomorrow);
+      list.push({
+        key: 'stock-request', icon: ClipboardPlus, title: t('home.task.stockRequest'), due: 1439,
+        meta: sentTomorrow ? t('home.task.stockRequestSent') : t('home.task.stockRequestBy'),
+        status: sentTomorrow ? 'done' : 'due',
         onOpen: () => open('stock/requests'),
       });
       const onWay = mine.filter((r) => ON_THE_WAY.includes(r.status)).sort((a, b) => (a.shippedAt || '').localeCompare(b.shippedAt || ''));
@@ -247,7 +288,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items, monthEnd]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);
@@ -263,6 +304,7 @@ function InchargeHome() {
 
   return (
     <HomePage>
+      {!isProduction && store && <DeliveryChecksCard requests={mine} today={today} />}
       {has('events') && <EventHomeCard onOpen={(id, tab) => router.push('events', tab ? { id, tab } : { id })} />}
       <ShiftClockCard isLead framed={false} />
       <StoreCoverCard />

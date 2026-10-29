@@ -23,6 +23,7 @@ export function NavRail({ tabs, activeTab, badges, onSelect, userName, onAccount
             <li key={tab.path} className="w-full">
               <button
                 type="button"
+                data-tour={`tab-${tab.path}`}
                 onClick={() => onSelect(tab.path)}
                 aria-current={on ? 'page' : undefined}
                 aria-label={count ? `${label}, ${t('common.newCount', { n: count })}` : label}
@@ -45,6 +46,7 @@ export function NavRail({ tabs, activeTab, badges, onSelect, userName, onAccount
       <button
         type="button"
         onClick={onAccount}
+        data-tour="account"
         aria-label={t('account.yours')}
         className="flex size-11 items-center justify-center rounded-full outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring"
       >

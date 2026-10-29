@@ -25,6 +25,10 @@ import {
 import { coverFor, loadCoverContext, registerStoreCoverRoutes } from './storeCover.ts';
 import { registerOpeningChecklistRoutes } from './openingChecklist.ts';
 import { registerSuppliesRoutes } from './supplies.ts';
+import { registerContactRoutes } from './contacts.ts';
+import { registerComplianceRoutes } from './compliance.ts';
+import { registerPerformanceRoutes } from './performance.ts';
+import { registerCameraRoutes } from './cctv.ts';
 import { openingScore, type OpeningDay, type OpeningTemplate } from './openingRules.ts';
 import {
   P, actorOf, canManage, loadConfig, loadPlaces, profileOf, registerAttendanceRoutes,
@@ -72,7 +76,7 @@ function houseOf(emp: any, places: Places): string | null {
 // Month-wide data shared by everyone on the team screen, loaded once and only when a role needs it.
 type Shared = {
   month: string; today: string; places: Places; punchSince: string | null;
-  sales: any[]; production: any[]; requests: any[]; trips: any[]; expenses: any[]; productionCash: any[]; complaints: any[];
+  sales: any[]; production: any[]; requests: any[]; trips: any[]; expenses: any[]; expenseFlags: any[]; shoppingLists: any[]; productionCash: any[]; complaints: any[];
   checks: Map<string, { date: string; row: any }[]>;
   stockOuts: Map<string, Promise<any[]>>;
   ledger: Map<string, Promise<{ made: { date: string; kg: number }[]; wasted: { date: string; kg: number }[] }>>;
@@ -87,16 +91,18 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
   const inMonth = (d: string) => d >= first && d <= last;
   const need = (...ids: KpiId[]) => ids.some((id) => needs.has(id));
   const none = Promise.resolve([] as any[]);
-  const [sales, production, requests, trips, checkRows, inventory, overheads, productionCash, complaints] = await Promise.all([
+  const [sales, production, requests, trips, checkRows, inventory, overheads, productionCash, complaints, expenseFlags, shoppingLists] = await Promise.all([
     need('cashCount', 'cashAccuracy', 'salesOnTime', 'posCash') ? deps.getAllByPrefix('sales:') : none,
     need('productionLogged', 'wastage', 'productionApproved') ? deps.getAllByPrefix('production:') : none,
-    need('shippedOnTime', 'requestOnTime', 'requestAccepted') ? deps.getAllByPrefix('production_request_') : none,
+    need('shippedOnTime', 'requestOnTime', 'requestAccepted', 'productionSupply') ? deps.getAllByPrefix('production_request_') : none,
     need('trips') ? deps.getAllByPrefix('rider-trip:') : none,
     rowsByPrefix(`workplace-check:${month}-`),
-    need('expensesOnTime') ? deps.getAllByPrefix('inventory:') : none,
-    need('expensesOnTime') ? deps.getAllByPrefix('overhead:') : none,
+    need('expensesOnTime', 'expenseAccuracy', 'shoppingListOnTime') ? deps.getAllByPrefix('inventory:') : none,
+    need('expensesOnTime', 'expenseAccuracy') ? deps.getAllByPrefix('overhead:') : none,
     need('productionCash') ? deps.getAllByPrefix('production-cash:') : none,
     deps.getAllByPrefix('complaint:'), // upheld complaints come off everyone's total
+    need('expenseAccuracy') ? deps.getAllByPrefix('expense-flag:') : none,
+    need('shoppingListOnTime') ? deps.getAllByPrefix('shopping-list:') : none,
   ]);
   const checks = new Map<string, { date: string; row: any }[]>();
   for (const { key, value } of checkRows) {
@@ -115,6 +121,8 @@ async function loadShared(deps: KpiDeps, month: string, needs: Set<KpiId>, place
     requests: (requests || []).filter((r: any) => r?.requestDate && inMonth(String(r.requestDate).slice(0, 10))),
     trips: (trips || []).filter((t: any) => t?.date && inMonth(String(t.date).slice(0, 10))),
     expenses: [...(inventory || []), ...(overheads || [])].filter((e: any) => e?.date && inMonth(String(e.date).slice(0, 10))),
+    expenseFlags: (expenseFlags || []).filter((f: any) => f?.date && inMonth(String(f.date).slice(0, 10))),
+    shoppingLists: (shoppingLists || []).filter((l: any) => l?.date && inMonth(String(l.date))),
     productionCash: (productionCash || []).filter((r: any) => r?.date && inMonth(String(r.date).slice(0, 10))),
     // Decided in this month (an IST day), so a closed month's pay never changes afterwards.
     complaints: (complaints || []).filter((x: any) => x?.decision?.upheld && x.decision.at && inMonth(istDayOf(x.decision.at))),
@@ -211,6 +219,8 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     }
   }
   const ids = new Set([id, emp.authUserId].filter(Boolean).map(String));
+  const myExpenses = shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || '')));
+  const myExpenseIds = new Set(myExpenses.map((e: any) => String(e.id)));
   return computeMonthKpis({
     month, today: shared.today, emp: { employeeId: id, joiningDate: emp.joiningDate || null },
     group: profile.group, kind: profile.kind, settings: profile.settings, punchSince: shared.punchSince,
@@ -228,7 +238,13 @@ async function personKpis(deps: KpiDeps, emp: any, profile: Profile, shared: Sha
     ledgerWastedKg: ledger.wasted,
     extraHours: extraHours || [],
     storeRequests: store ? shared.requests.filter((r: any) => r.storeId === store) : [],
-    expenses: shared.expenses.filter((e: any) => ids.has(String(e.createdBy || '')) || ids.has(String(e.userId || ''))),
+    expenses: myExpenses,
+    expenseFlags: shared.expenseFlags.filter((f: any) => myExpenseIds.has(String(f.expenseId))),
+    shoppingLists: shared.shoppingLists.filter((l: any) => String(l.createdById) === id),
+    // Days the production house bought stock (purchases with an item), when a shopping list was due.
+    productionPurchaseDays: supplyHouse
+      ? [...new Set(shared.expenses.filter((e: any) => e.itemName && e.entityType === 'production_house' && e.productionHouseId === supplyHouse).map((e: any) => String(e.date).slice(0, 10)))]
+      : [],
     approvals: supplyHouse ? shared.production.filter((p: any) => (p.productionHouseId || p.storeId) === supplyHouse) : [],
     placePhotos,
     crateChecks,
@@ -298,6 +314,10 @@ export function registerKpiRoutes(app: any, deps: KpiDeps) {
   registerStoreCoverRoutes(app, deps);
   registerOpeningChecklistRoutes(app, deps);
   registerSuppliesRoutes(app, deps);
+  registerContactRoutes(app, deps);
+  registerComplianceRoutes(app, deps);
+  registerPerformanceRoutes(app, deps);
+  registerCameraRoutes(app, deps);
 
   const fail = (c: any, err: any) => {
     if (err instanceof AiError) return c.json({ error: err.message, ...err.extra }, err.status);

@@ -34,6 +34,11 @@ export function ShellProvider({ value, children }: { value: ShellContextValue; c
   return <ShellCtx.Provider value={value}>{children}</ShellCtx.Provider>;
 }
 
+/** The shell, or null outside it (a part also shown on its own in the previews). */
+export function useShellMaybe(): ShellContextValue | null {
+  return useContext(ShellCtx);
+}
+
 export function useShell(): ShellContextValue {
   const value = useContext(ShellCtx);
   if (!value) throw new Error('useShell() outside the app shell');

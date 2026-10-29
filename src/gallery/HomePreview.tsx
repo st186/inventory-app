@@ -23,7 +23,7 @@ import { addDays, getTodayIST } from '../utils/timezone';
 import { PREVIEW_PERSONAS } from './ShellPreview';
 import { buildHomeSample, istIso } from './homeSample';
 
-type Params = { role: string; lang: AppLanguage | null; event: boolean; shiftOn: boolean; empty: boolean };
+export type Params = { role: string; lang: AppLanguage | null; event: boolean; shiftOn: boolean; empty: boolean };
 
 function readParams(): Params {
   const p = new URLSearchParams(window.location.search);
@@ -66,7 +66,7 @@ function forecastFor(today: string) {
   });
 }
 
-function mockHomeData(personaId: string, params: Params, sample: ReturnType<typeof buildHomeSample>): HomeData {
+export function mockHomeData(personaId: string, params: Params, sample: ReturnType<typeof buildHomeSample>): HomeData {
   const today = getTodayIST();
   const workplace = personaId.startsWith('production') || personaId === 'kitchen-crew' ? 'production' : personaId === 'rider' ? 'none' : 'store';
   const punchIn = params.shiftOn || personaId.endsWith('crew');
@@ -74,7 +74,7 @@ function mockHomeData(personaId: string, params: Params, sample: ReturnType<type
     required: true, employeeId: 'DEMO', date: today, serverNow: new Date().toISOString(), exempt: personaId === 'rider',
     workplace: workplace as kpi.ShiftToday['workplace'],
     punch: punchIn ? { employeeId: 'DEMO', date: today, outsideWorkplace: false, in: { at: istIso(today, workplace === 'production' ? '07:56' : '14:52'), source: 'manual', verified: true, distanceM: 18 }, out: null } : null,
-    settings: workplace === 'production' ? { shiftStart: '08:00', shiftEnd: '20:00', graceMin: 10, weeklyOff: [] } : { shiftStart: '15:00', shiftEnd: '22:30', graceMin: 10, weeklyOff: [] },
+    settings: workplace === 'production' ? { shiftStart: '08:00', shiftEnd: '19:00', graceMin: 10, weeklyOff: [] } : { shiftStart: '15:00', shiftEnd: '22:30', graceMin: 10, weeklyOff: [] },
     workingDay: true,
     window: { startAt: '', endAt: '', shiftStartAt: '', shiftEndAt: '' },
     pins: [{ kind: 'store', id: 'STORE-1', name: 'Store A', lat: 0, lng: 0 }],

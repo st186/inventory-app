@@ -582,7 +582,7 @@ export async function updateMyProfile(accessToken: string, updates: { phone?: st
 
 // Voice entry: one spoken sentence read into form fields (server /ai/voice-fill, Haiku).
 export interface VoiceSalesFields { paytm: number | null; cash: number | null; cashInHand: number | null; unclear: string }
-export interface VoiceExpenseItem { name: string; quantity: number | null; unit: string | null; packs?: number | null; perPack?: number | null; amount: number | null; pricePerPack?: number | null }
+export interface VoiceExpenseItem { name: string; quantity: number | null; unit: string | null; packs?: number | null; perPack?: number | null; amount: number | null; pricePerPack?: number | null; weightEachGrams?: number | null }
 export interface VoiceExpenseFields { items: VoiceExpenseItem[]; paidWith: 'cash' | 'online' | 'unknown'; unclear: string }
 
 export async function voiceFill(accessToken: string, kind: 'sales', text: string): Promise<VoiceSalesFields>;
@@ -2580,6 +2580,9 @@ export interface ExpenseFlag {
   decidedAt?: string;
   entry: (Record<string, any> & { id: string; date: string }) | null;
   canDecide?: boolean; // an expense waiting for the owner's OK is only the owner's to decide
+  /** Why a big buy was right (BigBuyReason), and the reason a later check suggests from it. */
+  reason?: string;
+  hint?: { reason: string; text: string };
 }
 
 async function tokenOr(accessToken?: string): Promise<string> {
@@ -2594,8 +2597,16 @@ export async function getExpenseFlags(accessToken?: string, status: 'open' | 'al
   return data.flags || [];
 }
 
-export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss', note?: string, accessToken?: string): Promise<void> {
-  await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
+/** reason: why a big buy was right ("Much bigger than usual": festival, shop_closed, bulk, price_up, other). */
+export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss', note?: string, accessToken?: string, reason?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note, reason }) });
+}
+
+/** Delete the entry a check is about (a double entry, or one logged for the wrong place); the server closes its checks. */
+export async function deleteFlaggedEntry(flag: ExpenseFlag, accessToken?: string): Promise<void> {
+  const token = await tokenOr(accessToken);
+  if (flag.source === 'overhead') await deleteOverhead(token, flag.expenseId);
+  else await deleteInventory(token, flag.expenseId);
 }
 
 // Production checks (server productionReview.ts): anomalies in a day's production entry, from the
@@ -2892,6 +2903,8 @@ export interface ProductionRequest {
   deliveredBy?: string; // Store In-Charge employee ID
   dispatch?: DispatchInfo; // bags, batch codes, boxes - set when shipped from app 1.15.17
   receipt?: DeliveryReceipt; // the store's count - set when received from app 1.15.17
+  // Marked received for the store by someone else; the store incharge confirms what came (owner, 29 Oct 2026).
+  receiptConfirm?: { pending: boolean; markedBy?: string; markedAt?: string; ok?: boolean; note?: string; by?: string; at?: string };
   createdAt: string;
   updatedAt: string;
 }
@@ -2941,6 +2954,15 @@ export async function shipProductionRequest(
   const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/ship`, accessToken, {
     method: 'PUT',
     body: JSON.stringify({ shippedQuantities, shippingNotes, shippedBy, shippedSauces, dispatch }),
+  });
+  return data.request;
+}
+
+// The store incharge confirms a delivery marked received for the store: all came, or what didn't.
+export async function confirmProductionReceipt(accessToken: string, id: string, ok: boolean, note?: string): Promise<ProductionRequest> {
+  const data = await fetchWithAuth(`${API_BASE}/production-requests/${id}/confirm-receipt`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ ok, note }),
   });
   return data.request;
 }

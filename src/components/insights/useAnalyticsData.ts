@@ -18,6 +18,9 @@ import { type CostLineGroup } from '../CostLineModal';
 import { counterValueByChannel } from '../../utils/channelFoodValue';
 import { getSupabaseClient } from '../../utils/supabase/client';
 import { logger } from '../../utils/logger';
+import { eventsApi } from '../../utils/eventsApi';
+import { countUTC, lastCount } from '../stock/countMath';
+import { countHistory } from '../stock/countData';
 import { getSettlementPeriod, settlementOverlapsPeriod } from '../../utils/settlementPeriod';
 
 export interface AnalyticsProps {
@@ -767,254 +770,34 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  }
  }, [analyticsMode, isClusterHead, isManager, context.productionHouses]);
 
- async function fetchRecalibrationAndCalculateOpeningBalance() {
+async function fetchRecalibrationAndCalculateOpeningBalance() {
  try {
- // IST month - the UTC one is still last month until 5:30 AM on the 1st.
- const currentMonth = getTodayIST().slice(0, 7);
- 
- // Resolve production house UUID
- // Use local stores state (loaded in useEffect) or fallback to context.stores
+ // The house's stock is its last stock count that wasn't rejected + everything since
+ // (stock/countMath.ts, worked out in productionCalc.buildStock), the same figure the stock
+ // count expects. Counts made by a production incharge are saved under a linked store's id,
+ // which the history route includes for the house.
  const allStores = stores.length > 0 ? stores : (context.stores || []);
  let productionHouseUUID = selectedProductionHouseId;
  if (selectedProductionHouseId && selectedProductionHouseId.startsWith('STORE-')) {
  const userStore = allStores.find(s => s.id === selectedProductionHouseId);
- if (userStore?.productionHouseId) {
- productionHouseUUID = userStore.productionHouseId;
+ if (userStore?.productionHouseId) productionHouseUUID = userStore.productionHouseId;
  }
- }
-
- // Fetch latest recalibration for this production house
- // IMPORTANT: Recalibration might be saved with either:
- // 1. The production house UUID (when created by cluster head/operations manager)
- // 2. The store ID (when created by production incharge who uses their storeId)
- // We need to try both and use whichever returns data
- 
- // Skip API call if no production house is selected
  if (!productionHouseUUID) {
  setLatestRecalibration(null);
  setPreviousMonthStock(null);
  return;
  }
- 
- let recalResponse = await api.fetchLatestRecalibration(
- context.user?.accessToken || '', 
- productionHouseUUID,
- 'production_house' // IMPORTANT: Specify location type to fetch production house recalibration
- );
- 
- // If no recalibration found with UUID, try to find it using the store ID
- // that maps to this production house (for production incharge created recalibrations)
- if (!recalResponse?.record && productionHouseUUID) {
- // Find store(s) that map to this production house
- const mappedStores = allStores.filter(s => s.productionHouseId === productionHouseUUID);
- 
- // Try each mapped store ID (usually there's only one production house store)
- if (mappedStores && mappedStores.length > 0) {
- for (const mappedStore of mappedStores) {
- const storeRecalResponse = await api.fetchLatestRecalibration(
- context.user?.accessToken || '', 
- mappedStore.id,
- 'production_house' // Also specify production_house for fallback
- );
- 
- if (storeRecalResponse?.record) {
- recalResponse = storeRecalResponse;
- break;
- }
- }
- }
- }
- 
- // Check if recalibration exists and is from current month
- let openingBalance: any = null;
- 
- if (recalResponse?.record) {
- const recalDate = recalResponse.record.date.substring(0, 7); // "2026-01"
- const recalDay = parseInt(recalResponse.record.date.substring(8, 10)); // Day of month
- 
- if (recalDate === currentMonth) {
- // Use recalibration as opening balance regardless of the day
- // This is the actual counted stock and becomes the new baseline
- 
- openingBalance = {};
- recalResponse.record.items.forEach((item: any) => {
- const inventoryItem = context.inventoryItems?.find(invItem => 
- invItem.id === item.itemId || invItem.name === item.itemId
- );
- 
- if (inventoryItem) {
- const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
- const stockKey = camelName.replace(/Momo(s)?$/i, '');
- openingBalance[stockKey] = item.actualQuantity;
- } else {
- // Fallback: use itemId as-is
- openingBalance[item.itemId] = item.actualQuantity;
- }
- });
- } else {
- // Recalibration is from a previous month - calculate from that point
- openingBalance = calculateStockFromRecalibration(recalResponse.record, currentMonth);
- }
- } else {
- // No recalibration - calculate from previous month's production/deliveries
- openingBalance = calculatePreviousMonthClosingStock(productionHouseUUID);
- }
- 
- setLatestRecalibration(recalResponse?.record || null);
- setPreviousMonthStock(openingBalance);
+ const token = context.user?.accessToken || '';
+ const [history, returns] = await Promise.all([
+ countHistory(token, [productionHouseUUID, selectedProductionHouseId], 'production_house'),
+ eventsApi.momoReturns('received').catch(() => []),
+ ]);
+ const base = lastCount(history, context.inventoryItems || []);
+ setLatestRecalibration(base ? { date: countUTC(base.date) } : null);
+ setPreviousMonthStock({ base, returns });
  } catch (error) {
  console.error('Error fetching recalibration:', error);
  }
- }
-
- function calculateStockFromRecalibration(recalRecord: any, targetMonth: string): any {
- // Get the recalibration date
- const recalMonth = recalRecord.date.substring(0, 7);
- 
- // Start with recalibrated quantities
- const stock: any = {};
- recalRecord.items.forEach((item: any) => {
- // Map itemId to stock key
- // itemId can be either UUID or snake_case name like "chicken_momo"
- const inventoryItem = context.inventoryItems?.find(invItem => 
- invItem.id === item.itemId || invItem.name === item.itemId
- );
- 
- if (inventoryItem) {
- // Convert snake_case to camelCase, then remove _momo suffix
- // e.g., "chicken_momo" -> "chickenMomo" -> "chicken"
- const camelName = inventoryItem.name.replace(/_([a-z])/g, (g: string) => g[1].toUpperCase());
- const stockKey = camelName.replace(/Momo(s)?$/i, '');
- stock[stockKey] = item.actualQuantity;
- } else {
- // Fallback: use itemId as-is
- stock[item.itemId] = item.actualQuantity;
- }
- });
- 
- // For each month between recalibration and target month (YYYY-MM strings, so no
- // UTC/local drift), add production and subtract deliveries
- for (let monthStr = monthAdd(recalMonth, 1); monthStr < targetMonth; monthStr = monthAdd(monthStr, 1)) {
- 
- // Get production for this month
- const monthProduction = getMonthProduction(selectedProductionHouseId, monthStr);
- const monthDeliveries = getMonthDeliveries(selectedProductionHouseId, monthStr);
- 
- // Update stock
- ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure'].forEach(type => {
- stock[type] = (stock[type] || 0) + (monthProduction[type] || 0) - (monthDeliveries[type] || 0);
- });
- }
- 
- return stock;
- }
-
- function calculatePreviousMonthClosingStock(productionHouseUUID: string | null): any {
- // Get previous month - properly handle year boundaries
- const currentMonth = getTodayIST().slice(0, 7); // "2026-01", IST (not UTC)
- const [year, month] = currentMonth.split('-').map(Number);
- 
- // Calculate previous month
- let prevYear = year;
- let prevMonth = month - 1;
- 
- // Handle year boundary (if current month is January)
- if (prevMonth === 0) {
- prevMonth = 12;
- prevYear = year - 1;
- }
- 
- // Format as YYYY-MM
- const previousMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
- 
- // Get production and deliveries for previous month
- const production = getMonthProduction(productionHouseUUID, previousMonthStr);
- const deliveries = getMonthDeliveries(productionHouseUUID, previousMonthStr);
- 
- // Calculate closing stock (production - deliveries)
- const closingStock: any = {};
- ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure'].forEach(type => {
- closingStock[type] = (production[type] || 0) - (deliveries[type] || 0);
- });
- 
- return closingStock;
- }
-
- function getMonthProduction(phId: string | null, monthStr: string): any {
- if (!phId) {
- return {};
- }
- 
- const filteredProduction = productionData.filter(p => {
- if (!p.date.startsWith(monthStr)) return false;
- 
- const matchesStoreId = p.storeId === phId;
- const matchesProductionHouseId = p.productionHouseId === phId;
- 
- let recordProductionHouseId = p.productionHouseId;
- if ((!recordProductionHouseId || recordProductionHouseId.startsWith('STORE-')) && p.storeId) {
- // Use local stores state (loaded in useEffect) or fallback to context.stores
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- const store = allStores.find(s => s.id === p.storeId);
- recordProductionHouseId = store?.productionHouseId || undefined;
- }
- 
- const resolvedPhId = recordProductionHouseId || p.storeId;
- return matchesStoreId || matchesProductionHouseId || resolvedPhId === phId;
- });
- 
- return filteredProduction.reduce((acc, p) => ({
- chicken: acc.chicken + (p.chickenMomos?.final || 0),
- chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
- veg: acc.veg + (p.vegMomos?.final || 0),
- cheeseCorn: acc.cheeseCorn + (p.cheeseCornMomos?.final || 0),
- paneer: acc.paneer + (p.paneerMomos?.final || 0),
- vegKurkure: acc.vegKurkure + (p.vegKurkureMomos?.final || 0),
- chickenKurkure: acc.chickenKurkure + (p.chickenKurkureMomos?.final || 0),
- }), {
- chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
- paneer: 0, vegKurkure: 0, chickenKurkure: 0
- });
- }
-
- function getMonthDeliveries(phId: string | null, monthStr: string): any {
- if (!phId) {
- return {};
- }
- 
- // Resolve UUID if needed
- // Use local stores state (loaded in useEffect) or fallback to context.stores
- const allStores = stores.length > 0 ? stores : (context.stores || []);
- let productionHouseUUID = phId;
- if (phId && phId.startsWith('STORE-')) {
- const userStore = allStores.find(s => s.id === phId);
- if (userStore?.productionHouseId) {
- productionHouseUUID = userStore.productionHouseId;
- }
- }
- 
- const fulfilledRequests = (context.productionRequests || []).filter(req => {
- if (req.status !== 'delivered') return false;
- 
- const requestDate = req.shippedAt || req.deliveredAt || req.requestDate || req.createdAt;
- if (!requestDate || !requestDate.startsWith(monthStr)) return false;
- 
- const requestingStore = allStores.find(s => s.id === req.storeId);
- return requestingStore?.productionHouseId === productionHouseUUID;
- });
- 
- return fulfilledRequests.reduce((acc, req) => ({
- chicken: acc.chicken + (req.chickenMomos || 0),
- chickenCheese: acc.chickenCheese + (req.chickenCheeseMomos || 0),
- veg: acc.veg + (req.vegMomos || 0),
- cheeseCorn: acc.cheeseCorn + (req.cheeseCornMomos || 0),
- paneer: acc.paneer + (req.paneerMomos || 0),
- vegKurkure: acc.vegKurkure + (req.vegKurkureMomos || 0),
- chickenKurkure: acc.chickenKurkure + (req.chickenKurkureMomos || 0),
- }), {
- chicken: 0, chickenCheese: 0, veg: 0, cheeseCorn: 0,
- paneer: 0, vegKurkure: 0, chickenKurkure: 0
- });
  }
 
  // Production data debug logging
@@ -3161,10 +2944,6 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
   getDateRangeBounds,
   getPreviousPeriodDateRange,
   fetchRecalibrationAndCalculateOpeningBalance,
-  calculateStockFromRecalibration,
-  calculatePreviousMonthClosingStock,
-  getMonthProduction,
-  getMonthDeliveries,
   periodRange,
   filterByTimeRange,
   timeFilteredSalesData,

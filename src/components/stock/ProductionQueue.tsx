@@ -1,5 +1,5 @@
 // Production -> Requests: the queue (To pack · Packed · Sent), one row per store or event
-// stall request, and the momo totals asked for today. Tapping a row opens the request sheet
+// stall request (momo pieces, then the sauces, soup and supplies asked for), and today's totals. Tapping a row opens the request sheet
 // (RequestSheet.tsx) with the next step: Accept -> Start packing -> Mark packed -> Ship.
 import * as React from 'react';
 import { CheckCircle2, Inbox, Store, Tent } from 'lucide-react';
@@ -13,7 +13,7 @@ import type { ProductionRequest } from '../../utils/api';
 import { getTodayIST } from '../../utils/timezone';
 import type { StockRequestsVM } from './useStockRequests';
 import { totalsByType } from './stockMath';
-import { RequestStatusChip, dayLabel, formatCount, momoName, queueBucket, requestTotalPieces, timeLabel, type QueueBucket } from './stockShared';
+import { RequestStatusChip, dayLabel, formatCount, momoName, queueBucket, requestExtras, requestExtrasText, requestTotalPieces, timeLabel, type QueueBucket } from './stockShared';
 
 const SENT_PAGE = 20;
 
@@ -22,6 +22,9 @@ export function RequestRow({ request, keys, onOpen, showStore = true }: { reques
   const isEvent = !!(request as any).eventId;
   const pieces = requestTotalPieces(request, keys);
   const sent = request.shippedAt ? t('stock.queue.leftAt', { time: timeLabel(request.shippedAt) }) : t('stock.queue.sentAtBy', { time: timeLabel(request.createdAt), name: request.requestedByName || request.requestedBy });
+  // Sauces and soup used to show only inside the request (owner, 29 Oct 2026).
+  const extras = requestExtrasText(request);
+  const line = [showStore ? t('stock.queue.forDay', { day: dayLabel(lang, request.requestDate) }) : null, sent, t('stock.pcs', { n: formatCount(pieces) })].filter(Boolean).join(' · ');
   return (
     <ListRow
       id={`request-${request.id}`}
@@ -34,7 +37,7 @@ export function RequestRow({ request, keys, onOpen, showStore = true }: { reques
           </span>
         ) : t('stock.queue.forDay', { day: dayLabel(lang, request.requestDate) })
       }
-      subtitle={[showStore ? t('stock.queue.forDay', { day: dayLabel(lang, request.requestDate) }) : null, sent, t('stock.pcs', { n: formatCount(pieces) })].filter(Boolean).join(' · ')}
+      subtitle={extras ? <>{line}<br />{t('stock.queue.alsoAsked', { list: extras })}</> : line}
       trailing={<RequestStatusChip status={request.status} />}
       onClick={onOpen}
     />
@@ -58,6 +61,33 @@ export function MomoTotalsToday({ vm }: { vm: StockRequestsVM }) {
     >
       {sum > 0 && finishedProducts.filter(({ camelKey }) => (totals[camelKey] || 0) > 0).map(({ camelKey, label }) => (
         <ListRow key={camelKey} density="compact" title={momoName(lang, camelKey, label)} trailing={<span className="num text-body-md font-semibold text-text">{formatCount(totals[camelKey])}</span>} />
+      ))}
+    </ListGroup>
+  );
+}
+
+/** The sauces and soup (which stores), kitchen supplies and utilities (added up) asked for today. */
+export function ExtrasToday({ vm }: { vm: StockRequestsVM }) {
+  const { t } = useT();
+  const today = getTodayIST();
+  const sauces = new Map<string, string[]>();
+  const supplies = new Map<string, { name: string; qty: number; unit: string }>();
+  for (const r of vm.requests.filter((x) => x.requestDate === today)) {
+    const { sauces: s, supplies: u } = requestExtras(r);
+    for (const name of s) sauces.set(name, [...(sauces.get(name) || []), r.storeName || t('stock.queue.unknownStore')]);
+    for (const x of u) {
+      const k = `${x.name}|${x.unit}`;
+      supplies.set(k, { ...x, qty: (supplies.get(k)?.qty || 0) + x.qty });
+    }
+  }
+  if (!sauces.size && !supplies.size) return null;
+  return (
+    <ListGroup title={t('stock.queue.extrasToday')}>
+      {[...sauces].map(([name, stores]) => (
+        <ListRow key={`s-${name}`} density="compact" title={name} subtitle={stores.join(', ')} />
+      ))}
+      {[...supplies.values()].map((x) => (
+        <ListRow key={`u-${x.name}-${x.unit}`} density="compact" title={x.name} trailing={<span className="num text-body-md font-semibold text-text">{formatCount(x.qty)}{x.unit ? ` ${x.unit}` : ''}</span>} />
       ))}
     </ListGroup>
   );

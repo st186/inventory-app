@@ -10,13 +10,16 @@ import { confirm } from '../ui/confirm';
 import { getSupabaseClient } from '../../utils/supabase/client';
 import { getAssignedProductionHouseIds, getAssignedStoreIds, getDefaultStoreId } from '../../utils/entityAccess';
 import { bagSize, roundUpToBags, isPhase1Live } from '../../utils/batches';
-import { getTodayIST } from '../../utils/timezone';
+import { addDays, getTodayIST } from '../../utils/timezone';
 import { suggestRequest, type ForecastDay, type MomoKey } from '../../utils/forecast';
 import { t } from '../../utils/i18n';
 import { getAppLanguage } from '../../utils/appLanguage';
 import { DispatchDraft, emptyDispatchDraft, buildDispatchInfo } from '../dispatch/ShipDialogBags';
 import { getStockFilterRange, type StockFilterPreset } from './requestPeriods';
 import type { QueueBucket } from './stockShared';
+import { lastCount } from './countMath';
+import { countHistory, storeWastageSince } from './countData';
+import type { StoreBase } from './stockMath';
 import { dayLabel, requestStatusWord } from './stockShared';
 
 export interface StockRequestsProps {
@@ -71,10 +74,8 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   // Form state for new request - DYNAMIC for all finished products
   const [momoQuantities, setMomoQuantities] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
-  // Always default to today (no time restriction)
-  const getDefaultRequestDate = () => {
-    return getLocalDateString();
-  };
+  // Tomorrow: each day's request is sent the night before, by midnight (owner, 29 Oct 2026).
+  const getDefaultRequestDate = () => addDays(getTodayIST(), 1);
   const [requestDate, setRequestDate] = useState(getDefaultRequestDate());
   const [lastReminderDate, setLastReminderDate] = useState<string | null>(null);
 
@@ -118,11 +119,9 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   // Store recalibration modal state
   const [showStoreRecalibration, setShowStoreRecalibration] = useState(false);
   
-  // Store opening balance state
-  const [storeOpeningBalance, setStoreOpeningBalance] = useState<any>(null);
-  
-  // Most recent recalibration state (for mid-month recalibrations)
-  const [mostRecentRecalibration, setMostRecentRecalibration] = useState<any>(null);
+  // Each store in scope: its last stock count that wasn't rejected and the wastage logged since
+  // (stock/countMath.ts). null while loading.
+  const [storeBases, setStoreBases] = useState<StoreBase[] | null>(null);
   
   // Stock alert thresholds state - DYNAMIC
   const [showThresholdSettings, setShowThresholdSettings] = useState(false);
@@ -447,9 +446,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   // Load opening balance after salesData is loaded
   useEffect(() => {
     if (salesData.length >= 0 && context.inventoryItems && context.inventoryItems.length > 0) {
-      // Reset opening balance to null before recalculating to ensure fresh calculation
-      setStoreOpeningBalance(null);
-      setMostRecentRecalibration(null);
+      setStoreBases(null);
       loadStoreOpeningBalance();
     }
   }, [salesData, context.user, selectedStoreId, storeScopeKey, singleScopedStoreId, context.stores, context.inventoryItems]);
@@ -660,86 +657,26 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     }
   };
 
-  // Maps a recalibration record's items to a { camelKey: quantity } stock object.
-  const recalToStock = (recal: any): Record<string, number> => {
-    const stock: Record<string, number> = {};
-    (recal.items || []).forEach((item: any) => {
-      const inventoryItem = context.inventoryItems?.find(invItem =>
-        invItem.id === item.itemId || invItem.name === item.itemId
-      );
-      if (inventoryItem) {
-        const camelKey = inventoryItem.name.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-        stock[camelKey] = item.actualQuantity;
-      }
-    });
-    return stock;
-  };
-
-  // Opening balance for a store = the most recent recalibration on or before the range's
-  // start date (zero if the store has never been recalibrated). A recalibration that falls
-  // WITHIN the range (after start, on/before end) is returned separately as a mid-range
-  // override, since received/sold before that point shouldn't be double-counted against it.
-  const loadStoreRecalBaseline = async (storeId: string, rangeStart: string, rangeEnd: string) => {
-    const zeroBalance: Record<string, number> = {};
-    finishedProducts.forEach(({ camelKey }) => { zeroBalance[camelKey] = 0; });
-
-    if (!context.user?.accessToken || !storeId) return { opening: zeroBalance, midRange: null as { date: string; stock: Record<string, number> } | null };
-
-    try {
-      const recalHistory = await api.getRecalibrationHistory(context.user.accessToken, storeId, 'store');
-      const history = recalHistory?.history || [];
-      if (history.length === 0) return { opening: zeroBalance, midRange: null };
-
-      const sorted = [...history].sort((a: any, b: any) => b.date.localeCompare(a.date));
-      const baseline = sorted.find((r: any) => r.date.substring(0, 10) <= rangeStart);
-      const midRange = sorted.find((r: any) => r.date.substring(0, 10) > rangeStart && r.date.substring(0, 10) <= rangeEnd);
-
-      return {
-        opening: baseline ? recalToStock(baseline) : zeroBalance,
-        midRange: midRange ? { date: midRange.date, stock: recalToStock(midRange) } : null,
-      };
-    } catch (error) {
-      console.error(`Error loading recalibration history for store ${storeId}:`, error);
-      return { opening: zeroBalance, midRange: null };
-    }
-  };
-
+  // What "On hand" starts from for each store in scope: its last stock count that wasn't rejected
+  // (at any date - the old opening balance only looked at counts up to the 1st and dropped
+  // every month in between) and the wastage logged since.
   const loadStoreOpeningBalance = async () => {
-    if (!context.user?.accessToken) return;
-
-    const { start, end } = getStockFilterRange('thisMonth', { from: '', to: '' });
-
+    const token = context.user?.accessToken;
+    if (!token) return;
+    const storeIds = singleScopedStoreId
+      ? [singleScopedStoreId]
+      : (context.stores || []).filter(store => scopedStoreIds === null || scopedStoreIds.includes(store.id)).map(store => store.id);
     try {
-      if (!singleScopedStoreId) {
-        const allStores = scopedStoreIds === null
-          ? (context.stores || [])
-          : (context.stores || []).filter(store => scopedStoreIds.includes(store.id));
-        const aggregatedBalance: Record<string, number> = {};
-        finishedProducts.forEach(({ camelKey }) => { aggregatedBalance[camelKey] = 0; });
-
-        for (const store of allStores) {
-          const { opening } = await loadStoreRecalBaseline(store.id, start, end);
-          Object.keys(opening).forEach(key => {
-            aggregatedBalance[key] = (aggregatedBalance[key] || 0) + opening[key];
-          });
-        }
-
-        setStoreOpeningBalance(aggregatedBalance);
-        // Mid-range recalibration overrides aren't meaningfully aggregable across multiple
-        // stores at once, so "All Stores" always uses the plain opening+received-sold path.
-        setMostRecentRecalibration(null);
-        return;
-      }
-
-      const { opening, midRange } = await loadStoreRecalBaseline(singleScopedStoreId, start, end);
-      setStoreOpeningBalance(opening);
-      setMostRecentRecalibration(midRange);
+      const bases = await Promise.all(storeIds.map(async (storeId) => {
+        const base = lastCount(await countHistory(token, [storeId], 'store'), context.inventoryItems || []);
+        const wastage = await storeWastageSince(token, storeId, base).catch(() => []);
+        return { storeId, base, wastage };
+      }));
+      setStoreBases(bases);
     } catch (error) {
-      console.error('Error loading opening balance:', error);
-      const zeroBalance: Record<string, number> = {};
-      finishedProducts.forEach(({ camelKey }) => { zeroBalance[camelKey] = 0; });
-      setStoreOpeningBalance(zeroBalance);
-      setMostRecentRecalibration(null);
+      // No figures rather than figures from the wrong starting point.
+      console.error('Error loading the last stock counts:', error);
+      setStoreBases([]);
     }
   };
 
@@ -1175,10 +1112,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     setExpandedDates,
     showStoreRecalibration,
     setShowStoreRecalibration,
-    storeOpeningBalance,
-    setStoreOpeningBalance,
-    mostRecentRecalibration,
-    setMostRecentRecalibration,
+    storeBases,
     showThresholdSettings,
     setShowThresholdSettings,
     stockThresholds,
@@ -1247,8 +1181,6 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     ensureFromLoaded,
     loadSalesData,
     handleSyncPosNow,
-    recalToStock,
-    loadStoreRecalBaseline,
     loadStoreOpeningBalance,
     handleSubmitRequest,
     handleConfirmAndSubmit,

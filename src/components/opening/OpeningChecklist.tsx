@@ -49,7 +49,7 @@ export function OpeningChecklistCard() {
         const allDone = c.done >= c.total;
         const late = !allDone && nowHHMM() > c.dueBy;
         return (
-          <section key={c.storeId} className={cn('flex flex-col gap-3 rounded-lg border bg-surface p-4', late ? 'border-danger-border' : 'border-border')}>
+          <section key={c.storeId} data-tour="opening" className={cn('flex flex-col gap-3 rounded-lg border bg-surface p-4', late ? 'border-danger-border' : 'border-border')}>
             <div className="flex items-start justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2.5">
                 <ClipboardCheck className="size-5 shrink-0 text-primary" aria-hidden="true" />

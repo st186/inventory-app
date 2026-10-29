@@ -10,23 +10,38 @@
 //   each line through the usual expense routes (so production cash and the expense checks run as
 //   for any expense) and reports each one back here. Flags on the list close when their line is
 //   logged; a line not found puts its flags back to open.
+//   Vendors (owner, 28 Oct 2026): lines can come from a vendor (vegetables, grocery, Kalimata, butter,
+//   chicken). The writer sends each vendor its part on WhatsApp from the app (the phone opens WhatsApp
+//   with the text; nothing is sent from the server), and the app keeps when. Saving a line with a
+//   vendor teaches the app that item's vendor for next time.
+//   Quantities (owner, 28 Oct 2026): packs say the size of each (2 packets x 1 L), vegetables go by
+//   weight, leafy herbs by the bundle. The app checks each line as it is written; before sending,
+//   Bunny (the same small AI model and monthly cap as the rest, insights.ts) checks the whole list
+//   and suggests a corrected line for anything unclear.
 // Registered from kpi.ts; lists waiting for the end of quiet hours go out with the store-cover cron.
 //
 //   supply-alert:{id}     one flag, and everyone who raised it
 //   shopping-list:{id}    the list, what was got, what was logged
+//   supply-vendor:{id}    a vendor: name, WhatsApp number, the items it supplies
+//   supply-item-specs     how each item was last written on a list (unit, pack size)
 import { P, actorOf, loadPlaces, type Actor, type KpiDeps } from './attendance.ts';
 import { istDate } from './kpiCore.ts';
 import { DEFAULT_PREFS } from './notificationRules.ts';
 import { isBillPath } from './expensePaperwork.ts';
+import { AiError, askClaudeForJson } from './insights.ts';
 import {
-  alertRecipients, deliverAt, isInchargeOf, isOwnerEmp, itemKey, linesPreview, listProgress, placeOf,
-  type EntryKind, type Place, type ShoppingLine, type ShoppingList, type SupplyAlert,
+  PACK_UNITS, alertRecipients, deliverAt, isInchargeOf, isOwnerEmp, itemKey, learnSpecs, learnVendorItems, linesPreview, listProgress, placeOf,
+  type EntryKind, type ItemSpec, type Place, type ShoppingLine, type ShoppingList, type SupplyAlert, type Vendor, type VendorKind,
 } from './suppliesRules.ts';
 
 const alertKey = (id: string) => `supply-alert:${id}`;
 const listKey = (id: string) => `shopping-list:${id}`;
+const vendorKey = (id: string) => `supply-vendor:${id}`;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const UNITS = new Set(['g', 'kg', 'pcs', 'L', 'mL', 'packet', 'carton', 'box', 'roll', 'bundle']);
+const UNITS = new Set(['g', 'kg', 'L', 'mL', 'pcs', 'packet', 'bottle', 'jar', 'bag', 'box', 'carton', 'tin', 'roll', 'bundle']);
+const SIZE_UNITS = new Set(['g', 'kg', 'mL', 'L', 'pcs']);
+const VENDOR_KINDS = new Set<VendorKind>(['vegetables', 'grocery', 'dairy', 'meat', 'other']);
+const SPECS_KEY = 'supply-item-specs';
 const newId = () => [...crypto.getRandomValues(new Uint8Array(9))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const clip = (s: unknown, n: number) => String(s ?? '').trim().slice(0, n);
 const num = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? Math.round(x * 1000) / 1000 : null; };
@@ -36,6 +51,18 @@ const shopperNote = (list: ShoppingList, nowMs: number) => ({
   title: `Shopping list for ${list.date === istDate(nowMs) ? 'today' : istDay(list.date)}: ${list.lines.length} item${list.lines.length === 1 ? '' : 's'}`,
   message: `From ${list.createdByName}: ${linesPreview(list.lines)}.${list.note ? ` "${list.note}"` : ''} Home > Shopping list.`,
 });
+
+// What Bunny checks on a shopping list (owner's rules, 28 Oct 2026).
+const QUANTITY_PROMPT = `You check a shopping list for Bunny Momos, a momo shop in Bardhaman, West Bengal, before it goes to vendors on WhatsApp. Every line must say exactly what to hand over, so the vendor cannot misread it.
+
+The rules:
+1. Anything sold in packs - oil, sauces, ketchup, mayonnaise, masalas and powders, gravies, ajinomoto, cheese, butter, sachets, seeds sold in packets - needs BOTH the number of packs (packet, bottle, jar, bag, box, carton or tin) AND the size of each pack (g, kg, mL, L, or pcs inside). "Oil 2 pcs" is wrong; "Oil 2 packets x 1 L" is right. A masala written only as a weight ("Chat masala 200 g") is wrong; "2 packets x 100 g" is right.
+2. Vegetables go by weight (g or kg). Only leafy herbs - coriander leaves, pudina (mint), curry leaves, spring onion, methi, palak - go by the bundle, and they must be by the bundle. Lemons, limes and eggs may be counted in pcs.
+3. Loose staples weighed out at the shop (maida, sugar, rice, besan, salt) may be a plain weight.
+4. Chicken and meat go by weight in kg.
+5. The amount must be believable for a small momo shop buying for a day or two: flag a likely typo (400 kg ginger, 0.5 g chilli, 60 packets of oil).
+
+For each line that breaks a rule, return the problem in one short sentence for the manager (plain English, no jargon) and the corrected amount. Pick the pack size from how it was bought before when that is given, otherwise the usual Indian retail pack (1 L oil pouch, 1 kg mayonnaise, 100 g masala, 500 g butter); if you cannot tell, leave packSize null and say what to ask the vendor. Lines that follow the rules: leave them out. Never comment on prices.`;
 
 type Ctx = { employees: any[]; places: Awaited<ReturnType<typeof loadPlaces>>; names: Map<string, string> };
 async function loadCtx(deps: KpiDeps): Promise<Ctx> {
@@ -63,6 +90,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
     deps.notifyUser ? deps.notifyUser(authUserId, type, title, message, relatedId).catch(() => undefined) : Promise.resolve(undefined);
   const allAlerts = async () => ((await deps.getAllByPrefix('supply-alert:')) || []).filter((a: any) => a?.id && a.placeId) as SupplyAlert[];
   const allLists = async () => ((await deps.getAllByPrefix('shopping-list:')) || []).filter((l: any) => l?.id && Array.isArray(l.lines)) as ShoppingList[];
+  const allVendors = async () => ((await deps.kv.getByPrefix<any>('supply-vendor:')) || []).filter((v: any) => v?.id && v.name && Array.isArray(v.items)) as Vendor[];
 
   // Tell everyone who raised a flag what happened to it (not the person who did it).
   const tellRaisers = async (ctx: Ctx, al: SupplyAlert, title: string, message: string, exceptId: string | null) => {
@@ -170,10 +198,143 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
     } catch (err) { return fail(c, err); }
   });
 
+  // ---------------- Vendors ----------------
+
+  const phoneOf = (v: unknown) => String(v ?? '').replace(/\D/g, '');
+  const cleanVendor = (body: any, others: Vendor[]): { name: string; kind: VendorKind; phone?: string; items: string[] } | string => {
+    const name = clip(body?.name, 40);
+    if (!name) return 'Write the vendor\'s name';
+    if (others.some((o) => o.name.trim().toLowerCase() === name.toLowerCase())) return `There is already a vendor called ${name}`;
+    const phone = phoneOf(body?.phone);
+    if (phone && (phone.length < 10 || phone.length > 13)) return 'Check the WhatsApp number: 10 digits';
+    const seen = new Set<string>();
+    const items = (Array.isArray(body?.items) ? body.items : []).map((i: unknown) => clip(i, 60)).filter((i: string) => {
+      const k = itemKey(i);
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }).slice(0, 200);
+    return { name, kind: VENDOR_KINDS.has(body?.kind) ? body.kind : 'other', phone: phone || undefined, items };
+  };
+  // An item belongs to one vendor: one saved here comes off the others.
+  const takeItems = async (keep: Vendor, all: Vendor[]) => {
+    const mine = new Set(keep.items.map(itemKey));
+    for (const v of all) {
+      if (v.id === keep.id || !v.items.some((i) => mine.has(itemKey(i)))) continue;
+      await deps.kv.set(vendorKey(v.id), { ...v, items: v.items.filter((i) => !mine.has(itemKey(i))), updatedAt: keep.updatedAt });
+    }
+  };
+
+  // The owner and ops: the vendors, and how each item was last written on a list.
+  app.get(`${P}/supply-vendors`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can see the vendors' }, 403);
+    try {
+      const [vendors, specs] = await Promise.all([allVendors(), deps.kv.get<Record<string, ItemSpec>>(SPECS_KEY)]);
+      return c.json({ vendors: vendors.sort((a, b) => a.name.localeCompare(b.name)), specs: specs || {} });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // Bunny checks a list's quantities before it is sent: each line must say exactly what to hand
+  // over. Only item names, amounts, vendor types and past amounts go to the AI.
+  app.post(`${P}/shopping-lists/check`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can check a list' }, 403);
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const lines = (Array.isArray(body?.lines) ? body.lines : []).slice(0, 80).map((l: any) => ({
+        key: clip(l?.key, 20), item: clip(l?.item, 60), amount: clip(l?.amount, 40) || 'not given',
+        vendor: VENDOR_KINDS.has(l?.vendorKind) ? l.vendorKind : 'a shop', before: clip(l?.before, 80) || undefined,
+      })).filter((l: any) => l.key && l.item);
+      if (!lines.length) return c.json({ issues: [] });
+      const n = { anyOf: [{ type: 'number' }, { type: 'null' }] };
+      const { data } = await askClaudeForJson(deps.kv, {
+        purpose: 'shopping-check', user: { id: actor!.userId, isOwner: actor!.isOwner }, effort: 'low', maxTokens: 2500,
+        system: QUANTITY_PROMPT,
+        prompt: `The list (JSON, one object per line; "before" is how it was bought last time, from the expenses):\n${JSON.stringify(lines)}`,
+        schema: {
+          type: 'object', additionalProperties: false, required: ['issues'],
+          properties: {
+            issues: {
+              type: 'array',
+              items: {
+                type: 'object', additionalProperties: false, required: ['key', 'problem', 'qty', 'unit', 'packSize', 'packUnit'],
+                properties: {
+                  key: { type: 'string', description: 'The line\'s key, exactly as given' },
+                  problem: { type: 'string', description: 'One short plain-English sentence: what is unclear and what to write instead' },
+                  qty: { ...n, description: 'Corrected number of packs, or the weight/count; null if it cannot be known' },
+                  unit: { anyOf: [{ type: 'string', enum: [...UNITS] }, { type: 'null' }] },
+                  packSize: { ...n, description: 'Size of each pack when unit is a pack (packet, bottle, jar, bag, box, carton, tin); null if unknown or not a pack' },
+                  packUnit: { anyOf: [{ type: 'string', enum: [...SIZE_UNITS] }, { type: 'null' }] },
+                },
+              },
+            },
+          },
+        },
+      });
+      const keys = new Set(lines.map((l: any) => l.key));
+      const issues = (Array.isArray(data?.issues) ? data.issues : []).filter((i: any) => keys.has(i?.key) && i.problem).map((i: any) => ({
+        key: String(i.key), problem: clip(i.problem, 200),
+        fix: num(i.qty) && UNITS.has(String(i.unit)) ? {
+          qty: num(i.qty), unit: String(i.unit),
+          ...(PACK_UNITS.has(String(i.unit)) && num(i.packSize) && SIZE_UNITS.has(String(i.packUnit)) ? { packSize: num(i.packSize), packUnit: String(i.packUnit) } : {}),
+        } : null,
+      }));
+      return c.json({ issues });
+    } catch (err: any) {
+      if (err instanceof AiError) return c.json({ error: err.message }, err.status);
+      return fail(c, err);
+    }
+  });
+
+  app.post(`${P}/supply-vendors`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can add a vendor' }, 403);
+    try {
+      const all = await allVendors();
+      if (all.length >= 40) return c.json({ error: 'That is the most vendors the app keeps' }, 400);
+      const v = cleanVendor(await c.req.json().catch(() => ({})), all);
+      if (typeof v === 'string') return c.json({ error: v }, 400);
+      const now = new Date().toISOString();
+      const vendor: Vendor = { id: newId(), ...v, createdAt: now, updatedAt: now };
+      await deps.kv.set(vendorKey(vendor.id), vendor);
+      await takeItems(vendor, all);
+      return c.json({ vendor });
+    } catch (err) { return fail(c, err); }
+  });
+
+  app.put(`${P}/supply-vendors/:id`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can change a vendor' }, 403);
+    try {
+      const all = await allVendors();
+      const cur = all.find((v) => v.id === c.req.param('id'));
+      if (!cur) return c.json({ error: 'That vendor was not found' }, 404);
+      const v = cleanVendor(await c.req.json().catch(() => ({})), all.filter((o) => o.id !== cur.id));
+      if (typeof v === 'string') return c.json({ error: v }, 400);
+      const vendor: Vendor = { ...cur, ...v, phone: v.phone, updatedAt: new Date().toISOString() };
+      await deps.kv.set(vendorKey(vendor.id), vendor);
+      await takeItems(vendor, all);
+      return c.json({ vendor });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // Lists keep the vendor's name on their lines, so old lists still read right.
+  app.delete(`${P}/supply-vendors/:id`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can remove a vendor' }, 403);
+    try {
+      const cur = await deps.kv.get<Vendor>(vendorKey(c.req.param('id')));
+      if (!cur) return c.json({ error: 'That vendor was not found' }, 404);
+      await deps.kv.del(vendorKey(cur.id));
+      return c.json({ ok: true });
+    } catch (err) { return fail(c, err); }
+  });
+
   // ---------------- Shopping lists ----------------
 
   const canShop = (a: Actor, l: ShoppingList) => isLead(a) || (!!a.employeeId && a.employeeId === l.assigneeId);
-  const cleanLines = (ctx: Ctx, raw: unknown, before: ShoppingLine[] = []): ShoppingLine[] | string => {
+  const cleanLines = (ctx: Ctx, vendors: Vendor[], raw: unknown, before: ShoppingLine[] = []): ShoppingLine[] | string => {
     if (!Array.isArray(raw) || !raw.length) return 'Add at least one item';
     if (raw.length > 80) return 'That is too many lines for one list';
     const out: ShoppingLine[] = [];
@@ -183,11 +344,16 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       const place = knownPlace(ctx, r?.placeKind, r?.placeId);
       if (!place) return `Pick where ${item} is for`;
       const old = before.find((b) => b.id === r?.id);
+      const vendor = r?.vendorId ? vendors.find((v) => v.id === String(r.vendorId)) : null;
+      const unit = UNITS.has(String(r?.unit)) ? String(r.unit) : 'pcs';
+      const packSize = PACK_UNITS.has(unit) ? num(r?.packSize) : null;
+      const packUnit = packSize && SIZE_UNITS.has(String(r?.packUnit)) ? String(r.packUnit) : null;
       out.push({
         id: old?.id || newId(), item, itemBn: clip(r?.itemBn, 60) || undefined,
         entryType: (r?.entryType === 'overhead' ? 'overhead' : 'inventory') as EntryKind, category: clip(r?.category, 40) || 'staples',
-        qty: num(r?.qty) || 0, unit: UNITS.has(String(r?.unit)) ? String(r.unit) : 'pcs', placeKind: place.kind, placeId: place.id, placeName: placeName(ctx, place),
+        qty: num(r?.qty) || 0, unit, packSize: packUnit ? packSize : null, packUnit, placeKind: place.kind, placeId: place.id, placeName: placeName(ctx, place),
         note: clip(r?.note, 120) || undefined, alertIds: Array.isArray(r?.alertIds) ? r.alertIds.map(String).slice(0, 10) : undefined,
+        vendorId: vendor?.id || null, vendorName: vendor?.name || undefined,
         got: old?.got ?? null, missing: old?.missing, logged: old?.logged ?? null, skipped: old?.skipped,
       });
     }
@@ -204,6 +370,13 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (listed && (al.status !== 'listed' || al.listId !== list.id)) await deps.kv.set(alertKey(id), { ...al, status: 'listed', listId: list.id, updatedAt: new Date().toISOString() });
       if (!listed && al.status === 'listed' && al.listId === list.id) await deps.kv.set(alertKey(id), { ...al, status: 'open', listId: null, updatedAt: new Date().toISOString() });
     }
+  };
+  // Items saved with a vendor are that vendor's from now on.
+  // and each item starts from how it was last written.
+  const learnVendors = async (vendors: Vendor[], lines: ShoppingLine[]) => {
+    const now = new Date().toISOString();
+    for (const v of learnVendorItems(vendors, lines)) await deps.kv.set(vendorKey(v.id), { ...v, items: v.items.slice(0, 200), updatedAt: now });
+    await deps.kv.set(SPECS_KEY, learnSpecs((await deps.kv.get<Record<string, ItemSpec>>(SPECS_KEY)) || {}, lines, now));
   };
   const tellShopper = async (ctx: Ctx, list: ShoppingList) => {
     const person = ctx.employees.find((e) => String(e.employeeId) === list.assigneeId);
@@ -223,13 +396,15 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
   };
   const view = (a: Actor, l: ShoppingList) => ({ ...l, progress: listProgress(l), canEdit: isLead(a), canShop: canShop(a, l) });
 
-  // The owner and ops: lists from the last week and any still open. The shopper: theirs once sent.
+  // The owner and ops: lists from the last week (?days= up to 90, for Shopping lists under More)
+  // and any still open. The shopper: theirs once sent.
   app.get(`${P}/shopping-lists`, async (c: any) => {
     const { actor, error } = await actorOf(deps, c); if (error) return error;
     try {
       const lead = isLead(actor!);
       const today = istDate(Date.now());
-      const weekAgo = istDate(Date.now() - 7 * 86400000);
+      const days = Math.min(90, Math.max(7, Number(c.req.query('days')) || 7));
+      const weekAgo = istDate(Date.now() - days * 86400000);
       const open = (l: ShoppingList) => l.status === 'draft' || l.status === 'sent' || l.status === 'shopping' || l.status === 'bought';
       const lists = (await allLists())
         .filter((l) => l.status !== 'cancelled')
@@ -256,7 +431,8 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       const date = DATE.test(String(body?.date)) ? String(body.date) : istDate(Date.now() + 86400000);
       const person = ctx.employees.find((e) => String(e.employeeId) === String(body?.assigneeId));
       if (!person) return c.json({ error: 'Pick who does the shopping' }, 400);
-      const lines = cleanLines(ctx, body?.lines);
+      const vendors = await allVendors();
+      const lines = cleanLines(ctx, vendors, body?.lines);
       if (typeof lines === 'string') return c.json({ error: lines }, 400);
       const now = new Date().toISOString();
       let list: ShoppingList = {
@@ -267,6 +443,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (body?.send) list = await send(ctx, list);
       await deps.kv.set(listKey(list.id), list);
       await syncAlerts(list);
+      await learnVendors(vendors, list.lines);
       return c.json({ list: view(actor!, list) });
     } catch (err) { return fail(c, err); }
   });
@@ -283,7 +460,8 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       const ctx = await loadCtx(deps);
       const person = body?.assigneeId ? ctx.employees.find((e) => String(e.employeeId) === String(body.assigneeId)) : null;
       if (body?.assigneeId && !person) return c.json({ error: 'Pick who does the shopping' }, 400);
-      const lines = body?.lines ? cleanLines(ctx, body.lines, list.lines) : list.lines;
+      const vendors = await allVendors();
+      const lines = body?.lines ? cleanLines(ctx, vendors, body.lines, list.lines) : list.lines;
       if (typeof lines === 'string') return c.json({ error: lines }, 400);
       let next: ShoppingList = {
         ...list, lines, date: DATE.test(String(body?.date)) ? String(body.date) : list.date, note: body?.note !== undefined ? clip(body.note, 200) || undefined : list.note,
@@ -294,6 +472,43 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (body?.send && (next.status === 'draft' || (person && person.employeeId !== list.assigneeId))) next = await send(ctx, next);
       await deps.kv.set(listKey(list.id), next);
       await syncAlerts(next, list.lines);
+      if (body?.lines) await learnVendors(vendors, next.lines);
+      return c.json({ list: view(actor!, next) });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // When the shopper first opened the list (the shopping-list notification they read), for the
+  // owner's timeline under More > Shopping lists.
+  app.get(`${P}/shopping-lists/:id/seen`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can see this' }, 403);
+    try {
+      const list = await deps.kv.get<ShoppingList>(listKey(c.req.param('id')));
+      if (!list) return c.json({ error: 'That list was not found' }, 404);
+      const person = await deps.kv.get<any>(`unified-employee:${list.assigneeId}`);
+      if (!person?.authUserId) return c.json({ seenAt: null, reachedAt: null });
+      const mine = ((await deps.getAllByPrefix(`notification:${person.authUserId}:`)) || [])
+        .filter((n: any) => n?.relatedId === list.id && n.type === 'shopping_list');
+      const first = (xs: (string | undefined)[]) => xs.filter((x): x is string => !!x).sort()[0] || null;
+      return c.json({ reachedAt: first(mine.map((n: any) => n.createdAt)), seenAt: first(mine.map((n: any) => n.readAt)) });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // The writer sent a vendor its part on WhatsApp (from their phone): when, and what it said.
+  app.post(`${P}/shopping-lists/:id/vendor-sent`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can order from vendors' }, 403);
+    try {
+      const list = await deps.kv.get<ShoppingList>(listKey(c.req.param('id')));
+      if (!list || list.status === 'cancelled') return c.json({ error: 'That list was not found' }, 404);
+      const body = await c.req.json().catch(() => ({}));
+      const vendorId = clip(body?.vendorId, 40);
+      if (!vendorId || !list.lines.some((l) => l.vendorId === vendorId)) return c.json({ error: 'Nothing on this list is from that vendor' }, 400);
+      const next: ShoppingList = {
+        ...list, vendorOrders: { ...(list.vendorOrders || {}), [vendorId]: { at: new Date().toISOString(), byName: actor!.name, sig: clip(body?.sig, 4000) } },
+        updatedAt: new Date().toISOString(),
+      };
+      await deps.kv.set(listKey(list.id), next);
       return c.json({ list: view(actor!, next) });
     } catch (err) { return fail(c, err); }
   });
@@ -325,6 +540,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (!line) return c.json({ error: 'That line is not on the list' }, 404);
       const qty = num(body?.qty);
       line.missing = body?.missing === true && !qty;
+      line.missingAt = line.missing ? new Date().toISOString() : undefined;
       line.got = qty ? { qty, at: new Date().toISOString() } : null;
       const next: ShoppingList = { ...list, status: 'shopping', updatedAt: new Date().toISOString() };
       await deps.kv.set(listKey(list.id), next);

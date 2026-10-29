@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Camera, CheckCircle2, Clock, RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
+import { AlertTriangle, Camera, CheckCircle2, Clock, ImagePlus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
 import { toast } from '../ui/sonner';
 import { Button } from '../ui/button';
 import { Callout } from '../ui/callout';
@@ -19,14 +19,14 @@ import { Textarea } from '../ui/textarea';
 import { cn } from '../ui/utils';
 import { useT } from '../../utils/i18n';
 import { addDays, getTodayIST } from '../../utils/timezone';
-import { photosOfView, type ReviewItem, type SummaryResponse, type WorkplaceLocation } from './workplaceApi';
+import { addSample, photosOfView, type ReviewItem, type SummaryResponse, type WorkplaceLocation } from './workplaceApi';
 import { AuthedPhoto } from './AuthedPhoto';
 import { compressPhoto, fmt12, liveStatus, nowMinutesIST, timeOfIso } from './workplaceUtils';
 import { teamWorkplaceApi } from '../team/teamApi';
 import { formatDay } from '../team/shared';
 import { CheckStatusChip, HygieneChip, VERDICT_KEYS, checkName, issuesFor, scoreTone } from '../team/checks/checkParts';
 
-type Props = { locations: WorkplaceLocation[]; threshold: number; initialLocation?: string | null };
+type Props = { locations: WorkplaceLocation[]; threshold: number; initialLocation?: string | null; canSetup?: boolean };
 type Range = '1' | '7' | '14' | '30' | 'custom';
 
 const locKey = (l: { kind: string; id: string }) => `${l.kind}:${l.id}`;
@@ -35,7 +35,7 @@ const BAR_TONE = { success: 'bg-success', warning: 'bg-warning', danger: 'bg-dan
 // Review / gallery for the owner, operations managers and each place's incharge: every check at a
 // place over a date range with its photo, AI hygiene score, status and the reviewer's OK / needs
 // cleaning. Photos and people's names are marked data-ai-private so the Bunny chat never reads them.
-export function WorkplaceReview({ locations, threshold, initialLocation }: Props) {
+export function WorkplaceReview({ locations, threshold, initialLocation, canSetup }: Props) {
   const { t, lang } = useT();
   const today = getTodayIST();
   const [loc, setLoc] = useState(() => (initialLocation && locations.some((l) => locKey(l) === initialLocation) ? initialLocation : locations[0] ? locKey(locations[0]) : ''));
@@ -289,7 +289,7 @@ export function WorkplaceReview({ locations, threshold, initialLocation }: Props
         </section>
       )}
 
-      {open && place && <Detail it={open} place={place} threshold={threshold} onClose={() => setOpen(null)} onPatch={(p) => patch(open, p)} onReload={load} />}
+      {open && place && <Detail it={open} place={place} threshold={threshold} onClose={() => setOpen(null)} onPatch={(p) => patch(open, p)} onReload={load} canSetup={canSetup} />}
     </div>
   );
 }
@@ -340,8 +340,8 @@ function Card({ it, threshold, onOpen }: { it: ReviewItem; threshold: number; on
   );
 }
 
-function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
-  it: ReviewItem; place: WorkplaceLocation; threshold: number; onClose: () => void; onPatch: (p: Partial<ReviewItem>) => void; onReload: () => void;
+function Detail({ it, place, threshold, onClose, onPatch, onReload, canSetup }: {
+  it: ReviewItem; place: WorkplaceLocation; threshold: number; onClose: () => void; onPatch: (p: Partial<ReviewItem>) => void; onReload: () => void; canSetup?: boolean;
 }) {
   const { t, lang } = useT();
   const today = getTodayIST();
@@ -354,6 +354,16 @@ function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
   const [shownId, setShownId] = useState<string | null>(null);
   const shown = photos.find((p) => p.id === shownId) || photos[0];
   const shownIssues = shown ? issuesFor(shown, lang) : [];
+  // A good photo becomes the check's sample in the photo guide (photo N = shot N when it names shots).
+  const [sampling, setSampling] = useState(false);
+  const useAsSample = async () => {
+    if (!shown) return;
+    setSampling(true);
+    try {
+      await addSample({ kind: place.kind, id: place.id, itemId: it.itemId, shot: photos.indexOf(shown), from: { date: it.date, employeeId: it.employeeId, itemId: it.itemId, photoId: shown.id } });
+      toast.success('Saved as the sample photo - staff see it when they take this photo, and in the Photo guide');
+    } catch (err) { toast.error((err as Error).message || 'Could not save the sample photo'); } finally { setSampling(false); }
+  };
 
   // The same check over the 14 days up to this one, so a one-off can be told from a habit.
   useEffect(() => {
@@ -446,6 +456,9 @@ function Detail({ it, place, threshold, onClose, onPatch, onReload }: {
           <AuthedPhoto date={it.date} employeeId={it.employeeId} itemId={it.itemId} photoId={shown.id} thumb={false} version={shown.uploadedAt} fit="contain" className="aspect-[4/3] w-full rounded-lg" alt={checkName(it, lang)} />
         ) : (
           <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg bg-surface-2 text-body-sm text-text-2">{t('team.check.noPhoto')}</div>
+        )}
+        {canSetup && it.hasPhoto && shown && (
+          <Button variant="secondary" size="sm" className="self-start" leadingIcon={<ImagePlus />} loading={sampling} onClick={useAsSample}>Use as the sample photo</Button>
         )}
         {photos.length > 1 && shown && (
           <div className="flex flex-col gap-2">

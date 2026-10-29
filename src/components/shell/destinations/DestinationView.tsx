@@ -15,6 +15,7 @@ import { InsightsDestination } from './InsightsDestination';
 import { MoreDestinations } from './MoreDestinations';
 import { EventsDestination } from './EventsDestination';
 import { RecipesDestination } from './RecipesDestination';
+import { LearnScreen } from '../../learn/LearnScreen';
 
 const OwnerHome = lazy(() => import('../../home/OwnerHome').then((m) => ({ default: m.OwnerHome })));
 const StaffHome = lazy(() => import('../../home/StaffHome').then((m) => ({ default: m.StaffHome })));
@@ -23,6 +24,13 @@ const RiderHome = lazy(() => import('../../home/RiderHome').then((m) => ({ defau
 const ComplaintsScreen = lazy(() => import('../../complaints/ComplaintsScreen').then((m) => ({ default: m.ComplaintsScreen })));
 const OpeningOverview = lazy(() => import('../../opening/OpeningChecklist').then((m) => ({ default: m.OpeningOverview })));
 const SiteAuditsScreen = lazy(() => import('../../audits/SiteAuditsScreen').then((m) => ({ default: m.SiteAuditsScreen })));
+const ContactsScreen = lazy(() => import('../../contacts/ContactsScreen').then((m) => ({ default: m.ContactsScreen })));
+const ComplianceScreen = lazy(() => import('../../compliance/ComplianceScreen').then((m) => ({ default: m.ComplianceScreen })));
+const PayslipsScreen = lazy(() => import('../../performance/PayslipsScreen').then((m) => ({ default: m.PayslipsScreen })));
+const CamerasScreen = lazy(() => import('../../cameras/CamerasScreen').then((m) => ({ default: m.CamerasScreen })));
+const PerformanceScreen = lazy(() => import('../../performance/PerformanceScreen').then((m) => ({ default: m.PerformanceScreen })));
+const ShoppingListsScreen = lazy(() => import('../../supplies/ShoppingLists').then((m) => ({ default: m.ShoppingListsScreen })));
+const PhotoGuideScreen = lazy(() => import('../../workplace/PhotoGuide').then((m) => ({ default: m.PhotoGuideScreen })));
 
 class ScreenBoundary extends Component<{ children: ReactNode }, { error: Error | null; attempt: number }> {
   state = { error: null as Error | null, attempt: 0 };
@@ -153,6 +161,30 @@ export const DestinationView = memo(function DestinationView({ dest, params, ren
         break;
       case 'SiteAudits':
         content = <SiteAuditsScreen />;
+        break;
+      case 'Contacts':
+        content = <ContactsScreen />;
+        break;
+      case 'Compliance':
+        content = <ComplianceScreen />;
+        break;
+      case 'Payslips':
+        content = <PayslipsScreen />;
+        break;
+      case 'Performance':
+        content = <PerformanceScreen />;
+        break;
+      case 'Cameras':
+        content = <CamerasScreen />;
+        break;
+      case 'AppTour':
+        content = <LearnScreen />;
+        break;
+      case 'ShoppingLists':
+        content = <ShoppingListsScreen />;
+        break;
+      case 'PhotoGuide':
+        content = <PhotoGuideScreen />;
         break;
       case 'OpeningChecklist':
         content = <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4 px-4 py-4 lg:px-8"><OpeningOverview /></div>;

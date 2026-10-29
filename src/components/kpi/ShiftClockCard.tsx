@@ -197,7 +197,7 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
   const atWork = native && tracker.status === 'watching' && tracker.inside === true;
 
   const card = (
-    <section className="flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-4" data-ai-private lang={lang} aria-labelledby="shift-card-title">
+    <section className="flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-4" data-ai-private data-tour="shift" lang={lang} aria-labelledby="shift-card-title">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col">
           <h2 id="shift-card-title" className="text-subtitle font-semibold text-text">{t('shift.yours')}</h2>

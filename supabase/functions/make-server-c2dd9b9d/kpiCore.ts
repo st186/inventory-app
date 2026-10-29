@@ -14,7 +14,11 @@ export const TIMESHEET_DUE_DAYS = 1; // a day's timesheet is on time if sent by 
 export const CASH_TOLERANCE_INR = 100; // cash over/short within ₹100 counts as matching
 export const SHIP_BY_MIN = 15 * 60; // stock requests should ship by 3 PM (same cut-off as the SLA screen)
 export const DAY_CLOSE_BY_MIN = 25 * 60; // a day's sales and expenses are on time if saved by 1 AM after it (the store shuts at 10:30 PM)
-export const REQUEST_BY_MIN = 8 * 60; // a stock request is on time if sent by 8 AM on the day it is for (production starts at 8)
+export const REQUEST_BY_MIN = 8 * 60; // until 31 Oct 2026: a stock request was on time if sent by 8 AM on the day it is for
+// From 1 Nov 2026 a stock request is on time if sent by midnight before the day it is for (owner, 29 Oct 2026:
+// "stock request for next day should be sent by midnight").
+export const REQUEST_MIDNIGHT_FROM = '2026-11-01';
+export const requestDueMs = (requestDate: string) => istMidnightMs(requestDate) + (requestDate >= REQUEST_MIDNIGHT_FROM ? 0 : REQUEST_BY_MIN * 60000);
 export const STOCK_OUT_PENALTY = 15; // points off per item that ran out at the store
 export const PHOTO_FLAG_PENALTY = 5; // points off the photo-check KPI per "needs cleaning" photo
 // Place kept clean (incharges, owner 28 Oct 2026): every photo at their store or kitchen, whoever took it.
@@ -27,6 +31,18 @@ export const AI_MAX_SHIFT = 0.15; // the AI may move the formula amount by at mo
 // (owner, 28 Oct 2026: most staff weren't on the shift clock yet). After it, no check-in = not on time.
 export const TIMESHEET_TIMES_UNTIL = '2026-11-10';
 export const ACCEPT_BY_MIN = 9 * 60; // a stock request should be accepted (preparation started) by 9 AM on its day
+// Expenses entered correctly (owner, 29 Oct 2026): counted from November, when the amount rule
+// (packs with the size of each) started. The expense checks (expenseReview.ts) that mean the entry
+// itself was wrong; a bill photo, the owner's OK or a big spend are not entry mistakes.
+export const EXPENSE_ACCURACY_FROM = '2026-11-01';
+// Shopping list sent by 7 AM (owner, 29 Oct 2026): the day's list to the shopper and each vendor's
+// WhatsApp by 7 AM, on the days the production house buys; counted from November.
+export const SHOPPING_LIST_BY_MIN = 7 * 60;
+export const SHOPPING_LIST_FROM = '2026-11-01';
+export const EXPENSE_MISTAKES: Record<string, string> = {
+  category: 'wrong category', amount: 'amount unclear', weight: 'unit or quantity slip', bundle: 'wrong pieces per pack',
+  duplicate: 'logged twice', detail: 'repair or labour without details', place: 'logged for the wrong place',
+};
 
 // Store cover (owner, 28 Oct 2026): someone who works at the production house from 8 AM goes to
 // the store for the evening on a store-cover day - a store staff member on approved leave, a
@@ -80,7 +96,8 @@ export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness' | 'expenseAccuracy'
+  | 'productionSupply' | 'shoppingListOnTime';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -111,6 +128,9 @@ export const KPI_LABELS: Record<KpiId, string> = {
   cratesClean: 'Crates and containers clean',
   photoChecks: 'Photo checks (on time and clean)',
   storeReadiness: 'Store ready on time',
+  expenseAccuracy: 'Expenses entered correctly',
+  productionSupply: 'Production supply: full and on time',
+  shoppingListOnTime: 'Shopping list sent by 7 AM',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -497,6 +517,9 @@ export type MonthInput = {
   extraHours?: { date: string; minutes: number; status: 'confirmed' | 'declined' }[]; // the incharge's decisions
   storeRequests?: any[]; // stock requests sent from the person's own store
   expenses?: any[]; // expense entries (inventory and overhead) the person logged
+  expenseFlags?: any[]; // the expense checks' flags on those entries (expense-flag:{expenseId}:{kind})
+  shoppingLists?: any[]; // shopping lists the person wrote (supplies.ts shopping-list:{id})
+  productionPurchaseDays?: string[]; // days the person's production house logged purchases
   approvals?: any[]; // production entries from the house that supplies the person's store
   placePhotos?: { date: string; item: any }[]; // every photo taken at the incharge's store or kitchen
   crateChecks?: { date: string; itemId: string; item: any | null }[]; // crates and containers checks due at that place, with the photo if one came
@@ -539,9 +562,12 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'trips': return 'Finish every ride you take on and confirm the delivery.';
     case 'salesOnTime': return `Save the day's sales and cash count by ${fmt12(DAY_CLOSE_BY_MIN)} after closing.`;
     case 'expensesOnTime': return `Enter every expense on the day it is paid (by ${fmt12(DAY_CLOSE_BY_MIN)} after closing), so the cash count matches.`;
+    case 'productionSupply': return `Help production ship every stock request in full - every momo type as asked - by ${fmt12(SHIP_BY_MIN)} on its day. A late, short or unshipped request counts against.`;
+    case 'shoppingListOnTime': return `On every day the production house buys, send the shopping list to the shopper and each vendor's part on WhatsApp from the app by ${fmt12(SHOPPING_LIST_BY_MIN)} (the night before is fine). The list on time with a vendor late counts half.`;
+    case 'expenseAccuracy': return 'Enter each expense right the first time: the right category, and an amount that says exactly what was bought - packs with the size of each (Butter 4 packets × 500 g, not 8 pcs), vegetables by weight. An entry the app flags that turns out wrong counts against you; one marked correct does not.';
     case 'productionApproved': return 'Check each day\'s production entry and approve it before it approves itself after 24 hours.';
     case 'placeClean': return `Walk the whole ${place} every day: garbage out, bins covered, nothing piled up. Every photo that needs cleaning costs ${PLACE_FLAG_PENALTY} points, a garbage dump or filth ${PLACE_SEVERE_PENALTY}.`;
-    case 'requestOnTime': return `Send the stock request by ${fmt12(REQUEST_BY_MIN)} on the day it is for, so production can plan.`;
+    case 'requestOnTime': return 'Send the next day\'s stock request by midnight, so production can plan the morning.';
     case 'cratesClean': return 'Wash, dry and stack every crate and container with the lids on, and photograph them each morning (a photo for each stack). No photo scores nothing that day; one that needs cleaning, half.';
   }
 }
@@ -800,6 +826,64 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     }
   }
   // Production: each day's stock request accepted (preparation started) by 9 AM on its day.
+  // Production supply (owner, 29 Oct 2026: one KPI for the people production depends on, in place of
+  // "accepted by 9 AM" and "shipped on time"): each stock request shipped in full - every momo type
+  // at least as asked - by SHIP_BY_MIN on its day. Not shipped by the end of the counted days: missed.
+  if (ids.includes('productionSupply')) {
+    let n = 0, ok = 0, late = 0, short = 0, never = 0;
+    for (const r of input.requests || []) {
+      const d = String(r?.requestDate || '').slice(0, 10);
+      if (!d || d < from || d > to || r.status === 'cancelled') continue;
+      n++;
+      const shipDay = r.shippedAt ? istDayOf(r.shippedAt) : null;
+      if (!shipDay) { never++; continue; }
+      const onTime = shipDay < d || (shipDay === d && minutesOfDay(r.shippedAt, d) <= SHIP_BY_MIN);
+      // Momos are the request's top-level numbers (old requests: chickenMomos style, same keys less the s).
+      const sent = r.shippedQuantities && typeof r.shippedQuantities === 'object' ? r.shippedQuantities : null;
+      const full = !sent ? !String(r.status || '').startsWith('partially') : Object.entries(r).every(([k, v]) => {
+        if (typeof v !== 'number' || v <= 0) return true;
+        const got = Number(sent[k] ?? sent[k.replace(/s$/, '')] ?? 0);
+        return got >= v;
+      });
+      if (!onTime) late++;
+      if (!full) short++;
+      if (onTime && full) ok++;
+    }
+    if (!n) set('productionSupply', null, 'No stock requests in this period.');
+    else set('productionSupply', pct(ok, n), [
+      `${ok} of ${plural(n, 'stock request')} shipped in full by ${fmt12(SHIP_BY_MIN)} on their day.`,
+      late ? `${late} late.` : '', short ? `${short} short of what was asked.` : '', never ? `${never} not shipped.` : '',
+    ].filter(Boolean).join(' '));
+  }
+
+  if (ids.includes('shoppingListOnTime')) {
+    const start = from > SHOPPING_LIST_FROM ? from : SHOPPING_LIST_FROM;
+    const lists = (input.shoppingLists || []).filter((l) => l?.date && l.status !== 'cancelled' && l.status !== 'draft');
+    const byDay = new Map<string, any[]>();
+    for (const l of lists) byDay.set(String(l.date), [...(byDay.get(String(l.date)) || []), l]);
+    const needed = [...new Set([...(input.productionPurchaseDays || []), ...lists.map((l) => String(l.date))])]
+      .filter((d) => d >= start && d <= to && !fullLeave.has(d)).sort();
+    let points = 0, full = 0, half = 0, lateDays = 0, none = 0;
+    for (const d of needed) {
+      const due = istMidnightMs(d) + SHOPPING_LIST_BY_MIN * 60000;
+      const by = (iso: any) => !!iso && Date.parse(iso) <= due;
+      const ls = byDay.get(d) || [];
+      if (!ls.length) { none++; continue; }
+      const sent = ls.filter((l) => by(l.sentAt));
+      if (!sent.length) { lateDays++; continue; }
+      const vendorsOk = sent.every((l) => [...new Set((l.lines || []).map((x: any) => x?.vendorId).filter(Boolean))]
+        .every((v: any) => by(l.vendorOrders?.[v]?.at)));
+      if (vendorsOk) { full++; points += 1; } else { half++; points += 0.5; }
+    }
+    if (!needed.length) set('shoppingListOnTime', null, to < SHOPPING_LIST_FROM ? 'Counted from 1 Nov 2026.' : 'No shopping days in this period.');
+    else set('shoppingListOnTime', pct(points, needed.length), [
+      `${full} of ${plural(needed.length, 'shopping day')}: the list and every vendor's WhatsApp sent by ${fmt12(SHOPPING_LIST_BY_MIN)}.`,
+      half ? `${plural(half, 'day')} the list was on time but a vendor's WhatsApp was late or not sent (half marks).` : '',
+      lateDays ? `${plural(lateDays, 'day')} the list went after ${fmt12(SHOPPING_LIST_BY_MIN)}.` : '',
+      none ? `${plural(none, 'day')} with purchases but no list sent from the app.` : '',
+    ].filter(Boolean).join(' '));
+  }
+
   if (ids.includes('requestAccepted')) {
     let n = 0, ok = 0, never = 0;
     for (const r of input.requests || []) {
@@ -955,6 +1039,29 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     if (!n) set('expensesOnTime', null, 'No expenses entered in this period.');
     else set('expensesOnTime', pct(ok, n), `${ok} of ${plural(n, 'expense entry', 'expense entries')} entered by ${fmt12(DAY_CLOSE_BY_MIN)} after the day paid.${n > ok ? ` The late ones came ${Math.max(1, Math.round(lateDays / (n - ok)))} day(s) late on average.` : ''}`);
   }
+  if (ids.includes('expenseAccuracy')) {
+    const start = from > EXPENSE_ACCURACY_FROM ? from : EXPENSE_ACCURACY_FROM;
+    const wrong = new Map<string, string[]>(); // expense id -> its mistakes
+    for (const f of input.expenseFlags || []) {
+      // Marked correct by someone other than whoever entered it (an incharge can't clear their own).
+      const cleared = f?.status === 'dismissed' && !!f.decidedBy && f.decidedBy !== f.loggedBy;
+      if (!f?.expenseId || !EXPENSE_MISTAKES[f.kind] || cleared) continue;
+      wrong.set(String(f.expenseId), [...(wrong.get(String(f.expenseId)) || []), String(f.kind)]);
+    }
+    let n = 0, ok = 0;
+    const kinds: Record<string, number> = {};
+    for (const e of input.expenses || []) {
+      const d = String(e?.date || '').slice(0, 10);
+      if (!d || d < start || d > to) continue;
+      n++;
+      const mistakes = wrong.get(String(e.id)) || [];
+      if (!mistakes.length) ok++;
+      for (const k of new Set(mistakes)) kinds[k] = (kinds[k] || 0) + 1;
+    }
+    const list = Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, c]) => `${c} ${EXPENSE_MISTAKES[k]}`).join(', ');
+    if (!n) set('expenseAccuracy', null, to < EXPENSE_ACCURACY_FROM ? 'Counted from 1 Nov 2026.' : 'No expenses entered in this period.');
+    else set('expenseAccuracy', pct(ok, n), `${ok} of ${plural(n, 'expense entry', 'expense entries')} entered correctly.${list ? ` Flagged and not marked correct: ${list}.` : ''}`);
+  }
   if (ids.includes('productionApproved')) {
     let decided = 0, byPerson = 0;
     for (const p of input.approvals || []) {
@@ -972,10 +1079,10 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       const d = String(r?.requestDate || '').slice(0, 10);
       if (!d || d < from || d > to || !r.createdAt || Number.isNaN(Date.parse(r.createdAt))) continue;
       n++;
-      if (Date.parse(r.createdAt) <= istMidnightMs(d) + REQUEST_BY_MIN * 60000) ok++;
+      if (Date.parse(r.createdAt) <= requestDueMs(d)) ok++;
     }
     if (!n) set('requestOnTime', null, 'No stock requests sent in this period.');
-    else set('requestOnTime', pct(ok, n), `${ok} of ${plural(n, 'stock request')} sent by ${fmt12(REQUEST_BY_MIN)} on the day they were for.`);
+    else set('requestOnTime', pct(ok, n), `${ok} of ${plural(n, 'stock request')} sent on time (by midnight before the day they were for; ${fmt12(REQUEST_BY_MIN)} on the day until 31 Oct).`);
   }
 
   // The incharge's place: every photo taken there this month, whoever took it.

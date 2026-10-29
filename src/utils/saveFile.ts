@@ -3,7 +3,10 @@
 //   plugin (android/.../FilePlugin.java) in base64 pieces of about 1 MB (one giant string through
 //   the bridge can run the web view out of memory). It writes to Downloads/Bunny Momos and opens
 //   the share sheet.
-// - Browser: the usual download link.
+// - iPhone / iPad (Safari or the Home Screen app): the share sheet ("Save to Files"), where a
+//   download link after the work is done often does nothing. Cancelling it throws, so the caller
+//   doesn't count the file as saved.
+// - Other browsers: the usual download link.
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
 interface FilesPluginApi {
@@ -34,6 +37,19 @@ export async function saveFile(name: string, data: Blob, mimeType: string): Prom
       offset += PIECE;
     } while (offset < data.size);
     return;
+  }
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isIOS && typeof navigator.share === 'function') {
+    const file = new File([data], name, { type: mimeType });
+    if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: name });
+        return;
+      } catch (err) {
+        // Too long after the tap for Safari (NotAllowedError): fall back to the link below.
+        if ((err as Error)?.name !== 'NotAllowedError') throw err;
+      }
+    }
   }
   const url = URL.createObjectURL(data.type === mimeType ? data : new Blob([data], { type: mimeType }));
   const link = document.createElement('a');

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   addDays, atWorkplace, checkApprovedAmount, clampAiAmount, cleanSettingsInput, computeMonthKpis, haversineM, istDate,
   coverReasonsOn, extraMinutesOf, istMidnightMs, lateStartIssues, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
-  variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, isCratesCheck, type MonthInput, type PunchRecord,
+  variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, isCratesCheck, requestDueMs, type MonthInput, type PunchRecord,
 } from './kpiCore.ts';
 
 let passed = 0;
@@ -191,6 +191,66 @@ test('store incharge cash and stock-out KPIs', () => {
   assert.equal(k.cashAccuracy.score, 75); // 3 of 4 within ₹100
   assert.match(k.cashAccuracy.explanation, /₹350/);
   assert.equal(k.stockOuts.score, 85);
+});
+
+test('expenses entered correctly', () => {
+  const base = crewMonth();
+  const settings = { ...resolveSettings({}, 'BM008', 'store', 'store_incharge'), kpis: ['expenseAccuracy'] as any, weights: { expenseAccuracy: 8 } as any };
+  const expenses = [
+    { id: 'e1', date: '2026-11-02' }, { id: 'e2', date: '2026-11-02' }, { id: 'e3', date: '2026-11-03' }, { id: 'e4', date: '2026-11-04' },
+    { id: 'old', date: '2026-10-29' }, // before the rule started: not counted
+  ];
+  const expenseFlags = [
+    { expenseId: 'e1', kind: 'amount', status: 'open' }, // Butter 8 pcs
+    { expenseId: 'e1', kind: 'category', status: 'fixed' }, // one entry, two mistakes: counted once
+    { expenseId: 'e2', kind: 'category', status: 'dismissed', loggedBy: 'Rohan', decidedBy: 'Aniket' }, // marked correct by someone else
+    { expenseId: 'e4', kind: 'amount', status: 'dismissed', loggedBy: 'Rohan', decidedBy: 'Rohan' }, // can't clear your own
+    { expenseId: 'e3', kind: 'unusual', status: 'open' }, // a big spend is not an entry mistake
+    { expenseId: 'old', kind: 'amount', status: 'open' },
+  ];
+  const r = computeMonthKpis({ ...base, month: '2026-11', today: '2026-11-10', group: 'store_incharge', settings, expenses, expenseFlags });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.expenseAccuracy.score, 50); // 2 of 4
+  assert.match(k.expenseAccuracy.explanation, /2 of 4 expense entries entered correctly\. Flagged and not marked correct: 2 amount unclear, 1 wrong category\./);
+  const oct = computeMonthKpis({ ...base, group: 'store_incharge', settings, expenses, expenseFlags });
+  assert.equal(Object.fromEntries(oct.kpis.map((x) => [x.id, x])).expenseAccuracy.score, null);
+});
+
+test('production supply: full and on time', () => {
+  const base = crewMonth();
+  const settings = { ...resolveSettings({}, 'BM013', 'production', 'production_staff'), kpis: ['productionSupply'] as any, weights: { productionSupply: 20 } as any };
+  const requests = [
+    { requestDate: '2026-10-01', status: 'delivered', chicken: 600, veg: 60, shippedAt: at('2026-10-01', '14:30'), shippedQuantities: { chicken: 600, veg: 60 } }, // full, on time
+    { requestDate: '2026-10-02', status: 'delivered', chicken: 600, shippedAt: at('2026-10-02', '16:10'), shippedQuantities: { chicken: 600 } }, // late
+    { requestDate: '2026-10-03', status: 'partially-delivered', chicken: 600, cheeseCorn: 120, shippedAt: at('2026-10-03', '13:00'), shippedQuantities: { chicken: 600, cheeseCorn: 40 } }, // short
+    { requestDate: '2026-10-04', status: 'pending', chicken: 400 }, // never shipped
+    { requestDate: '2026-10-05', status: 'delivered', chickenMomos: 300, shippedAt: at('2026-10-04', '19:00') }, // old record, shipped the day before
+  ];
+  const r = computeMonthKpis({ ...base, group: 'production_staff', kind: 'production', settings, requests });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.productionSupply.score, 40); // 2 of 5
+  assert.match(k.productionSupply.explanation, /2 of 5 stock requests shipped in full by 3:00 PM on their day\. 1 late\. 1 short of what was asked\. 1 not shipped\./);
+});
+
+test('shopping list sent by 7 AM', () => {
+  const base = crewMonth();
+  const settings = { ...resolveSettings({}, 'BM004', 'production', 'operations'), kpis: ['shoppingListOnTime'] as any, weights: { shoppingListOnTime: 10 } as any };
+  const L = (date: string, sentAt: string | null, vendorAt: (string | null)[]) => ({
+    date, status: 'logged', sentAt,
+    lines: vendorAt.map((_, i) => ({ vendorId: `v${i}` })),
+    vendorOrders: Object.fromEntries(vendorAt.map((a, i) => [`v${i}`, a]).filter(([, a]) => a).map(([v, a]) => [v, { at: a }])),
+  });
+  const shoppingLists = [
+    L('2026-11-02', at('2026-11-01', '21:00'), [at('2026-11-01', '21:05')]), // full
+    L('2026-11-03', at('2026-11-03', '06:30'), [at('2026-11-03', '07:30')]), // vendor late: half
+    L('2026-11-04', at('2026-11-04', '08:00'), []), // list late
+  ];
+  const productionPurchaseDays = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-10-30'];
+  const r = computeMonthKpis({ ...base, month: '2026-11', today: '2026-11-10', group: 'operations', settings, shoppingLists, productionPurchaseDays, leaves: [] });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.shoppingListOnTime.score, 37.5); // (1 + 0.5 + 0 + 0) / 4
+  assert.match(k.shoppingListOnTime.explanation, /1 of 4 shopping days/);
+  assert.match(k.shoppingListOnTime.explanation, /1 day with purchases but no list sent from the app/);
 });
 
 test('production KPIs', () => {
@@ -481,6 +541,19 @@ test('variable pay formula and AI limits', () => {
   assert.equal(checkApprovedAmount(3500, 3000).ok, false);
   assert.equal(checkApprovedAmount(-1, 3000).ok, false);
   assert.deepEqual(checkApprovedAmount(1499.6, 3000), { ok: true, value: 1500 });
+});
+
+test('stock request due by midnight before its day, from 1 Nov 2026', () => {
+  assert.equal(requestDueMs('2026-11-05'), Date.parse('2026-11-05T00:00:00+05:30')); // midnight starting 5 Nov
+  assert.equal(requestDueMs('2026-10-30'), Date.parse('2026-10-30T08:00:00+05:30')); // 8 AM on the day until 31 Oct
+  const settings = resolveSettings({ kpis: ['requestOnTime'] }, 'BM008', 'store', 'store_incharge');
+  const storeRequests = [
+    { requestDate: '2026-11-05', createdAt: '2026-11-04T23:40:00+05:30' }, // the night before: on time
+    { requestDate: '2026-11-06', createdAt: '2026-11-06T00:20:00+05:30' }, // after midnight: late
+  ];
+  const r = computeMonthKpis(crewMonth({ month: '2026-11', today: '2026-11-30', group: 'store_incharge', settings, storeRequests }));
+  const k = r.kpis.find((x) => x.id === 'requestOnTime')!;
+  assert.equal(k.score, 50);
 });
 
 console.log(`kpiCore: ${passed} tests passed`);

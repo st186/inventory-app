@@ -55,6 +55,7 @@ export function TodayChecklist({ title, tasks, loading }: { title?: string; task
   if (!loading && tasks.length === 0) return null;
   return (
     <ListGroup
+      id="home-checklist"
       title={title ?? t('home.checklist')}
       meta={!loading && tasks.length > 0 ? t('home.progress', { done: done.length, total: tasks.length }) : undefined}
     >

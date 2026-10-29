@@ -7,7 +7,7 @@ import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
-import { registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
+import { recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
@@ -335,7 +335,8 @@ console.log('✅ Logger middleware configured');
 // carry X-Cron-Secret). Leftover setup/test/debug routes are switched off. The most sensitive
 // routes are limited by role here as well; routes still do their own finer checks.
 const API_PREFIX = '/make-server-c2dd9b9d';
-const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action', '/workplace/push-photo'];
+// The camera PC (cctv.ts) has no login: it sends the camera's own key.
+const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action', '/workplace/push-photo', '/cctv/config', '/cctv/frame'];
 // Read-only item catalog lists that app builds up to 1.15.18 (and the website before PR #4)
 // fetch with the public key. Nothing private in them; drop this once every phone is on 1.15.19+.
 const LEGACY_PUBLIC_READS = ['/inventory-items', '/custom-items', '/custom-categories'];
@@ -1325,6 +1326,7 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
 
     await kvWithRetry.set(key, inventoryItem);
     console.log('✅ Inventory Purchase Record updated successfully:', key);
+    await afterResponse('Expense recheck', () => recheckAmount(expenseReviewDeps, inventoryItem, authResult.user.user_metadata?.name || authResult.user.email));
 
     await cascadeProductionCashForExpense(existing, inventoryItem);
     if (inventoryItem.paidFromProductionHouseId && inventoryItem.paidFromProductionHouseId !== existing?.paidFromProductionHouseId) {
@@ -1370,6 +1372,7 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
 
     await kvWithRetry.del(key);
     await cascadeProductionCashForExpense(targetInventory);
+    await afterResponse('Expense checks', () => closeFlagsOf(expenseReviewDeps, itemId, authResult.user.user_metadata?.name || authResult.user.email || 'Someone'));
 
     return c.json({ success: true });
   } catch (error) {
@@ -1583,6 +1586,7 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
 
     await kvWithRetry.del(key);
     await cascadeProductionCashForExpense(targetOverhead);
+    await afterResponse('Expense checks', () => closeFlagsOf(expenseReviewDeps, itemId, authResult.user.user_metadata?.name || authResult.user.email || 'Someone'));
 
     return c.json({ success: true });
   } catch (error) {
@@ -3685,7 +3689,7 @@ app.get('/make-server-c2dd9b9d/health', (c) => {
 // No KV storage involved on purpose: this file already gets redeployed as part of every
 // release in this project's workflow, so the constant here and the one in the frontend
 // bundle are updated together, in the same release, by construction.
-const LATEST_APP_VERSION = '1.17.0';
+const LATEST_APP_VERSION = '1.19.0';
 
 // What this server supports, so a newer app can switch each feature on only against a server
 // that has it (an older app ignores the list). Add a name here only once the feature ships:
@@ -12800,6 +12804,47 @@ app.put('/make-server-c2dd9b9d/production-requests/:id/receive', async (c) => {
 
 // Delivery damage photos, stored one per key (not inside the request, which every stock
 // screen loads in bulk). Compressed on the phone first - a ~1000px JPEG.
+// Confirm a delivery that was marked received for the store (owner, 29 Oct 2026: two part-sent
+// orders were never received in the app, so the owner marked them received to put the store's stock
+// right and asked the store incharge to confirm what actually came). Not right: the owner and the
+// operations managers hear what was missing.
+app.post('/make-server-c2dd9b9d/production-requests/:id/confirm-receipt', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const id = c.req.param('id');
+    const key = `production_request_${id}`;
+    const req = await kv.get(key);
+    if (!req) return c.json({ error: 'That request was not found' }, 404);
+    if (!req.receiptConfirm?.pending) return c.json({ error: 'This delivery is already confirmed' }, 409);
+    const m = authResult.user.user_metadata || {};
+    const isLead = m.role === 'cluster_head' || (m.role === 'manager' && m.designation !== 'store_incharge' && m.designation !== 'production_incharge');
+    const incharge = req.storeId ? await getStoreIncharge(req.storeId) : null;
+    const isIncharge = !!incharge && !!m.employeeId && String(incharge.employeeId) === String(m.employeeId);
+    if (!isLead && !isIncharge) return c.json({ error: 'Only the store incharge can confirm this delivery' }, 403);
+    const body = await c.req.json().catch(() => ({}));
+    const ok = body?.ok !== false;
+    const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 300) : '';
+    if (!ok && !note) return c.json({ error: 'Write what was missing or different' }, 400);
+    const name = m.name || authResult.user.email || 'Someone';
+    const now = new Date().toISOString();
+    const updated = { ...req, receiptConfirm: { ...req.receiptConfirm, pending: false, ok, ...(note ? { note } : {}), by: name, at: now }, updatedAt: now };
+    await kv.set(key, updated);
+    if (!ok) {
+      const told = new Set<string>();
+      for (const p of [...(await getAllClusterHeads()), ...(await getOperationsManagers())]) {
+        if (!p?.authUserId || told.has(p.authUserId)) continue;
+        told.add(p.authUserId);
+        await notifyUser(p.authUserId, 'delivery_variance', `Delivery not right: ${req.requestDate} order`, `${name}: ${note}`, id, req.requestDate).catch(() => undefined);
+      }
+    }
+    return c.json({ request: updated });
+  } catch (error) {
+    console.log('Error confirming a delivery:', error);
+    return c.json({ error: 'Could not save that - try again' }, 500);
+  }
+});
+
 app.post('/make-server-c2dd9b9d/production-requests/:id/receipt-photos', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) {
@@ -14933,128 +14978,118 @@ app.post('/make-server-c2dd9b9d/push/send-multiple', async (c) => {
 });
 
 // ============================================
-// STOCK REQUEST REMINDER NOTIFICATIONS (3PM Daily)
+// STOCK REQUEST BY MIDNIGHT (owner, 29 Oct 2026: "stock request for next day should be sent by
+// midnight ... notify as critical for rohan to send stock request")
 // ============================================
-// This endpoint checks for Store Incharges who haven't submitted
-// stock requests for today and sends them a reminder notification.
-// Can be called manually or via cron job at 3pm daily.
+// pg_cron, IST: ?slot=first at 9:30 PM and ?slot=last at 11:15 PM - a store with no request for
+// tomorrow: its store incharge gets an urgent push (never held for quiet hours; the owner is told if
+// it is not opened in 30 minutes). ?slot=missed at 12:05 AM - still none for the day that has just
+// begun: the owner and operations managers are told (an action, kept for the morning). Once per
+// store, day and slot. (The old 3 PM version read the wrong records and never reached anyone.)
 app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
   try {
-    console.log('=== STOCK REQUEST REMINDER CHECK (3PM) ===');
-    console.log('Timestamp:', new Date().toISOString());
-    
-    // Get today's date in YYYY-MM-DD format
-    const today = new Date().toISOString().split('T')[0];
-    console.log('Checking for stock requests on:', today);
-    
-    // Get all stock requests for today
-    const todaysRequests = await kv.getByPrefix('stock-request:');
-    const todayRequestStoreIds = todaysRequests
-      .filter((req: any) => req.requestDate === today)
-      .map((req: any) => req.storeId);
-    
-    console.log('Stores with requests today:', todayRequestStoreIds.length);
-    
-    // Get all stores
-    const stores = await kv.getByPrefix('store:');
-    console.log('Total stores:', stores.length);
-    
-    // Get all employees
-    const employees = await kv.getByPrefix('unified-employee:');
-    
-    // Find all Store Incharges
-    const storeIncharges = employees.filter((emp: any) => emp.designation === 'store_incharge');
-    console.log('Total store incharges:', storeIncharges.length);
-    
-    // Find Store Incharges who haven't submitted requests today
-    const reminderTargets: any[] = [];
-    
-    for (const employee of storeIncharges) {
-      const storeId = employee.storeId;
-      
-      // Skip if no store assigned
-      if (!storeId) continue;
-      
-      // Skip if this store already has a request today
-      if (todayRequestStoreIds.includes(storeId)) {
-        console.log(`Store ${storeId} already has request - skipping`);
-        continue;
+    const slot = c.req.query('slot') === 'last' ? 'last' : c.req.query('slot') === 'missed' ? 'missed' : 'first';
+    const today = getTodayIST();
+    const forDate = slot === "missed" ? today : new Date(Date.parse(`${today}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+    const { data, error } = await supabase.from('kv_store_c2dd9b9d').select('value')
+      .like('key', 'production_request_%').eq('value->>requestDate', forDate);
+    if (error) throw new Error(error.message);
+    const sentFor = new Set((data || []).map((r: any) => r.value).filter((r: any) => r && !['cancelled', 'rejected'].includes(r.status)).map((r: any) => r.storeId));
+    const stores = (await kv.getByPrefix('store:')).filter((st: any) => st?.id && st.productionHouseId && st.status !== 'inactive' && st.status !== 'closed');
+    const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+    const dayName = new Date(`${forDate}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const results: any[] = [];
+    for (const store of stores) {
+      if (sentFor.has(store.id)) continue;
+      const onceKey = `stock-request-reminder:${store.id}:${forDate}:${slot}`;
+      if (await kv.get(onceKey)) continue;
+      let to: any[];
+      let type: string, title: string, message: string;
+      if (slot === 'missed') {
+        to = staff.filter((u: any) => u.role === 'cluster_head' || (u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation)));
+        type = 'stock_request_missed';
+        title = `No stock request from ${store.name}`;
+        message = `The request for ${dayName} was not sent by midnight. Production has nothing to plan from.`;
+      } else {
+        to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+        type = 'stock_request_reminder';
+        title = slot === 'last' ? `45 minutes left: stock request for ${dayName}` : `Send tomorrow's stock request by midnight`;
+        message = slot === 'last'
+          ? `${store.name} has not sent the request for ${dayName}. Open Stock > Requests, tap Fill in for me, check and send.`
+          : `${store.name}: the request for ${dayName} is due by midnight tonight. Open Stock > Requests, tap Fill in for me, check and send.`;
       }
-      
-      // Find the store details
-      const store = stores.find((s: any) => s.id === storeId);
-      
-      // Skip if store doesn't have a production house mapped
-      if (!store || !store.productionHouseId) {
-        console.log(`Store ${storeId} has no production house - skipping`);
-        continue;
-      }
-      
-      // Employees carry their login as authUserId - there is no `userId` field, so these
-      // reminders used to go nowhere. notifyUser maps it to the employee's push devices.
-      if (!employee.authUserId) {
-        console.log(`Store incharge ${employee.id} has no login - skipping`);
-        continue;
-      }
-
-      // This incharge needs a reminder
-      reminderTargets.push({
-        employeeId: employee.id,
-        authUserId: employee.authUserId,
-        name: employee.name,
-        storeName: store.name,
-        storeId: storeId,
-      });
+      for (const u of to) await notifyUser(u.authUserId, type, title, message, undefined, forDate).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+      results.push({ store: store.name, to: to.map((u: any) => u.name) });
     }
-    
-    console.log('Sending reminders to:', reminderTargets.length, 'store incharges');
-    
-    // Send notifications to all targets
-    let sent = 0;
-    let failed = 0;
-    
-    for (const target of reminderTargets) {
-      try {
-        const success = await notifyUser(
-          target.authUserId,
-          'stock_request_reminder',
-          '⏰ Stock Request Reminder',
-          `Hi ${target.name}, you haven't submitted a stock request for ${target.storeName} today. Please submit your request to ensure timely stock delivery.`,
-          undefined,
-          today
-        );
-        
-        if (success) {
-          sent++;
-          console.log(`✓ Sent reminder to ${target.name} (${target.storeName})`);
-        } else {
-          failed++;
-          console.log(`✗ Failed to send reminder to ${target.name} (no subscription)`);
-        }
-      } catch (error) {
-        failed++;
-        console.error(`Error sending reminder to ${target.name}:`, error);
-      }
-    }
-    
-    console.log(`=== REMINDER SUMMARY: ${sent} sent, ${failed} failed ===`);
-    
-    return c.json({
-      success: true,
-      message: `Stock request reminders processed`,
-      summary: {
-        totalStoreIncharges: storeIncharges.length,
-        storesWithRequests: todayRequestStoreIds.length,
-        remindersSent: sent,
-        remindersFailed: failed,
-        targets: reminderTargets.map(t => ({
-          name: t.name,
-          store: t.storeName,
-        })),
-      },
-    });
+    console.log(`Stock request reminders (${slot}, ${forDate}):`, JSON.stringify(results));
+    return c.json({ success: true, slot, forDate, reminded: results });
   } catch (error: any) {
     console.error('Error sending stock request reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// MONTH-END STOCK COUNT (owner, 29 Oct 2026: "we have a stock count due on 31st October ... push
+// this notification as urgent to store incharge ... repeated notifications starting from previous
+// day 6pm, max 5 notifications. Do this every month.")
+// ============================================
+// pg_cron calls this every day at 12, 4, 6, 8 and 9 PM IST. It acts only on the day before the
+// month's last day (6 PM, 9 PM) and the last day (12 PM, 4 PM, 8 PM): five reminders at most. A
+// store whose count is in - a stock count saved for it since 6 PM the day before - is left alone.
+// Urgent to the store incharge (never held for quiet hours; the owner is told if it isn't opened).
+// Once per store, month and slot. ?slot= overrides the hour and ?today= the date, and ?dry=1 only
+// says who would be reminded (for a test).
+const COUNT_SLOTS: Record<string, { day: 'eve' | 'last'; n: number }> = {
+  'eve-6pm': { day: 'eve', n: 1 }, 'eve-9pm': { day: 'eve', n: 2 }, '12pm': { day: 'last', n: 3 }, '4pm': { day: 'last', n: 4 }, '8pm': { day: 'last', n: 5 },
+};
+const COUNT_SLOT_AT_HOUR: Record<number, string> = { 18: 'eve-6pm', 21: 'eve-9pm', 12: '12pm', 16: '4pm', 20: '8pm' };
+app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const now = getNowIST();
+    const dry = c.req.query('dry') === '1';
+    const today = (dry && /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('today') || '') ? c.req.query('today')! : now.slice(0, 10));
+    const slot = c.req.query('slot') || COUNT_SLOT_AT_HOUR[Number(now.slice(11, 13))];
+    const def = COUNT_SLOTS[slot || ''];
+    const nextMonth = new Date(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) + 32 * 86400000).toISOString().slice(0, 7);
+    const last = new Date(Date.parse(`${nextMonth}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const eve = new Date(Date.parse(`${last}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    if (!def || today !== (def.day === 'eve' ? eve : last)) return c.json({ success: true, skipped: 'not a count reminder time', today, slot: slot || null });
+    // Counted: a stock count for the store saved since 6 PM the day before the last day (IST).
+    const since = `${eve}T18:00`;
+    const counted = new Set((await getAllByPrefixWithRetry('recalibration_'))
+      .filter((r: any) => r?.locationType === 'store' && typeof r.date === 'string' && r.date >= since)
+      .map((r: any) => r.locationId));
+    const stores = (await kv.getByPrefix('store:')).filter((st: any) => st?.id && st.status !== 'inactive' && st.status !== 'closed');
+    const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+    const lastName = new Date(`${last}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const results: any[] = [];
+    for (const store of stores) {
+      if (counted.has(store.id)) continue;
+      const onceKey = `stock-count-reminder:${store.id}:${last.slice(0, 7)}:${slot}`;
+      if (await kv.get(onceKey)) continue;
+      const to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+      if (dry) {
+        results.push({ store: store.name, to: to.map((u: any) => u.name), dry: true });
+        continue;
+      }
+      const title = def.day === 'eve' ? `Month-end momo count tomorrow (${lastName})` : `Count the momos today: month-end stock count`;
+      const message = def.day === 'eve'
+        ? `${store.name}: tomorrow is the month-end stock count. Count every momo type in the freezer and enter it in Stock > Count stock. Reminder ${def.n} of 5.`
+        : `${store.name}: count every momo type in the freezer and enter it in Stock > Count stock today. It shows how many momos went missing this month. Reminder ${def.n} of 5.`;
+      for (const u of to) await notifyUser(u.authUserId, 'stock_count_reminder', title, message, undefined, last).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+      results.push({ store: store.name, to: to.map((u: any) => u.name) });
+    }
+    console.log(`Stock count reminders (${slot}, month ending ${last}):`, JSON.stringify(results));
+    return c.json({ success: true, slot, monthEnd: last, reminded: results });
+  } catch (error: any) {
+    console.error('Error sending stock count reminders:', error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -15403,13 +15438,20 @@ async function sendProductionLogReminders(today: string): Promise<number> {
 
 app.post('/make-server-c2dd9b9d/send-delivery-confirmation-reminders', async (c) => {
   try {
-    console.log('=== DELIVERY CONFIRMATION REMINDER CHECK (10PM) ===');
+    // 10 PM, and 9:30 AM with ?slot=am (owner, 29 Oct 2026: orders sat unreceived for days). Urgent
+    // (notificationRules.ts): it gets through quiet hours and reaches the owner if not opened.
+    const slot = c.req.query('slot') === 'am' ? 'am' : 'pm';
+    console.log(`=== DELIVERY CONFIRMATION REMINDER CHECK (${slot === 'am' ? '9:30 AM' : '10 PM'}) ===`);
     const today = getTodayIST();
 
-    const productionRemindersSent = await sendProductionLogReminders(today);
+    const productionRemindersSent = slot === 'pm' ? await sendProductionLogReminders(today) : 0;
 
     const allProductionRequests = await kv.getByPrefix('production_request_');
-    const shippedRequests = allProductionRequests.filter((r: any) => r.status === 'shipped' || r.status === 'partially-shipped');
+    const istDay = (iso: any) => (iso && !Number.isNaN(Date.parse(iso)) ? new Date(Date.parse(iso) + 330 * 60000).toISOString().slice(0, 10) : '');
+    // Sent and not received (in the morning: sent before today), and deliveries marked received
+    // for the store that the incharge hasn't confirmed yet.
+    const shippedRequests = allProductionRequests.filter((r: any) =>
+      ((r.status === 'shipped' || r.status === 'partially-shipped') && (slot === 'pm' || istDay(r.shippedAt) < today)) || r.receiptConfirm?.pending);
 
     if (shippedRequests.length === 0) {
       console.log('No shipped-but-unconfirmed requests tonight');
@@ -15430,17 +15472,22 @@ app.post('/make-server-c2dd9b9d/send-delivery-confirmation-reminders', async (c)
       const storeIncharge = await getStoreIncharge(storeId);
       if (!storeIncharge?.authUserId || !storeIncharge?.employeeId) continue;
 
-      const dedupeKey = `delivery_reminder_sent:${storeIncharge.employeeId}:${today}`;
+      const dedupeKey = `delivery_reminder_sent:${storeIncharge.employeeId}:${today}${slot === 'am' ? ':am' : ''}`;
       if (await kv.get(dedupeKey)) {
         skipped++;
         continue;
       }
 
       const count = requests.length;
-      const message = `Hi ${storeIncharge.name}, ${count} shipment${count > 1 ? 's' : ''} to your store ${count > 1 ? 'haven\'t' : 'hasn\'t'} been confirmed as delivered yet. Please confirm receipt as soon as possible so stock figures stay accurate.`;
+      const dayWord = (d: string) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '');
+      const lines = requests
+        .sort((a: any, b: any) => String(a.requestDate).localeCompare(String(b.requestDate)))
+        .map((r: any) => (r.receiptConfirm?.pending ? `${dayWord(r.requestDate)} order: check what came` : `${dayWord(r.requestDate)} order: sent ${dayWord(istDay(r.shippedAt))}, not received`));
+      const title = count === 1 ? (requests[0].receiptConfirm?.pending ? 'Confirm a delivery' : 'Receive a delivery') : `${count} deliveries to receive or confirm`;
+      const message = `${lines.join('; ')}. Tap each one on Home - the store's stock is wrong until you do.`;
 
       try {
-        await notifyUser(storeIncharge.authUserId, 'delivery_confirmation_reminder', '📦 Confirm Delivery', message, undefined, today);
+        await notifyUser(storeIncharge.authUserId, 'delivery_confirmation_reminder', title, message, undefined, today);
         await kv.set(dedupeKey, { sentAt: new Date().toISOString(), shippedCount: count });
         sent++;
         console.log(`✓ Sent delivery confirmation reminder to ${storeIncharge.name} (${count} shipped)`);

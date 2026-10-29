@@ -57,6 +57,7 @@ export function AttentionInbox({ items, loading, title }: { items: AttentionItem
   return (
     <>
       <ListGroup
+        id="home-attention"
         title={title ?? t('home.needsAttention')}
         action={sorted.length > MAX_ROWS ? (
           <Button variant="link" size="sm" onClick={() => setAllOpen(true)}>{t('common.seeAll', { n: sorted.length })}</Button>

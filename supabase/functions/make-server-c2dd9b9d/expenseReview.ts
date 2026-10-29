@@ -11,10 +11,25 @@
 // unlike before), category (filed unlike before, or a word that belongs elsewhere), detail (a
 // repair or labour entry that doesn't say what), repeat (a consumable bought again and again),
 // unusual (far above what this kind of spend usually is here), duplicate (same amount, kind and
-// place within two days); for repairs, labour and equipment (expensePaperwork.ts) also bill (no
+// place within two days, or the same purchase logged for another place within a day), place (an
+// ingredient this place hasn't bought in 90 days that another place buys regularly - owner, 29 Oct
+// 2026: tandoori masala logged for the store and the production house on the same day), amount (doesn't say how much: "Butter 8 pcs" with no pack size - owner,
+// 29 Oct 2026; it closes itself when the entry is edited to a clear amount); for repairs, labour and equipment (expensePaperwork.ts) also bill (no
 // photo of the bill above ₹500), approval (above ₹2,000: waits for the owner's OK) and replace
 // (a machine repaired 3 times in 4 months, or repairs reaching 40% of its price).
+//
+// Why a big buy was right (owner, 29 Oct 2026: "if I tell him it's correct will it be able to
+// understand why ... so next time it's able to see and understand the trend"): marking "Much
+// bigger than usual" correct asks why (BIG_BUY_REASONS). The answer is kept on the entry
+// (explained) and remembered for later checks:
+//   expense-explained:{place}:{item}   the last few explained big buys of one item at one place
+//   expense-season:{place}             a festival stock-up or buying ahead: the next 14 days
+// A later big buy says what happened last time, the festival season it falls in, or a festival in
+// the calendar (store-calendar:{date}) just ahead, and comes with that reason picked. Explained
+// buys stay out of "usual", and an item with its own history is held to its own usual amount.
 import { askClaudeForJson } from './insights.ts';
+import { BIG_BUY_REASONS } from './bigBuyReasons.ts';
+import { amountFix, amountIssue, itemKey, type ItemSpec } from './suppliesRules.ts';
 import {
   APPROVAL_ABOVE, BILL_PHOTO_ABOVE, REPLACE_AFTER_REPAIRS, REPLACE_SHARE, REPLACE_WINDOW_DAYS, describeRepair, isBillPath, needsPaperwork,
 } from './expensePaperwork.ts';
@@ -38,7 +53,39 @@ type Flag = {
   title: string; message: string; suggestion?: Record<string, unknown>; suggestionText?: string;
   status: 'open' | 'fixed' | 'dismissed'; createdAt: string; loggedBy?: string;
   decidedBy?: string; decidedAt?: string; note?: string;
+  /** Why it was right (BIG_BUY_REASONS), and the reason a later check suggests. */
+  reason?: string; hint?: { reason: string; text: string };
 };
+
+const ASKS_WHY = ['unusual'];
+const SEASON_DAYS = 14;
+type Explained = { date: string; amount: number; reason: string; note?: string; by: string };
+const explainedKey = (place: string, item: string) => `expense-explained:${place}:${norm(item).slice(0, 60)}`;
+const seasonKey = (place: string) => `expense-season:${place}`;
+// 28 Oct, or 28 Oct 2026 when it is not the year of `ref`.
+const shortDate = (date: string, ref = date) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(date.slice(0, 4) !== ref.slice(0, 4) ? { year: 'numeric' } : {}), timeZone: 'UTC' });
+const why = (e: { reason: string; note?: string }) => `${BIG_BUY_REASONS[e.reason] || e.reason}${e.note ? ` (${e.note})` : ''}`;
+
+/** What a big buy probably is, from what people said before and the festival calendar. */
+async function bigBuyHint(kv: Kv, place: string, name: string, date: string): Promise<{ reason: string; text: string } | null> {
+  const past: Explained[] = (name ? await kv.get(explainedKey(place, name)).catch(() => null) : null) || [];
+  const last = past.filter((e) => e.date < date).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const season = await kv.get(seasonKey(place)).catch(() => null);
+  if (season && date >= addDays(season.from, -2) && date <= season.until) {
+    return { reason: season.reason, text: `${season.by} noted a festival stock-up here from ${shortDate(season.from)}: ${why(season)}.` };
+  }
+  // A festival in the calendar within the next 14 days (or the last 2): stocking up starts early.
+  const days = Array.from({ length: 17 }, (_, i) => addDays(date, i - 2));
+  const marks = kv.mget ? await kv.mget(days.map((d) => `store-calendar:${d}`)).catch(() => []) : [];
+  const festival = (marks || []).find((m: any) => m?.name && m?.date && m.effect !== 'closed');
+  if (last) {
+    const text = `Last time (${shortDate(last.date, date)}, ${last.by}): ${why(last)}.${festival ? ` ${festival.name} is on ${shortDate(festival.date)}.` : ''}`;
+    return { reason: festival && last.reason !== 'price_up' ? 'festival' : last.reason, text };
+  }
+  if (festival) return { reason: 'festival', text: `${festival.name} is on ${shortDate(festival.date)}: a festival stock-up?` };
+  return null;
+}
 
 const P = '/make-server-c2dd9b9d';
 const rupees = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
@@ -59,6 +106,17 @@ const median = (xs: number[]) => {
 };
 const amountOf = (r: any) => Number(r?.totalCost ?? r?.amount ?? 0) || 0;
 const nameOf = (r: any) => String(r?.itemName || r?.description || '').trim();
+const sameQty = (a: any, b: any) => {
+  const x = canonical(Number(a?.quantity) || 0, a?.unit);
+  const y = canonical(Number(b?.quantity) || 0, b?.unit);
+  return x.qty > 0 && x.unit === y.unit && Math.abs(x.qty - y.qty) < 1e-6;
+};
+// "Bunny Momos 1", "Main Production House BWN".
+async function placeName(deps: Pick<ExpenseReviewDeps, 'kv'>, place: string) {
+  const [kind, id] = place.split(':');
+  const rec = id ? await deps.kv.get(kind === 'production' ? `production_house_${id}` : `store:${id}`).catch(() => null) : null;
+  return String(rec?.name || '').trim() || (kind === 'production' ? 'the production house' : 'the store');
+}
 
 // Consumables bought again and again (kitchen towels, gloves, dusters...).
 const CONSUMABLE_CATEGORIES = ['cleaning_supplies', 'cleaning_sanitation', 'hygiene_ppe', 'utensils', 'office_supplies', 'deep_cleaning'];
@@ -153,6 +211,20 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
       }
     }
 
+    // An amount that doesn't say how much. The fix comes from how the item was last written on a
+    // shopping list (2 packets × 1 L), when there is one.
+    if (source === 'inventory') {
+      const issue = amountIssue({ name, qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton, weightEachGrams: item.weightPerUnitGrams });
+      if (issue) {
+        const specs: Record<string, ItemSpec> | null = await deps.kv.get('supply-item-specs').catch(() => null);
+        const fix = amountFix(Number(item.quantity) || 0, amount, specs?.[itemKey(name)]);
+        flags.push({
+          kind: 'amount', title: 'How much is that?', message: issue,
+          ...(fix ? { suggestion: { quantity: fix.quantity, unit: fix.unit, costPerUnit: fix.costPerUnit }, suggestionText: fix.text } : {}),
+        });
+      }
+    }
+
     // Category: filed unlike before, or a word that belongs in another category.
     let categoryChecked = false;
     const rule = WORD_RULES.find((r) => r.test.test(name) && r.from.includes(item.category) && r.to !== item.category);
@@ -211,12 +283,19 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
       }
     }
 
-    // Far above what this kind of spend usually is at this place.
-    const sameCat = pool.filter((r: any) => r.category === item.category && samePlace(r));
-    if (sameCat.length >= 5 && amount >= 500) {
-      const usual = median(sameCat.map(amountOf).filter((x: number) => x > 0));
+    // Far above what this item - or, without enough of its own history, this kind of spend - usually
+    // is at this place. Big buys someone already explained are left out of "usual".
+    const ownBuys = sameItem.filter((r: any) => samePlace(r) && !r.explained).map(amountOf).filter((x: number) => x > 0);
+    const sameCat = pool.filter((r: any) => r.category === item.category && samePlace(r) && !r.explained);
+    const byItem = ownBuys.length >= 3;
+    if ((byItem || sameCat.length >= 5) && amount >= 500) {
+      const usual = median(byItem ? ownBuys : sameCat.map(amountOf).filter((x: number) => x > 0));
       if (usual > 0 && amount >= usual * 3) {
-        flags.push({ kind: 'unusual', title: 'Much bigger than usual', message: `${rupees(amount)} for ${name || catLabel(item.category)}; a ${catLabel(item.category).toLowerCase()} entry here is usually about ${rupees(usual)}.` });
+        const base = byItem
+          ? `${rupees(amount)} for ${name}; it is usually about ${rupees(usual)} here.`
+          : `${rupees(amount)} for ${name || catLabel(item.category)}; a ${catLabel(item.category).toLowerCase()} entry here is usually about ${rupees(usual)}.`;
+        const hint = await bigBuyHint(deps.kv, place, name, item.date);
+        flags.push({ kind: 'unusual', title: 'Much bigger than usual', message: hint ? `${base} ${hint.text}` : base, ...(hint ? { hint } : {}) });
       }
     }
 
@@ -227,6 +306,34 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
       || Math.abs(Date.parse(r.date) - Date.parse(item.date)) <= 2 * 86400000 && VAGUE.test(nameOf(r)) && VAGUE.test(name)));
     if (twin) {
       flags.push({ kind: 'duplicate', title: 'Logged twice?', message: `${rupees(amount)} for ${nameOf(twin) || 'the same thing'} was also logged on ${twin.date}. Delete one if it is the same bill.` });
+    }
+
+    // The same purchase logged for another place too: same item, same amount or quantity, within a day.
+    const otherTwin = !twin && key0 ? sameItem.find((r: any) => !samePlace(r) && Math.abs(Date.parse(r.date) - Date.parse(item.date)) <= 86400000
+      && (Math.abs(amountOf(r) - amount) < 0.5 || sameQty(r, item))) : undefined;
+    // An ingredient this place hasn't bought in 90 days that another place buys regularly.
+    let usualElsewhere: { place: string; times: number } | null = null;
+    if (source === 'inventory' && key0 && !sameItem.some(samePlace)) {
+      const times = new Map<string, number>();
+      sameItem.forEach((r: any) => times.set(placeOf(r), (times.get(placeOf(r)) || 0) + 1));
+      const [top, n] = [...times].sort((a, b) => b[1] - a[1])[0] || ['', 0];
+      if (n >= 3) usualElsewhere = { place: top, times: n };
+    }
+    if (usualElsewhere) {
+      const [here, there] = await Promise.all([placeName(deps, place), placeName(deps, usualElsewhere.place)]);
+      const both = otherTwin && placeOf(otherTwin) === usualElsewhere.place;
+      flags.push({ kind: 'place', title: both ? 'Logged for the wrong place too?' : 'Not usually bought here', message: `${name} is bought for ${there} (${usualElsewhere.times} times in 90 days), never for ${here}. ${both ? `It was logged for ${there} on ${otherTwin.date} too, so this looks like the same purchase twice: delete this one.` : `If it was bought for ${there}, delete it here and log it there.`}` });
+    } else if (otherTwin) {
+      // The other entry is the one at the unusual place (already flagged "not usually bought
+      // here"): say there it was logged twice, and leave this one - the right place - alone.
+      const odd: Flag | null = await deps.kv.get(`expense-flag:${otherTwin.id}:place`);
+      const here = await placeName(deps, place);
+      if (odd?.status === 'open') {
+        await deps.kv.set(`expense-flag:${odd.id}`, { ...odd, title: 'Logged for the wrong place too?', message: `${odd.message.replace(/ If it was bought for .*$/, '')} It was logged for ${here} on ${item.date} too, so this looks like the same purchase twice: delete this one.` });
+      } else {
+        const there = await placeName(deps, placeOf(otherTwin));
+        flags.push({ kind: 'duplicate', title: 'Logged for two places?', message: `${name} · ${rupees(amount)} was also logged for ${there} on ${otherTwin.date}. If it is one purchase, delete the entry at the wrong place.` });
+      }
     }
 
     // Repairs, labour and equipment: the bill, the owner's OK, and a machine that keeps breaking.
@@ -258,6 +365,32 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
   } catch (error) {
     console.log('Expense review failed:', error instanceof Error ? error.message : String(error));
     return [];
+  }
+}
+
+/** After an edit: an open "how much is that?" flag closes when the amount is now clear (it still
+ *  counts as a mistake for the KPI - it was fixed, not marked correct). Never throws. */
+export async function recheckAmount(deps: Pick<ExpenseReviewDeps, 'kv'>, item: any, by: string) {
+  try {
+    const id = `${item?.id}:amount`;
+    const flag: Flag | null = await deps.kv.get(`expense-flag:${id}`);
+    if (!flag || flag.status !== 'open') return;
+    if (amountIssue({ name: nameOf(item), qty: Number(item.quantity) || 0, unit: item.unit, category: item.category, piecesPerCarton: item.piecesPerCarton, weightEachGrams: item.weightPerUnitGrams })) return;
+    await deps.kv.set(`expense-flag:${id}`, { ...flag, status: 'fixed', decidedBy: by, decidedAt: new Date().toISOString(), note: 'The entry was edited' });
+  } catch (error) {
+    console.log('Expense recheck failed:', error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** An entry was deleted (a double entry, or one logged for the wrong place): its open checks are
+ *  done. They still count for the KPI - it was fixed, not marked correct. Never throws. */
+export async function closeFlagsOf(deps: Pick<ExpenseReviewDeps, 'kv' | 'rows'>, expenseId: string, by: string) {
+  try {
+    const open = (await deps.rows(`expense-flag:${expenseId}:`)).filter((f: Flag) => f?.status === 'open' && f.expenseId === expenseId);
+    const now = new Date().toISOString();
+    for (const f of open) await deps.kv.set(`expense-flag:${f.id}`, { ...f, status: 'fixed', decidedBy: by, decidedAt: now, note: 'The entry was deleted' });
+  } catch (error) {
+    console.log('Closing expense checks failed:', error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -338,6 +471,23 @@ async function tellPeople(deps: ExpenseReviewDeps, item: any, place: string, fla
 
 const SUGGESTION_FIELDS = ['quantity', 'unit', 'costPerUnit', 'piecesPerCarton', 'cartonCount', 'category'];
 
+/** Keep why a big buy was right: on the entry, in the item's memory, and as a festival season. */
+async function rememberBigBuy(kv: Kv, flag: Flag, reason: string, note: string | undefined, by: string, at: string) {
+  const entry = await kv.get(flag.expenseKey).catch(() => null);
+  if (!entry) return;
+  await kv.set(flag.expenseKey, { ...entry, explained: { kind: flag.kind, reason, ...(note ? { note } : {}), by, at } });
+  const name = nameOf(entry);
+  if (name) {
+    const key = explainedKey(flag.place, name);
+    const past: Explained[] = (await kv.get(key).catch(() => null)) || [];
+    const mine: Explained = { date: entry.date, amount: amountOf(entry), reason, ...(note ? { note } : {}), by };
+    await kv.set(key, [mine, ...past.filter((e) => e.date !== entry.date)].slice(0, 6));
+  }
+  if (reason === 'festival' || reason === 'shop_closed') {
+    await kv.set(seasonKey(flag.place), { reason, ...(note ? { note } : {}), by, from: entry.date, until: addDays(entry.date, SEASON_DAYS), at });
+  }
+}
+
 export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
   // Who sees and decides flags: the owner and operations managers everywhere, an incharge for
   // their own store or production house.
@@ -401,7 +551,13 @@ export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
         const before = Object.fromEntries(Object.keys(fix).map((k) => [k, entry[k] ?? null]));
         await deps.kv.set(flag.expenseKey, { ...entry, ...fix, reviewFixes: [...(entry.reviewFixes || []), { kind: flag.kind, before, after: fix, by: v.name, at: new Date().toISOString() }] });
       }
-      const next: Flag = { ...flag, status: action === 'apply' ? 'fixed' : 'dismissed', decidedBy: v.name, decidedAt: new Date().toISOString(), note: typeof body?.note === 'string' ? body.note.slice(0, 300) : undefined };
+      const note = typeof body?.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 300) : undefined;
+      // Marking a big buy correct says why (older app versions don't send it).
+      const reason = action === 'dismiss' && ASKS_WHY.includes(flag.kind) && BIG_BUY_REASONS[body?.reason] ? String(body.reason) : undefined;
+      if (reason === 'other' && !note) return c.json({ error: 'Write why it was bigger' }, 400);
+      const at = new Date().toISOString();
+      if (reason) await rememberBigBuy(deps.kv, flag, reason, note, v.name, at);
+      const next: Flag = { ...flag, status: action === 'apply' ? 'fixed' : 'dismissed', decidedBy: v.name, decidedAt: at, note, ...(reason ? { reason } : {}) };
       await deps.kv.set(`expense-flag:${id}`, next);
       return c.json({ flag: next });
     } catch (error) {

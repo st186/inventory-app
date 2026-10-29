@@ -142,7 +142,7 @@ export function CashTopupHistory({ requests, title = 'Top-up history' }: Props) 
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="num text-body-md font-medium text-text">{formatINR(r.requestedAmount)} for {r.date}</span>
                   <span className="text-label text-text-2">
-                    {r.requestedByName} ({r.requestedByEntityName}) · {TOPUP_REASON_LABELS[r.reason]} · #{r.id.slice(-6).toUpperCase()}
+                    <span className="num font-medium">#{r.id.slice(-6).toUpperCase()}</span> · {r.requestedByName} ({r.requestedByEntityName}) · {TOPUP_REASON_LABELS[r.reason]}
                   </span>
                   <span className="text-label text-text-3">
                     Requested {formatDateTimeIST(r.requestDate, false)}

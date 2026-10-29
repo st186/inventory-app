@@ -88,8 +88,6 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
   const sauces = buildSauces(productionData, matches, bounds, previousBounds, zipPrev, pctChange);
   const weekday = buildWeekday(productionData, matches, bounds, previousBounds, zipPrev);
   const stock = buildStock({ productionData, selectedProductionHouseId, stores, context, previousMonthStock, stockAlertThresholds });
-  // The recalibration sheet (Analytics.tsx) reads the stock worked out here, as before.
-  (window as any).__currentProductionHouseStock = stock.productionHouseStock;
   const leaderboard = !selectedProductionHouseId && context.productionHouses && context.productionHouses.length > 1
     ? buildLeaderboard(productionData, context.productionHouses, stores, context.stores, bounds)
     : [];
@@ -378,7 +376,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
             {latestRecalibration && latestRecalibration.date ? (
               <span className="text-label text-text-3">Last recalibrated {formatDateIST(latestRecalibration.date)} IST</span>
             ) : previousMonthStock && !latestRecalibration ? (
-              <span className="text-label text-text-3">Using auto carry-forward from last month</span>
+              <span className="text-label text-text-3">No stock count yet: worked out from all records</span>
             ) : null}
           </div>
         )}
@@ -395,12 +393,12 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
           <>
             {stock.hasOpeningBalance && (
               <HowItWorks title="How stock is worked out" label="Stock carries forward automatically">
-                <p>Stock = opening balance + made this month (approved entries) − sent to stores (shipped or delivered requests).</p>
+                <p>Stock = the last stock count + momos made since (entries not rejected) − momos sent since (shipped or delivered, to stores and event stalls) + event leftovers counted back in.</p>
                 <p>Chicken and veg base stock also goes down by the kurkure made from it.</p>
                 <p>
                   {latestRecalibration && latestRecalibration.date
-                    ? `The opening balance comes from the recalibration on ${formatDateIST(latestRecalibration.date)} (IST).`
-                    : "The opening balance is last month's closing stock, worked out automatically."}
+                    ? `It starts from the stock count on ${formatDateIST(latestRecalibration.date)} (IST). Opening is what that leaves at the start of this month.`
+                    : 'No stock count yet, so it is worked out from all production and shipments on record.'}
                 </p>
               </HowItWorks>
             )}

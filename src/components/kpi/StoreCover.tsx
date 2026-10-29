@@ -15,12 +15,19 @@ import { distanceText } from '../../utils/distance';
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
 const where = (ev: kpi.CoverPunchEvent) => (ev.noGps ? 'no location' : ev.outside ? `${distanceText(ev.distanceM)} from the store` : 'at the store');
+const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const istMinutesNow = () => { const d = new Date(Date.now() + 5.5 * 3600000); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
 
 export function StoreCoverCard() {
   const [data, setData] = useState<kpi.CoverToday | null>(null);
   const [busy, setBusy] = useState<'in' | 'out' | null>(null);
+  const [now, setNow] = useState(istMinutesNow);
   const load = useCallback(() => { kpi.getCoverToday().then(setData).catch(() => undefined); }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(istMinutesNow()), 60000);
+    return () => clearInterval(timer);
+  }, []);
   if (!data?.setUp || !data.cover) return null;
 
   const punch = async (action: 'in' | 'out') => {
@@ -55,7 +62,11 @@ export function StoreCoverCard() {
           {p?.out && <StatusChip tone={p.out.outside ? 'warning' : 'success'} icon={p.out.outside ? MapPinOff : MapPin}>Out {timeOf(p.out.at)} · {where(p.out)}</StatusChip>}
         </div>
       )}
-      {!p?.in ? (
+      {!p?.in && now < toMin(data.productionEnd) ? (
+        // Until it is time to leave the production house (owner, 29 Oct 2026: "he needs to go to the
+        // store at 5, not now"): the day's check-in is the shift card above.
+        <Button size="lg" variant="secondary" fullWidth leadingIcon={<LogIn />} disabled>Store check-in opens at {kpi.hhmm12(data.productionEnd)}</Button>
+      ) : !p?.in ? (
         <Button size="lg" fullWidth leadingIcon={<LogIn />} loading={busy === 'in'} onClick={() => punch('in')}>Check in at the store</Button>
       ) : (
         <Button size="lg" variant="secondary" fullWidth leadingIcon={<LogOut />} loading={busy === 'out'} onClick={() => punch('out')}>

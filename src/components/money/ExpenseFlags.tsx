@@ -4,19 +4,26 @@
 // Apply fix changes the entry when there is a fix, It's correct closes it. The owner and
 // operations managers see every place, an incharge their own (server expenseReview.ts).
 // Repairs, labour and equipment also bring: a missing bill photo (add it here), the owner's OK
-// above ₹2,000 (only the owner decides), and a machine that keeps needing repairs.
+// above ₹2,000 (only the owner decides), and a machine that keeps needing repairs. A double entry
+// or one logged for the wrong place (owner, 29 Oct 2026) can be deleted right here.
+// "Much bigger than usual" marked correct asks why (owner, 29 Oct 2026: festival season, the dealer
+// shut for a festival, or a reason of their own), so the next big buy and Bunny understand it.
 import * as React from 'react';
-import { AlertTriangle, Camera, CheckCircle2, ReceiptText, ShieldCheck, Wand2, X } from 'lucide-react';
+import { AlertTriangle, Camera, CheckCircle2, ReceiptText, ShieldCheck, Trash2, Wand2, X } from 'lucide-react';
 import { compressPhoto } from '../assets/assetsApi';
 import { attachBill, billLink, uploadBill } from './paperworkApi';
 import * as api from '../../utils/api';
 import { Button } from '../ui/button';
 import { Callout } from '../ui/callout';
+import { confirm } from '../ui/confirm';
 import { EmptyState } from '../ui/empty-state';
+import { Field } from '../ui/field';
+import { Input } from '../ui/input';
 import { formatINR } from '../ui/money';
 import { ResponsiveModal } from '../ui/responsive-modal';
 import { StatusChip } from '../ui/status-chip';
 import { toast } from '../ui/sonner';
+import { cn } from '../ui/utils';
 
 export function useExpenseFlags(enabled: boolean, accessToken?: string) {
   const [flags, setFlags] = React.useState<api.ExpenseFlag[]>([]);
@@ -51,8 +58,74 @@ const ACTIONS: Record<string, { apply: string | null; dismiss: string; applied: 
   replace: { apply: null, dismiss: 'Noted', applied: '', dismissed: 'Noted' },
 };
 
+// Why a big buy was right: kept on the entry (server expenseReview.ts BIG_BUY_REASONS).
+const BIG_BUY_REASONS: { id: string; label: string; hint: string }[] = [
+  { id: 'festival', label: 'Festival season', hint: 'More sales, so more was needed' },
+  { id: 'shop_closed', label: 'Shop closed for a festival', hint: 'The dealer is shut, so bought ahead' },
+  { id: 'bulk', label: 'Bought in bulk', hint: 'A big lot that lasts longer' },
+  { id: 'price_up', label: 'The price went up', hint: 'The usual amount, at a higher price' },
+  { id: 'other', label: 'Something else', hint: 'Write why below' },
+];
+const ASKS_WHY = ['unusual'];
+
+function BigBuyReason({ flag, onCancel, onDone }: { flag: api.ExpenseFlag; onCancel: () => void; onDone: () => void }) {
+  const [reason, setReason] = React.useState(flag.hint?.reason || '');
+  const [note, setNote] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const save = async () => {
+    if (reason === 'other' && !note.trim()) {
+      toast.error('Write why it was bigger');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.decideExpenseFlag(flag.id, 'dismiss', note.trim() || undefined, undefined, reason);
+      toast.success('Saved. Bunny will remember why.');
+      onDone();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save that');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <fieldset className="flex flex-col gap-2 border-t border-border pt-3">
+      <legend className="mb-1.5 text-body-sm font-medium text-text">Why was it bigger?</legend>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Why was it bigger?">
+        {BIG_BUY_REASONS.map((r) => {
+          const on = reason === r.id;
+          return (
+            <button
+              key={r.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => setReason(r.id)}
+              className={cn(
+                'flex min-h-12 flex-col rounded-md border px-3 py-2 text-left outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring',
+                on ? 'border-primary bg-primary-soft' : 'border-border-strong bg-surface hover:bg-surface-2',
+              )}
+            >
+              <span className={cn('text-body-sm font-semibold', on ? 'text-primary' : 'text-text')}>{r.label}</span>
+              <span className="text-caption text-text-3">{r.hint}</span>
+            </button>
+          );
+        })}
+      </div>
+      <Field label={reason === 'other' ? 'Why' : 'Which festival, or a note'} required={reason === 'other'} optional={reason !== 'other'}>
+        <Input value={note} maxLength={300} placeholder="e.g. Kali Puja, the shop is shut 3 days" onChange={(e) => setNote(e.target.value)} />
+      </Field>
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button size="sm" leadingIcon={<CheckCircle2 />} loading={saving} disabled={!reason} onClick={save}>Save</Button>
+        <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>Cancel</Button>
+      </div>
+    </fieldset>
+  );
+}
+
 function FlagCard({ flag, onDone }: { flag: api.ExpenseFlag; onDone: () => void }) {
-  const [busy, setBusy] = React.useState<'apply' | 'dismiss' | 'bill' | 'view' | null>(null);
+  const [busy, setBusy] = React.useState<'apply' | 'dismiss' | 'bill' | 'view' | 'delete' | null>(null);
+  const [askWhy, setAskWhy] = React.useState(false);
   const billInput = React.useRef<HTMLInputElement>(null);
   const kind = ACTIONS[flag.kind];
   const decide = async (action: 'apply' | 'dismiss') => {
@@ -87,6 +160,21 @@ function FlagCard({ flag, onDone }: { flag: api.ExpenseFlag; onDone: () => void 
     setBusy('view');
     try { window.open(await billLink(flag.entry.billPhotoPath), '_blank', 'noopener'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not open the bill'); } finally { setBusy(null); }
   };
+  const removable = (flag.kind === 'duplicate' || flag.kind === 'place') && !!flag.entry;
+  const remove = async () => {
+    const ok = await confirm({ title: 'Delete this entry?', body: entryLine(flag), confirmLabel: 'Delete entry', tone: 'danger' });
+    if (!ok) return;
+    setBusy('delete');
+    try {
+      await api.deleteFlaggedEntry(flag);
+      toast.success('Entry deleted');
+      onDone();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete it');
+    } finally {
+      setBusy(null);
+    }
+  };
   const waiting = flag.kind === 'approval' && !flag.canDecide;
   const detail = repairLine(flag);
   return (
@@ -103,6 +191,8 @@ function FlagCard({ flag, onDone }: { flag: api.ExpenseFlag; onDone: () => void 
       {flag.suggestionText && <p className="text-body-sm text-text"><span className="font-medium">Suggested fix:</span> {flag.suggestionText}</p>}
       {waiting ? (
         <p className="text-label text-text-3">Waiting for the owner's OK.</p>
+      ) : askWhy ? (
+        <BigBuyReason flag={flag} onCancel={() => setAskWhy(false)} onDone={onDone} />
       ) : (
         <div className="flex flex-wrap gap-2 pt-1">
           {flag.kind === 'bill' && (
@@ -111,10 +201,13 @@ function FlagCard({ flag, onDone }: { flag: api.ExpenseFlag; onDone: () => void 
               <input ref={billInput} type="file" accept="image/*" capture="environment" className="sr-only" onChange={addBill} />
             </>
           )}
+          {removable && (
+            <Button size="sm" variant="danger-ghost" leadingIcon={<Trash2 />} loading={busy === 'delete'} disabled={!!busy} onClick={remove}>Delete this entry</Button>
+          )}
           {(kind ? kind.apply : flag.suggestion ? 'Apply fix' : null) && (
             <Button size="sm" leadingIcon={kind ? <CheckCircle2 /> : <Wand2 />} loading={busy === 'apply'} disabled={!!busy} onClick={() => decide('apply')}>{kind?.apply || 'Apply fix'}</Button>
           )}
-          <Button size="sm" variant="secondary" leadingIcon={flag.kind === 'approval' ? <X /> : <CheckCircle2 />} loading={busy === 'dismiss'} disabled={!!busy} onClick={() => decide('dismiss')}>{kind?.dismiss || "It's correct"}</Button>
+          <Button size="sm" variant="secondary" leadingIcon={flag.kind === 'approval' ? <X /> : <CheckCircle2 />} loading={busy === 'dismiss'} disabled={!!busy} onClick={() => (ASKS_WHY.includes(flag.kind) ? setAskWhy(true) : decide('dismiss'))}>{kind?.dismiss || "It's correct"}</Button>
           {flag.entry?.billPhotoPath && (
             <Button size="sm" variant="ghost" leadingIcon={<ReceiptText />} loading={busy === 'view'} disabled={!!busy} onClick={viewBill}>View bill</Button>
           )}

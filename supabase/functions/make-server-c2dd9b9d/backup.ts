@@ -18,6 +18,11 @@
 // - The manifest (rows per prefix, SHA-256 of every section and of the whole payload) is the last
 //   section, encrypted. It is only known once everything has been read, and a plain copy at the top
 //   would tell anyone holding the file how many staff, sales days, etc. the business has.
+// - The money, request and notification tables of the database overhaul (schema ledger, owner
+//   29 Oct 2026: "include new tables [in the] Google Drive backup") follow the rows, a page at a
+//   time through public.ledger_backup_page (service role only; the schema itself is private), as
+//   type-3 sections {t: table, r: row}. Today they mirror the KV rows, so a restore still writes
+//   KV only (the triggers refill the tables); after the switch-over they become the original.
 // - The key comes from the BACKUP_PASSPHRASE secret (PBKDF2-SHA-256, 200k iterations, a new random
 //   salt per file). Without that passphrase no backup can be read, by design, so the owner must
 //   also keep it outside Supabase. BACKUP_PASSPHRASE_PREVIOUS (optional) still opens older files
@@ -78,7 +83,14 @@ const DRIVE_BACKUP_FOLDER = ['Backups'];
 // Section types.
 const T_ROWS = 1;
 const T_AUTH = 2;
+const T_TABLE = 3;
 const T_MANIFEST = 9;
+// The database overhaul's tables (schema ledger), in the order they are written.
+const LEDGER_TABLES = [
+  'sales_days', 'online_sales_days', 'purchases', 'running_costs', 'fixed_costs', 'payouts',
+  'stock_requests', 'stock_request_lines', 'cash_topups', 'notifications', 'mirror_checks', 'mirror_issues',
+];
+const TABLE_PAGE_ROWS = 500;
 
 // Short-lived rows that mean nothing a day later or are rebuilt on their own: live rider
 // positions, cached ETAs and forecast checks, one-time approve/reject links, per-person AI
@@ -317,7 +329,11 @@ type RunState = {
   iv: string;
   header: string; // base64 of the header JSON (it is authenticated with every section)
   next: number; // next section number
-  phase: 'auth' | 'rows' | 'done';
+  phase: 'auth' | 'rows' | 'tables' | 'done';
+  table?: number; // which LEDGER_TABLES entry is being written
+  tableAfter?: string | null; // cursor within it (the page function's sort key)
+  tables?: Record<string, number>;
+  tablesSkipped?: string;
   afterKey: string | null; // cursor: everything up to and including this key is written
   pageRows: number;
   rows: number;
@@ -345,7 +361,7 @@ function startRun(appVersion: string, kind: RunState['kind'], by?: string): RunS
     appVersion,
     kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: PBKDF2_ITERATIONS, salt: b64(salt) },
     cipher: { name: 'AES-GCM', keyBits: 256, iv: b64(iv), perSection: 'IV XOR section number (last 4 bytes); AAD = this header + section type' },
-    sections: 'type u8, number u32, plain length u32, cipher length u32, then AES-GCM(gzip(NDJSON)); type 1 = rows {k, v}, 2 = logins, 9 = manifest (last)',
+    sections: 'type u8, number u32, plain length u32, cipher length u32, then AES-GCM(gzip(NDJSON)); type 1 = rows {k, v}, 2 = logins, 3 = database tables {t, r}, 9 = manifest (last)',
   };
   return {
     id: newRunId(), kind, by, startedAt: createdAt, updatedAt: createdAt, appVersion,
@@ -439,7 +455,7 @@ async function runStep(deps: Deps, s: RunState, emit: (b: Uint8Array) => Promise
 
   while (s.phase === 'rows') {
     const limit = await nextPageRows(deps.supabase, s.afterKey, s.pageRows || PAGE_ROWS);
-    if (limit === 0) { await flush(); s.phase = 'done'; break; }
+    if (limit === 0) { await flush(); s.phase = 'tables'; break; }
     let q = deps.supabase.from(TABLE).select('key,value').order('key', { ascending: true }).limit(limit);
     if (s.afterKey !== null) q = q.gt('key', s.afterKey);
     const { data, error } = await q;
@@ -475,6 +491,46 @@ async function runStep(deps: Deps, s: RunState, emit: (b: Uint8Array) => Promise
     if (stepRaw + pending >= rawBudget || busy >= busyBudget) { await flush(); break; }
   }
 
+  // The ledger tables, one page at a time, packed like the rows.
+  let tableLines: string[] = [];
+  let tablePending = 0;
+  const flushTables = async (name: string) => {
+    if (!tableLines.length) return;
+    const raw = te.encode(tableLines.join('\n'));
+    const n = tableLines.length;
+    tableLines = [];
+    tablePending = 0;
+    await seal(T_TABLE, raw, n, `${name}:${s.tableAfter ?? ''}`);
+  };
+  while (s.phase === 'tables' && stepRaw < rawBudget && busy < busyBudget) {
+    const name = LEDGER_TABLES[s.table ?? 0];
+    if (!name) { s.phase = 'done'; break; }
+    const { data, error } = await deps.supabase.rpc('ledger_backup_page', { p_table: name, p_after: s.tableAfter ?? null, p_limit: TABLE_PAGE_ROWS });
+    if (error) {
+      // Without the page function (or the ledger), the backup goes ahead with the rows alone.
+      if (/function|does not exist|schema cache|unknown table/i.test(error.message)) { s.tablesSkipped = error.message.slice(0, 200); s.phase = 'done'; break; }
+      throw new Error(`Reading the ${name} table failed: ${error.message}`);
+    }
+    const page: { k: string; r: any }[] = Array.isArray(data) ? data : [];
+    const t0 = performance.now();
+    for (const item of page) {
+      const line = JSON.stringify({ t: name, r: item.r });
+      tableLines.push(line);
+      tablePending += line.length;
+      s.tableAfter = item.k;
+    }
+    s.tables = { ...(s.tables || {}), [name]: (s.tables?.[name] || 0) + page.length };
+    busy += 2 * (performance.now() - t0);
+    if (page.length < TABLE_PAGE_ROWS) {
+      await flushTables(name);
+      s.table = (s.table ?? 0) + 1;
+      s.tableAfter = null;
+    } else if (tablePending >= SECTION_RAW_TARGET) {
+      await flushTables(name);
+    }
+  }
+  if (s.phase === 'tables') await flushTables(LEDGER_TABLES[s.table ?? 0] || 'end');
+
   if (s.phase === 'done') {
     const dataSections = s.sections.map(({ i, type, rows, raw, sha256, lastKey }) => ({ i, type, rows, raw, sha256, ...(lastKey !== undefined ? { lastKey } : {}) }));
     const manifest = {
@@ -487,6 +543,8 @@ async function runStep(deps: Deps, s: RunState, emit: (b: Uint8Array) => Promise
       totalRows: s.rows,
       authUsers: s.authUsers,
       prefixes: s.prefixes,
+      tables: s.tables || {},
+      ...(s.tablesSkipped ? { tablesSkipped: s.tablesSkipped } : {}),
       skippedRows: s.skipped,
       skippedRules: [...SKIP_PREFIXES, ...SKIP_PATTERNS.map(String)],
       sections: dataSections,

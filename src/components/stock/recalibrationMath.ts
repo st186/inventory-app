@@ -1,12 +1,11 @@
-// The production-house side of Monthly Stock Recalibration's expected stock: momos made (net of
-// the regular momos folded into kurkure) and momos that left the house (shipped requests), over
-// the current month, since a mid-month count, or over last month for an opening balance worked
-// out from transactions. Moved out of MonthlyStockRecalibration.tsx so it can be tested.
+// Shared pieces of the momo stock maths (countMath.ts puts them together): momos made (net of
+// the regular momos folded into kurkure), momos that left a production house (shipped requests),
+// and which records belong to a house.
 //
 // Leftover momos an event stall sends back (event_momo_return rows) are back on the house's
 // stock once production counts them in (status 'received', in production's own count). They
 // were shipped out like any request, so without this they showed as stock that had left.
-import { SENT_STATUSES, shippedAtIST, shippedPieces, toISTTimestamp } from '../../utils/requestStock';
+import { shippedPieces, toISTTimestamp } from '../../utils/requestStock';
 
 export const MOMO_STOCK_KEYS = ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer', 'vegKurkure', 'chickenKurkure'];
 
@@ -22,7 +21,7 @@ export type HouseIds = {
   originalStoreId?: string | null;
 };
 
-const zero = (): MomoCounts => Object.fromEntries(MOMO_STOCK_KEYS.map((k) => [k, 0]));
+export const zero = (): MomoCounts => Object.fromEntries(MOMO_STOCK_KEYS.map((k) => [k, 0]));
 
 // Pieces per momo type that a set of stock requests moved: the shipped amounts, read under the
 // short keys requests use (with the old long keys as fallback).
@@ -47,7 +46,7 @@ export function eventReturnsBack(returns: Row[], houseIds: (string | null | unde
   return totals;
 }
 
-function rawProduction(records: Row[]): MomoCounts {
+export function rawProduction(records: Row[]): MomoCounts {
   return records.reduce((acc, p) => ({
     chicken: acc.chicken + (p.chickenMomos?.final || 0),
     chickenCheese: acc.chickenCheese + (p.chickenCheeseMomos?.final || 0),
@@ -60,7 +59,7 @@ function rawProduction(records: Row[]): MomoCounts {
 }
 
 // Kurkure momos are made FROM regular momos: chicken kurkure uses chicken momos, veg kurkure veg.
-function netOfKurkure(raw: MomoCounts): MomoCounts {
+export function netOfKurkure(raw: MomoCounts): MomoCounts {
   return {
     chicken: raw.chicken - raw.chickenKurkure,
     chickenCheese: raw.chickenCheese,
@@ -72,87 +71,16 @@ function netOfKurkure(raw: MomoCounts): MomoCounts {
   };
 }
 
-const minus = (a: MomoCounts, b: MomoCounts): MomoCounts => Object.fromEntries(MOMO_STOCK_KEYS.map((k) => [k, (a[k] || 0) - (b[k] || 0)]));
+export const minus = (a: MomoCounts, b: MomoCounts): MomoCounts => Object.fromEntries(MOMO_STOCK_KEYS.map((k) => [k, (a[k] || 0) - (b[k] || 0)]));
 
-const matchesHouseRecord = (p: Row, ids: HouseIds) =>
+export const matchesHouseRecord = (p: Row, ids: HouseIds) =>
   p.storeId === ids.productionHouseUUID || p.storeId === ids.effectiveStoreId || p.storeId === ids.originalStoreId ||
   p.productionHouseId === ids.productionHouseUUID || p.productionHouseId === ids.effectiveStoreId || p.productionHouseId === ids.originalStoreId;
 
 // A request this house shipped: its store is supplied by the house, or (an event stall's
 // request, events.ts) it names the house itself.
-function shippedFromHouse(req: Row, stores: StoreLink[], houseA: string | null | undefined, houseB: string | null | undefined): boolean {
+export function shippedFromHouse(req: Row, stores: StoreLink[], houseA: string | null | undefined, houseB: string | null | undefined): boolean {
   if (req.eventId) return req.productionHouseId === houseA || req.productionHouseId === houseB;
   const requestingStore = stores.find((s) => s.id === req.storeId);
   return requestingStore?.productionHouseId === houseA || requestingStore?.productionHouseId === houseB;
-}
-
-export type Movement = { produced: MomoCounts; sent: MomoCounts };
-
-type MovementInput = {
-  productionData: Row[];
-  requests: Row[];
-  stores: StoreLink[];
-  /** Event leftovers (eventsApi.momoReturns('received')); [] leaves the old figures. */
-  returns: Row[];
-  ids: HouseIds;
-};
-
-/** Made and sent this month ("YYYY-MM"): production by date, shipments by IST ship date. */
-export function productionMonthMovement({ productionData, requests, stores, returns, ids, month }: MovementInput & { month: string }): Movement {
-  const records = productionData.filter((p) => {
-    const productionDate = p.date || '';
-    const dateMatch = productionDate.startsWith(month) || productionDate.substring(0, 7) === month;
-    return dateMatch && matchesHouseRecord(p, ids);
-  });
-  const shipped = requests.filter((req) => {
-    if (!SENT_STATUSES.includes(req.status)) return false;
-    const shippedAt = shippedAtIST(req);
-    if (!shippedAt || !shippedAt.startsWith(month)) return false;
-    return shippedFromHouse(req, stores, ids.productionHouseUUID, ids.effectiveStoreId);
-  });
-  const back = eventReturnsBack(returns, [ids.productionHouseUUID, ids.effectiveStoreId], (at) => at.startsWith(month));
-  return { produced: netOfKurkure(rawProduction(records)), sent: minus(sumShippedPieces(shipped), back) };
-}
-
-/**
- * Made and sent since a mid-month count (`since` is the count's IST time): production from the
- * day after (that day's could be either side of the count), shipments and returns from then on.
- */
-export function productionMovementSince({ productionData, requests, stores, returns, ids, since }: MovementInput & { since: string }): Movement {
-  const sinceDay = since.substring(0, 10);
-  const records = productionData.filter((p) => (p.date || '') > sinceDay && matchesHouseRecord(p, ids));
-  const shipped = requests.filter((req) => {
-    if (!SENT_STATUSES.includes(req.status)) return false;
-    const shippedAt = shippedAtIST(req);
-    if (!shippedAt || shippedAt < since) return false;
-    return shippedFromHouse(req, stores, ids.productionHouseUUID, ids.effectiveStoreId);
-  });
-  const back = eventReturnsBack(returns, [ids.productionHouseUUID, ids.effectiveStoreId], (at) => at >= since);
-  return { produced: netOfKurkure(rawProduction(records)), sent: minus(sumShippedPieces(shipped), back) };
-}
-
-/** Last month's closing stock from transactions alone (no count to start from): made − sent. */
-export function productionPreviousMonthClosing({ productionData, requests, stores, returns, locationId, effectiveStoreId, previousMonth }: {
-  productionData: Row[];
-  requests: Row[];
-  stores: StoreLink[];
-  returns: Row[];
-  locationId: string;
-  effectiveStoreId?: string | null;
-  previousMonth: string;
-}): MomoCounts {
-  const records = productionData.filter((p) => (p.date || '').startsWith(previousMonth) && (p.storeId === locationId || p.productionHouseId === locationId));
-  const shipped = requests.filter((req) => {
-    if (!SENT_STATUSES.includes(req.status)) return false;
-    const shippedAt = shippedAtIST(req);
-    if (!shippedAt || !shippedAt.startsWith(previousMonth)) return false;
-    return shippedFromHouse(req, stores, locationId, effectiveStoreId);
-  });
-  const back = eventReturnsBack(returns, [locationId, effectiveStoreId], (at) => at.startsWith(previousMonth));
-  return minus(netOfKurkure(rawProduction(records)), minus(sumShippedPieces(shipped), back));
-}
-
-/** Expected stock per type: opening + made − sent. */
-export function expectedStock(opening: MomoCounts, movement: Movement): MomoCounts {
-  return Object.fromEntries(MOMO_STOCK_KEYS.map((k) => [k, (opening[k] || 0) + (movement.produced[k] || 0) - (movement.sent[k] || 0)]));
 }

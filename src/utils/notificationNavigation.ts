@@ -50,6 +50,10 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   stock_request_partial: { view: 'analytics', tab: 'production-requests' },
   stock_request_cancelled: { view: 'analytics', tab: 'production-requests' },
   stock_request_reminder: { view: 'analytics', tab: 'production-requests' },
+  stock_count_reminder: { view: 'analytics', tab: 'production-requests' },
+  compliance_due: { view: 'compliance' },
+  compliance_overdue: { view: 'compliance' },
+  stock_request_missed: { view: 'analytics', tab: 'production-requests' },
   stock_request_delayed: { view: 'analytics' },
   stock_recalibration: { view: 'analytics' },
   calendar_suggestions: { view: 'analytics', tab: 'trends' },
@@ -93,12 +97,17 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   workplace_flag: { view: 'workplace', tab: 'review' },
   workplace_alarm: { view: 'workplace', tab: 'review' },
   kpi_ready: { view: 'my-kpis' }, // owner approved the month's review
+  payslip_ready: { view: 'home' }, // the payslip card on Home
+  performance_report: { view: 'home' }, // under the payslip on Home
+  performance_due: { view: 'performance' },
+  cctv_ppe: { view: 'cameras' },
+  cctv_intruder: { view: 'cameras' },
   shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
   // Server reminders that had no screen to open (WP0b): stock requests waiting for the production
   // house, deliveries to confirm, the end-of-day data alert, production cash gaps, salary and backup.
   acceptance_reminder: { view: 'analytics', tab: 'production-requests' },
   morning_request_reminder: { view: 'analytics', tab: 'production-requests' },
-  delivery_confirmation_reminder: { view: 'analytics', tab: 'production-requests' },
+  delivery_confirmation_reminder: { view: 'home' }, // the deliveries card on Home
   shipped_delivery_check: { view: 'analytics', tab: 'production-requests' },
   eod_data_alert: { view: 'sales' },
   production_cash_discrepancy: { view: 'sales' },

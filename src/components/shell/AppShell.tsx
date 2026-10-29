@@ -18,6 +18,10 @@ import { BottomNav } from './BottomNav';
 import { NavRail } from './NavRail';
 import { Sidebar } from './Sidebar';
 import { DestinationView, screenFallback } from './destinations/DestinationView';
+import { startAppTour } from '../tour/AppTour';
+import { LearnHost } from '../learn/LearnHost';
+import { chaptersFor } from '../learn/chapters';
+import { learnPersona } from '../learn/learn';
 
 const AccountSheet = lazy(() => import('./AccountSheet').then((m) => ({ default: m.AccountSheet })));
 const MorePage = lazy(() => import('./MorePage').then((m) => ({ default: m.MorePage })));
@@ -181,15 +185,17 @@ function ShellFrame(props: AppShellProps) {
   }), [nav, router, user, context, stores, employees, selectedStoreId, onStoreChange, refreshStores, openAccount, openBunny, isPreview, renderAudit]);
 
   const isMe = route.path === 'me';
+  // Learn the app: a role with chapters opens the chapter list; the others play the tour.
+  const hasChapters = !!chaptersFor(learnPersona(nav, user.designation));
   const renderShellPage = useCallback((d: Destination) => (
     <Suspense fallback={screenFallback}>
       {d.spec.screen === 'Inbox' ? (
         <InboxPage onOpenTarget={(target) => router.openLegacyTarget(target)} />
       ) : (
-        <MorePage nav={nav} isMe={isMe} name={user.name} roleLine={roleLine} onOpen={(p) => router.push(p)} onAccount={openAccount} />
+        <MorePage nav={nav} isMe={isMe} name={user.name} roleLine={roleLine} onOpen={(p) => (p === 'tour' && !hasChapters ? startAppTour() : router.push(p))} onAccount={openAccount} />
       )}
     </Suspense>
-  ), [router, nav, isMe, user.name, roleLine, openAccount]);
+  ), [router, nav, isMe, user.name, roleLine, openAccount, hasChapters]);
 
   return (
     <ShellProvider value={shellValue}>
@@ -259,6 +265,7 @@ function ShellFrame(props: AppShellProps) {
             />
           </Suspense>
         )}
+        <LearnHost />
         {nav.chrome.askBunny && bunnyMounted && (
           <Suspense fallback={null}>
             <BunnyChat accessToken={user.accessToken || ''} storeId={props.askBunnyStoreId} open={bunnyOpen} onOpenChange={setBunnyOpen} />
