@@ -23,6 +23,7 @@ export function NavRail({ tabs, activeTab, badges, onSelect, userName, onAccount
             <li key={tab.path} className="w-full">
               <button
                 type="button"
+                data-tour={`tab-${tab.path}`}
                 onClick={() => onSelect(tab.path)}
                 aria-current={on ? 'page' : undefined}
                 aria-label={count ? `${label}, ${t('common.newCount', { n: count })}` : label}

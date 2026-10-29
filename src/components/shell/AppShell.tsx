@@ -18,6 +18,7 @@ import { BottomNav } from './BottomNav';
 import { NavRail } from './NavRail';
 import { Sidebar } from './Sidebar';
 import { DestinationView, screenFallback } from './destinations/DestinationView';
+import { AppTour, startAppTour } from '../tour/AppTour';
 
 const AccountSheet = lazy(() => import('./AccountSheet').then((m) => ({ default: m.AccountSheet })));
 const MorePage = lazy(() => import('./MorePage').then((m) => ({ default: m.MorePage })));
@@ -186,7 +187,7 @@ function ShellFrame(props: AppShellProps) {
       {d.spec.screen === 'Inbox' ? (
         <InboxPage onOpenTarget={(target) => router.openLegacyTarget(target)} />
       ) : (
-        <MorePage nav={nav} isMe={isMe} name={user.name} roleLine={roleLine} onOpen={(p) => router.push(p)} onAccount={openAccount} />
+        <MorePage nav={nav} isMe={isMe} name={user.name} roleLine={roleLine} onOpen={(p) => (p === 'tour' ? startAppTour() : router.push(p))} onAccount={openAccount} />
       )}
     </Suspense>
   ), [router, nav, isMe, user.name, roleLine, openAccount]);
@@ -259,6 +260,7 @@ function ShellFrame(props: AppShellProps) {
             />
           </Suspense>
         )}
+        <AppTour />
         {nav.chrome.askBunny && bunnyMounted && (
           <Suspense fallback={null}>
             <BunnyChat accessToken={user.accessToken || ''} storeId={props.askBunnyStoreId} open={bunnyOpen} onOpenChange={setBunnyOpen} />

@@ -78,17 +78,17 @@ const opening = () => {
   };
 };
 
-const alert = (id: string, place: { kind: string; id: string; name: string }, item: string, level: 'low' | 'out', qty: number, unit: string, by: { id: string; name: string }, time: string, extra: Record<string, unknown> = {}) => ({
+const supplyAlert = (id: string, place: { kind: string; id: string; name: string }, item: string, level: 'low' | 'out', qty: number, unit: string, by: { id: string; name: string }, time: string, extra: Record<string, unknown> = {}) => ({
   id, placeKind: place.kind, placeId: place.id, placeName: place.name, item, entryType: 'inventory', category: 'packaging', level, qty, unit,
   raisedBy: [{ ...by, at: at(time) }], status: 'open', createdAt: at(time), updatedAt: at(time), canClose: true, mine: by.id === ME.id, ...extra,
 });
 const STORE_ALERTS = [
-  alert('al1', STORE, 'Momo boxes (8 pcs)', 'low', 200, 'pcs', PEOPLE['store-crew'], '13:10', { note: 'About 2 days left' }),
-  alert('al2', STORE, 'Mayonnaise', 'out', 2, 'kg', INCHARGE, '11:40', { category: 'dairy', status: 'listed', listId: 'L-1', updatedAt: at('12:05') }),
+  supplyAlert('al1', STORE, 'Momo boxes (8 pcs)', 'low', 200, 'pcs', PEOPLE['store-crew'], '13:10', { note: 'About 2 days left' }),
+  supplyAlert('al2', STORE, 'Mayonnaise', 'out', 2, 'kg', INCHARGE, '11:40', { category: 'dairy', status: 'listed', listId: 'L-1', updatedAt: at('12:05') }),
 ];
 const HOUSE_ALERTS = [
-  alert('al3', HOUSE, 'Maida (flour)', 'low', 25, 'kg', PEOPLE['kitchen-crew'], '10:20', { category: 'staples', note: 'One bag left' }),
-  alert('al4', HOUSE, 'Gas cylinder', 'out', 1, 'pcs', PEOPLE['production-incharge'], '09:05', { category: 'fuel', status: 'listed', listId: 'L-1' }),
+  supplyAlert('al3', HOUSE, 'Maida (flour)', 'low', 25, 'kg', PEOPLE['kitchen-crew'], '10:20', { category: 'staples', note: 'One bag left' }),
+  supplyAlert('al4', HOUSE, 'Gas cylinder', 'out', 1, 'pcs', PEOPLE['production-incharge'], '09:05', { category: 'fuel', status: 'listed', listId: 'L-1' }),
 ];
 const ALERTS = AT_HOUSE ? HOUSE_ALERTS : AT_STORE ? STORE_ALERTS : [...STORE_ALERTS, ...HOUSE_ALERTS];
 

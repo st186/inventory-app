@@ -52,6 +52,7 @@ export function Sidebar({
               <li key={tab.path}>
                 <button
                   type="button"
+                  data-tour={`tab-${tab.path}`}
                   onClick={() => onSelectTab(tab.path)}
                   aria-current={on && (currentPath === tab.path || tab.subs.length === 0) ? 'page' : undefined}
                   className={cn(

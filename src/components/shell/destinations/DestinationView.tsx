@@ -15,6 +15,7 @@ import { InsightsDestination } from './InsightsDestination';
 import { MoreDestinations } from './MoreDestinations';
 import { EventsDestination } from './EventsDestination';
 import { RecipesDestination } from './RecipesDestination';
+import { AppTourLauncher } from '../../tour/AppTour';
 
 const OwnerHome = lazy(() => import('../../home/OwnerHome').then((m) => ({ default: m.OwnerHome })));
 const StaffHome = lazy(() => import('../../home/StaffHome').then((m) => ({ default: m.StaffHome })));
@@ -159,6 +160,9 @@ export const DestinationView = memo(function DestinationView({ dest, params, ren
         break;
       case 'Contacts':
         content = <ContactsScreen />;
+        break;
+      case 'AppTour':
+        content = <AppTourLauncher />;
         break;
       case 'ShoppingLists':
         content = <ShoppingListsScreen />;

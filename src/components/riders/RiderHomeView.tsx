@@ -84,7 +84,7 @@ export function RiderHomeView({ state, requests, people, homeSlot, onOpenTrips, 
         </Callout>
       )}
 
-      <section className="flex flex-col gap-2.5" aria-labelledby="rider-current">
+      <section className="flex flex-col gap-2.5" aria-labelledby="rider-current" data-tour="ride">
         <div className="flex min-h-11 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
             <h2 id="rider-current" className="text-subtitle font-semibold text-text">{w.t('rider.home.current')}</h2>

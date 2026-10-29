@@ -44,6 +44,7 @@ export function BottomNav({ tabs, activeTab, badges, onSelect }: NavItemProps) {
             <li key={tab.path} className="flex min-w-0 flex-1">
               <button
                 type="button"
+                data-tour={`tab-${tab.path}`}
                 onClick={() => onSelect(tab.path)}
                 aria-current={on ? 'page' : undefined}
                 aria-label={count ? `${label}, ${t('common.newCount', { n: count })}` : label}

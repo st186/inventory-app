@@ -65,7 +65,7 @@ export function ShoppingCard() {
   return (
     <>
       {data.canManage ? (
-        <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" data-tour="shopping">
           <div className="flex items-center justify-between gap-3">
             <span className="inline-flex items-center gap-2 text-body-md font-semibold text-text"><ShoppingBasket className="size-5 text-primary" aria-hidden="true" /> Shopping</span>
             <div className="flex items-center gap-1">
@@ -113,7 +113,7 @@ function ShopperCard({ list, onOpen }: { list: api.ShoppingList; onOpen: () => v
   const p = list.progress;
   const waiting = list.status === 'bought';
   return (
-    <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
+    <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4" data-tour="shopping">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-3">
           <ShoppingBasket className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />

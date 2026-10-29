@@ -60,13 +60,15 @@ export function TopBar({
       {showAskBunny && (
         <IconButton
           label={t('nav.askBunny')}
+          data-tour="ask-bunny"
           onClick={onAskBunny}
           icon={<img src="/bunny-logo.png" alt="" className="size-7 object-contain" draggable={false} />}
         />
       )}
-      {showBell && <IconButton label={t('nav.inbox')} icon={<Bell />} badge={unread} onClick={onInbox} />}
+      {showBell && <IconButton label={t('nav.inbox')} data-tour="inbox" icon={<Bell />} badge={unread} onClick={onInbox} />}
       <IconButton
         label={t('account.yours')}
+        data-tour="account"
         onClick={onAccount}
         className="md:hidden"
         icon={<InitialsAvatar name={userName} size={32} />}
