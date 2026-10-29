@@ -12,7 +12,7 @@ const b = (en: string, bn: string): Two => ({ en, bn });
 const LEADS: RoleKind[] = ['owner', 'ops'];
 const INCHARGES: RoleKind[] = ['store-incharge', 'production-incharge'];
 
-function tabStep(path: string, kind: RoleKind): Pick<TourStep, 'title' | 'body'> | null {
+function tabStep(path: string, kind: RoleKind, recipes: boolean): Pick<TourStep, 'title' | 'body'> | null {
   switch (path) {
     case 'stock':
       if (kind === 'store-incharge') return { title: b('Stock', 'স্টক'), body: b('Send tomorrow\'s stock request by midnight, receive the deliveries, and log anything out of stock.', 'কালকের স্টক রিকোয়েস্ট রাত ১২টার মধ্যে পাঠান, মাল রিসিভ করুন, কিছু শেষ হলে লিখুন।') };
@@ -34,6 +34,8 @@ function tabStep(path: string, kind: RoleKind): Pick<TourStep, 'title' | 'body'>
     case 'trips':
       return { title: b('Rides', 'রাইড'), body: b('Every ride with its fare.', 'প্রতিটা রাইড আর তার ভাড়া।') };
     case 'me':
+      if (kind === 'crew' && recipes) return { title: b('Me', 'আমি'), body: b('Your workplace photos, attendance and leave, KPIs, the recipes to weigh, the photo guide and the emergency numbers.', 'কাজের জায়গার ছবি, হাজিরা আর ছুটি, KPI, ওজন করার রেসিপি, ছবি তোলার নিয়ম আর জরুরি নম্বর।') };
+      if (kind === 'crew') return { title: b('Me', 'আমি'), body: b('Your workplace photos, attendance and leave, KPIs, the photo guide and the emergency numbers.', 'কাজের জায়গার ছবি, হাজিরা আর ছুটি, KPI, ছবি তোলার নিয়ম আর জরুরি নম্বর।') };
       return { title: b('Me', 'আমি'), body: b('Your KPIs, attendance and leave, the photo guide and the emergency numbers.', 'আপনার KPI, হাজিরা আর ছুটি, ছবি তোলার নিয়ম আর জরুরি নম্বর।') };
     case 'more':
       return { title: b('More', 'আরও'), body: b('Everything else: shopping lists, setup, reports and the emergency numbers.', 'বাকি সব: বাজারের লিস্ট, সেটআপ, রিপোর্ট আর জরুরি নম্বর।') };
@@ -56,8 +58,9 @@ export function tourSteps(nav: NavModel): TourStep[] {
     { id: 'attention', selector: '[aria-labelledby="home-attention"]', optional: true, title: b('Needs your attention', 'আপনার দেখার জিনিস'), body: b('Everything waiting for your answer, most urgent first. Tap one to deal with it.', 'যা যা আপনার উত্তরের অপেক্ষায়, জরুরিটা আগে। চাপ দিয়ে সেরে ফেলুন।') },
     { id: 'checklist', selector: '[aria-labelledby="home-checklist"]', optional: true, title: b('Today\'s jobs', 'আজকের কাজ'), body: b('Your jobs for today in order, each with its time. Tap one to go straight to it.', 'আজকের কাজ পরপর, সময়সহ। চাপ দিলে সোজা সেই কাজে।') },
   ];
+  const recipes = nav.more.some((g) => g.items.includes('recipes'));
   for (const tab of nav.tabs) {
-    const text = tab.path === 'home' ? null : tabStep(tab.path, kind);
+    const text = tab.path === 'home' ? null : tabStep(tab.path, kind, recipes);
     if (text) steps.push({ id: `tab-${tab.path}`, selector: `[data-tour="tab-${tab.path}"]`, optional: true, ...text });
   }
   steps.push({ id: 'inbox', selector: '[data-tour="inbox"]', optional: true, title: b('Notifications', 'নোটিফিকেশন'), body: b('New requests, reminders and approvals. The red number is how many are new.', 'নতুন রিকোয়েস্ট, মনে করানো আর মঞ্জুরি। লাল সংখ্যা মানে কতগুলো নতুন।') });
