@@ -7,9 +7,11 @@ import { getNowIST, getTodayIST } from '../../utils/timezone';
 import { useForegroundInterval } from '../../utils/appVisibility';
 import { useShell } from '../shell/ShellContext';
 import { LearnCard } from '../learn/LearnScreen';
+import { PayslipCard } from '../performance/PayslipCard';
 
 /** The column every Home screen sits in: one column on phones, wider from 1024 px. Learn the app's
- *  progress card sits on top until every chapter is done (components/learn). */
+ *  progress card sits on top until every chapter is done (components/learn), then last month's
+ *  payslip and performance notes until downloaded and read (components/performance). */
 export function HomePage({ wide = false, className, children }: { wide?: boolean; className?: string; children?: ReactNode }) {
   const { lang } = useT();
   return (
@@ -22,6 +24,7 @@ export function HomePage({ wide = false, className, children }: { wide?: boolean
       )}
     >
       <LearnCard />
+      <PayslipCard />
       {children}
     </div>
   );

@@ -86,7 +86,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance' | 'payslips' | 'performance';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -122,6 +122,8 @@ export type ScreenSpec =
   | { screen: 'OpeningChecklist' }
   | { screen: 'Contacts' }
   | { screen: 'Compliance' }
+  | { screen: 'Payslips' }
+  | { screen: 'Performance' }
   | { screen: 'AppTour' }
   | { screen: 'ShoppingLists' }
   | { screen: 'PhotoGuide' }
@@ -390,6 +392,10 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   if (kind === 'owner' || kind === 'ops') add('opening', 'more.opening', 'audit', { screen: 'OpeningChecklist' }, null, 'opening');
   // Compliance calendar (owner, 29 Oct 2026): licences, safety checks and certificates with their due dates.
   if (kind === 'owner' || kind === 'ops') add('compliance', 'more.compliance', 'compliance', { screen: 'Compliance' }, null, 'compliance');
+  // Payslips and monthly performance notes (owner, 29 Oct 2026): every staff member downloads their
+  // payslips again and reads their notes here; managers and the owner write the notes.
+  if (kind !== 'owner') add('payslips', 'more.payslips', 'payslips', { screen: 'Payslips' }, null, 'payslips');
+  add('performance', 'more.performance', 'performance', { screen: 'Performance' }, null, 'performance');
   // Emergency contacts (owner, 29 Oct 2026): everyone can find and call a number; the owner, ops and incharges keep it up to date.
   add('contacts', 'more.contacts', 'contacts', { screen: 'Contacts' }, null, 'contacts');
   // App tour (owner, 29 Oct 2026): plays the first-open walk-through again.
@@ -424,7 +430,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening', 'compliance'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening', 'compliance', 'performance'),
       group('more.assets', 'equipment', 'investments'),
       group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'photo-guide', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
@@ -440,7 +446,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'compliance', 'my-kpis'),
+      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'compliance', 'my-kpis', 'payslips', 'performance'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup', 'photo-guide'),
       group('more.data', 'reports', 'audit-report'),
@@ -458,7 +464,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('me', 'nav.me', 'me', []),
     ];
     more = [
-      group('more.myWork', 'my-pay', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide'),
+      group('more.myWork', 'my-pay', 'payslips', 'performance', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide'),
       // Manage Items stays reachable by link only on employee logins, as before.
       group('more.business', 'insights', ...(staff ? [] : ['items']), 'equipment', 'reports', ...(staff ? [] : ['audit-report'])),
       group('more.help', 'contacts', 'tour'),
@@ -471,7 +477,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('pay', 'nav.pay', 'pay', []),
       tab('me', 'nav.me', 'me', []),
     ];
-    more = [group('more.myWork', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide', 'recipes'), group('more.help', 'contacts', 'tour')];
+    more = [group('more.myWork', 'payslips', 'performance', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide', 'recipes'), group('more.help', 'contacts', 'tour')];
   } else if (kind === 'rider') {
     add('me', 'nav.me', 'me', moreSpec, null);
     // Rides: history and payments (WP7); Home keeps the current ride.
@@ -483,7 +489,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('me', 'nav.me', 'me', []),
     ];
     // Riders are paid per trip: no KPIs (owner, 28 Oct 2026).
-    more = [group('more.myWork', 'rider-profile'), group('more.help', 'contacts', 'tour')];
+    more = [group('more.myWork', 'rider-profile', 'payslips', 'performance'), group('more.help', 'contacts', 'tour')];
   }
 
   const finalTabs = tabs.filter((t): t is NavTab => !!t);

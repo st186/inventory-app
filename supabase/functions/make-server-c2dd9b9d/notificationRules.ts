@@ -24,6 +24,7 @@ const ACTION = new Set([
   'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'expense_approval', 'expense_rejected', 'opening_late', 'opening_pick', 'audit_assigned', 'audit_report', 'supply_low', 'shopping_list', 'shopping_done', 'shift_checkin', 'delivery_incoming',
   'stock_request_new', 'stock_request_missed', 'event_momo_return', 'rider_fare_proposed', 'rider_called', 'calendar_suggestions', 'stock_recalibration',
   'compliance_due',
+  'payslip_ready', 'performance_report', 'performance_due', // payslips and monthly performance notes (performance.ts)
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
@@ -61,6 +62,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   expense_flag: 'খরচ যাচাই করুন', workplace_alarm: 'নোংরা / আবর্জনা', salary_credited: 'বেতন জমা হয়েছে', kpi_ready: 'আপনার মাসের স্কোর',
   stock_request_new: 'নতুন স্টকের চাহিদা', delivery_incoming: 'মাল আসছে', data_entry_reminder: 'হিসাব লিখতে ভুলবেন না',
   workplace_due: 'ছবি তোলার সময়', workplace_checked: 'ছবি দেখা হয়েছে',
+  payslip_ready: 'বেতনের স্লিপ তৈরি', performance_report: 'কাজের মূল্যায়ন', performance_due: 'মূল্যায়ন লিখুন',
   opening_due: 'দোকান খোলার চেকলিস্ট', opening_late: 'চেকলিস্ট বাকি আছে',
   supply_low: 'জিনিস কম আছে', supply_sorted: 'জিনিসের খবর', shopping_list: 'কেনাকাটার তালিকা',
 };
