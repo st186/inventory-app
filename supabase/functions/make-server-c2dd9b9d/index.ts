@@ -6,7 +6,7 @@ import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
-import { registerInsightsRoutes } from './insights.ts';
+import { AiError, aiProductionCoach, registerInsightsRoutes } from './insights.ts';
 import { recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
@@ -5689,18 +5689,41 @@ function aggregatePreparedByPool(items: any[]): Record<string, number> {
 // closingActual when that prior day was actually closed, otherwise opening+prepared
 // (nothing consumed assumed - without a close there's no reported figure for what was
 // actually used that day). No prior record at all anchors at 0.
-function computeLedgerOpening(houseLedgerRecords: any[], date: string): Record<string, number> {
+// The day's morning weigh-in (production-morning:{house}:{date}, owner 29 Oct 2026) wins over
+// anything carried: what was weighed is what the day starts with, so an uncounted night can't
+// carry a stale figure forward for weeks (13 Oct's dough was still "there" on 29 Oct).
+function computeLedgerOpening(houseLedgerRecords: any[], date: string, mornings: Record<string, any> = {}): Record<string, number> {
   const priorRecord = houseLedgerRecords
     .filter((r: any) => r.date < date)
     .sort((a: any, b: any) => b.date.localeCompare(a.date))[0];
   const opening: Record<string, number> = {};
+  const weighed = mornings[date]?.counts || {};
   for (const id of ALL_POOL_IDS) {
     const priorPool = priorRecord?.pools?.[id];
-    opening[id] = priorPool
+    opening[id] = typeof weighed[id] === 'number' ? weighed[id] : priorPool
       ? (typeof priorPool.closingActual === 'number' ? priorPool.closingActual : (priorPool.opening || 0) + (priorPool.prepared || 0))
       : 0;
   }
   return opening;
+}
+
+// When each item was last weighed before `date` (a night count, or a morning weigh-in), so the
+// morning screen can say "counted last night" or "last weighed 17 Oct".
+function lastCountedBefore(houseRecords: any[], mornings: Record<string, any>, date: string) {
+  const out: Record<string, { date: string; kg: number; when: 'night' | 'morning' }> = {};
+  const seen = (id: string, d: string, kg: number, when: 'night' | 'morning') => {
+    const cur = out[id];
+    if (!cur || d > cur.date || (d === cur.date && when === 'night')) out[id] = { date: d, kg, when };
+  };
+  for (const r of houseRecords) {
+    if (r.date >= date) continue;
+    for (const id of ALL_POOL_IDS) if (typeof r.pools?.[id]?.closingActual === 'number') seen(id, r.date, r.pools[id].closingActual, 'night');
+  }
+  for (const [d, m] of Object.entries(mornings)) {
+    if (d >= date) continue;
+    for (const [id, kg] of Object.entries(m?.counts || {})) if (typeof kg === 'number') seen(id, d, kg, 'morning');
+  }
+  return out;
 }
 
 // One production house's closed days and logged items, read by key prefix
@@ -5708,14 +5731,18 @@ function computeLedgerOpening(houseLedgerRecords: any[], date: string): Record<s
 // day's items when itemDate is given - and paginated. The plain prefix read of every house's
 // rows stops at 1000, after which logged items and closed days silently dropped out of the
 // totals and openings.
-async function getHouseLedger(productionHouseId: string, itemDate?: string): Promise<{ houseRecords: any[]; houseItems: any[] }> {
-  const [records, items] = await Promise.all([
+async function getHouseLedger(productionHouseId: string, itemDate?: string): Promise<{ houseRecords: any[]; houseItems: any[]; houseMornings: Record<string, any> }> {
+  const [records, items, mornings] = await Promise.all([
     getAllByPrefixWithRetry(`production-ledger:${productionHouseId}:`),
     getAllByPrefixWithRetry(`production-ledger-item:${productionHouseId}:${itemDate ? `${itemDate}:` : ''}`),
+    getAllByPrefixWithRetry(`production-morning:${productionHouseId}:`),
   ]);
+  const houseMornings: Record<string, any> = {};
+  for (const m of mornings || []) if (m?.date && m.productionHouseId === productionHouseId) houseMornings[m.date] = m;
   return {
     houseRecords: records.filter((r: any) => r.productionHouseId === productionHouseId),
     houseItems: items.filter((i: any) => i.productionHouseId === productionHouseId && (!itemDate || i.date === itemDate)),
+    houseMornings,
   };
 }
 
@@ -5724,14 +5751,14 @@ async function cascadeRecomputeProductionLedger(productionHouseId: string, fromD
     const today = getTodayIST();
     if (fromDate > today) return;
 
-    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId);
+    const { houseRecords, houseItems, houseMornings } = await getHouseLedger(productionHouseId);
 
     let cursor = fromDate;
     let updated = 0;
     while (cursor <= today) {
       const existing = houseRecords.find((r: any) => r.date === cursor);
       if (existing) {
-        const opening = computeLedgerOpening(houseRecords, cursor);
+        const opening = computeLedgerOpening(houseRecords, cursor, houseMornings);
         const prepared = aggregatePreparedByPool(houseItems.filter((i: any) => i.date === cursor));
 
         const newPools: Record<string, any> = {};
@@ -5883,29 +5910,32 @@ app.get('/make-server-c2dd9b9d/production-ledger', async (c) => {
       return c.json({ error: 'date, or from+to, is required' }, 400);
     }
 
-    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
+    const { houseRecords, houseItems, houseMornings } = await getHouseLedger(productionHouseId, date);
     const todaysItems = houseItems
       .sort((a: any, b: any) => (a.loggedAt || '').localeCompare(b.loggedAt || ''));
     const existing = houseRecords.find((r: any) => r.date === date);
+    // The morning weigh-in and when each item was last weighed (the guided day, owner 29 Oct 2026).
+    const morning = houseMornings[date] || null;
+    const lastCounted = lastCountedBefore(houseRecords, houseMornings, date);
     // Whether this house has ever closed a day strictly before `date` - the frontend uses
     // this to decide whether the one-time manual opening override is offered at all (it's
     // only ever meaningful on the very first day, same rule the close endpoint enforces).
     const hasAnyPriorRecord = houseRecords.some((r: any) => r.date < date);
 
     if (existing) {
-      return c.json({ entry: existing, items: todaysItems, hasAnyPriorRecord });
+      return c.json({ entry: existing, items: todaysItems, hasAnyPriorRecord, morning, lastCounted });
     }
 
     // Nothing closed yet for this date - live-compute opening + prepared-so-far, same
     // style as GET /production-cash's own live-preview branch. Never persisted.
-    const opening = computeLedgerOpening(houseRecords, date);
+    const opening = computeLedgerOpening(houseRecords, date, houseMornings);
     const prepared = aggregatePreparedByPool(todaysItems);
     const pools: Record<string, any> = {};
     for (const id of ALL_POOL_IDS) {
       pools[id] = { opening: opening[id], prepared: prepared[id], closingActual: null, wastage: null };
     }
 
-    return c.json({ entry: null, live: { productionHouseId, date, pools }, items: todaysItems, hasAnyPriorRecord });
+    return c.json({ entry: null, live: { productionHouseId, date, pools }, items: todaysItems, hasAnyPriorRecord, morning, lastCounted });
   } catch (error) {
     console.log('Error fetching production ledger:', error);
     return c.json({ error: 'Failed to fetch production ledger' }, 500);
@@ -5954,9 +5984,9 @@ app.post('/make-server-c2dd9b9d/production-ledger-item', async (c) => {
     let withLeftover: any = null;
     let dayItems: any[] = [];
     if (poolId && Number(perTypePoolQty) > 0) {
-      const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
+      const { houseRecords, houseItems, houseMornings } = await getHouseLedger(productionHouseId, date);
       dayItems = houseItems;
-      const openingKg = computeLedgerOpening(houseRecords, date)[poolId] || 0;
+      const openingKg = computeLedgerOpening(houseRecords, date, houseMornings)[poolId] || 0;
       if (openingKg >= LEFTOVER_REASON_MIN_KG) {
         const clean = cleanWithLeftover(rawWithLeftover);
         if (clean.error) return c.json({ error: clean.error, needsLeftoverReason: true, openingKg }, 400);
@@ -6215,6 +6245,78 @@ async function staffOnDay(productionHouseId: string, date: string) {
 
 // What the leftover form needs: the house's staff with today's check-in and lateness, and its
 // machines from the equipment register.
+// PUT /production-ledger/:houseId/:date/morning {counts: {pool: kg}} - the morning weigh-in: what is
+// in the kitchen before anything new is made (owner, 29 Oct 2026: the day starts from what was
+// weighed, not from a carried figure). Weighing again replaces it.
+app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/morning', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    if (designation !== 'production_incharge' && !isOperationsManager) {
+      return c.json({ error: 'Only production incharges or operations managers weigh the kitchen stock' }, 403);
+    }
+    const productionHouseId = await canonicalProductionHouseId(c.req.param('houseId'));
+    const date = c.req.param('date');
+    if (!productionHouseId || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return c.json({ error: 'Pick a production house and date' }, 400);
+    if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
+    const body = await c.req.json().catch(() => ({}));
+    const counts: Record<string, number> = {};
+    for (const id of ALL_POOL_IDS) {
+      const v = Number(body?.counts?.[id]);
+      if (body?.counts?.[id] !== undefined && body?.counts?.[id] !== null && Number.isFinite(v) && v >= 0) counts[id] = Math.round(v * 1000) / 1000;
+    }
+    if (!Object.keys(counts).length) return c.json({ error: 'Weigh at least one item' }, 400);
+    const gramsError = ledgerGramsError(Object.values(counts));
+    if (gramsError) return c.json({ error: gramsError }, 400);
+    const record = {
+      productionHouseId, date, counts, at: getNowIST(),
+      by: authResult.user.user_metadata?.employeeId || authResult.user.email,
+      byName: authResult.user.user_metadata?.name || authResult.user.email,
+    };
+    await kv.set(`production-morning:${productionHouseId}:${date}`, record);
+    await cascadeRecomputeProductionLedger(productionHouseId, date);
+    return c.json({ morning: record });
+  } catch (error) {
+    console.log('Error saving the morning weigh-in:', error);
+    return c.json({ error: 'Could not save the weigh-in' }, 500);
+  }
+});
+
+// POST /production-ledger/:houseId/:date/coach {stage: 'morning' | 'night' | 'summary', lang, facts}
+// - Bunny's plain-language word for the production incharge (and the day's summary for the owner
+// and operations), written from the numbers the screen already shows. Same facts, same words:
+// kept for the day so opening the screen again costs nothing.
+app.post('/make-server-c2dd9b9d/production-ledger/:houseId/:date/coach', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    if (designation !== 'production_incharge' && !isOperationsManager && role !== 'cluster_head') return c.json({ error: 'Not allowed' }, 403);
+    const productionHouseId = await canonicalProductionHouseId(c.req.param('houseId'));
+    const date = c.req.param('date');
+    const body = await c.req.json().catch(() => ({}));
+    const stage = ['morning', 'night', 'summary'].includes(body.stage) ? body.stage : 'morning';
+    const lang = ['bn', 'hi'].includes(body.lang) ? body.lang : 'en';
+    const facts = JSON.stringify(body.facts || {}).slice(0, 4000);
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${stage}|${lang}|${facts}`)))).slice(0, 12).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const key = `production-coach:${productionHouseId}:${date}:${stage}:${lang}`;
+    const cached = await kv.get(key).catch(() => null);
+    if (cached?.hash === hash) return c.json({ text: cached.text, cached: true });
+    const text = await aiProductionCoach(kv as any, { stage, lang, facts });
+    await kv.set(key, { hash, text, at: getNowIST() });
+    return c.json({ text });
+  } catch (error: any) {
+    if (error instanceof AiError) return c.json({ error: error.message }, error.status as any);
+    console.log('Production coach failed:', error?.message || error);
+    return c.json({ error: 'Bunny could not help just now' }, 500);
+  }
+});
+
 app.get('/make-server-c2dd9b9d/production-ledger/:houseId/:date/day-context', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
   if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
@@ -6278,11 +6380,11 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     ]);
     if (gramsError) return c.json({ error: gramsError }, 400);
 
-    const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
+    const { houseRecords, houseItems, houseMornings } = await getHouseLedger(productionHouseId, date);
 
     const existing = houseRecords.find((r: any) => r.date === date);
     const hasAnyPriorRecord = houseRecords.some((r: any) => r.date < date);
-    let opening = computeLedgerOpening(houseRecords, date);
+    let opening = computeLedgerOpening(houseRecords, date, houseMornings);
 
     // manualOpeningOverride is only ever meaningful on the very first day this ledger
     // exists for a house (a one-time "what's physically on the shelf right now" seed) -

@@ -1381,6 +1381,32 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
   return { peopleCount: Math.max(people.length, Math.min(30, Math.round(parsed.peopleCount))), people, note: String(parsed.note || '').slice(0, 200) };
 }
 
+// Bunny's word for the production incharge (index.ts coach route, owner 29 Oct 2026: "revamp it
+// for easy understanding with AI integration for proper handholding of the production incharge").
+// The screen works the numbers out; this only puts them in plain words, in the reader's language.
+const COACH_SYSTEM = `You are Bunny, the helper inside Bunny Momos' kitchen app. You talk to the production incharge of a small momo kitchen in West Bengal (or to the owner, for a summary). You get the day's kitchen stock as JSON: for each item (dough, batter, each stuffing) what was weighed in the morning, what was made, how many momos it is worth, today's plan, what should be left and what was counted at night.
+- Use ONLY the numbers given. Never invent a number. Round to one decimal.
+- Write 2 to 5 short lines, each a plain sentence a busy cook understands at a glance. No greetings, no lists of every item - only what matters today.
+- morning: say what is already in the kitchen and covers today's plan (so it must not be made), and how much of each item to make. If an item was last weighed days ago, say to weigh it first.
+- night: say which counts look wrong against what should be left, and what to check (weigh again, waste not logged, momos not entered). If everything matches, say so in one line.
+- summary: for the owner - what was started with, made, used and left, the biggest gap or overproduction, in 2-4 lines.
+- Language: write in the language asked for (bn = simple everyday Bengali in Bengali script, hi = simple Hindi in Devanagari, en = plain English). Item names may stay in English.`;
+
+export async function aiProductionCoach(kv: Kv, o: { stage: string; lang: string; facts: string }): Promise<string> {
+  const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
+  const res = await callClaude(deps, {
+    purpose: 'production-coach',
+    system: COACH_SYSTEM,
+    effort: 'low',
+    noThinking: true,
+    maxTokens: 600,
+    messages: [{ role: 'user', content: `Stage: ${o.stage}. Language: ${o.lang}.\nKitchen stock:\n${o.facts}` }],
+  });
+  const text = textOf(res).trim();
+  if (!text) throw new AiError('Bunny had nothing to say.', 502);
+  return text.slice(0, 900);
+}
+
 // A burst from a kitchen-activity camera (cctv.ts, owner 29 Oct 2026 "for better detection"):
 // 20 frames 15 seconds apart, looked at together so each person is followed through the minutes
 // and what they do is judged from the movement across frames, not one frozen moment.

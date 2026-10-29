@@ -32,6 +32,9 @@ test('the leftover line: how much, from what, momos it could have made, made whi
 test('pieces per kg from recent days (median, days with at least 1 kg used)', () => {
   const day = (opening: number, prepared: number, closing: number, pieces: number) => ({ pools: { 'stuffing:chicken': { opening, prepared, closingActual: closing } }, pieces: { chickenMomos: pieces } });
   assert.deepEqual(piecesPerKg([day(0, 8, 0, 720), day(0, 10, 2, 760), day(2, 6, 0, 800), day(0, 0.5, 0, 50)]), { chicken: 95 });
+  // Shared dough: every steamed / fried momo over the dough used.
+  const doughDay = { pools: { dough: { opening: 2, prepared: 10, closingActual: 1 } }, pieces: { chickenMomos: 700, vegMomos: 200, chickenKurkureMomos: 100 } };
+  assert.deepEqual(piecesPerKg([doughDay]), { dough: 82 }); // 900 / 11 kg; kurkure is batter
 });
 
 test('the checklist: "Over time" is not a reason', () => {

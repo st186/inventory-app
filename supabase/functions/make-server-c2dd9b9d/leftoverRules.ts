@@ -53,6 +53,18 @@ export function piecesPerKg(days: { pools: Record<string, PoolState>; pieces: Re
     }).filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
     if (ratios.length) out[type] = Math.round(ratios[Math.floor((ratios.length - 1) / 2)]);
   }
+  // The shared dough (every steamed / fried momo) and batter (kurkure), the same way.
+  const shared: Record<string, string[]> = { dough: ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer'], batter: ['vegKurkure', 'chickenKurkure'] };
+  for (const [pool, types] of Object.entries(shared)) {
+    const ratios = days.map((d) => {
+      const p = d.pools[pool];
+      if (!p || typeof p.closingActual !== 'number') return NaN;
+      const used = (p.opening || 0) + (p.prepared || 0) - p.closingActual;
+      const pieces = types.reduce((s, t) => s + (d.pieces[MOMO_KEY[t]] || 0), 0);
+      return used >= 1 && pieces > 0 ? pieces / used : NaN;
+    }).filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+    if (ratios.length) out[pool] = Math.round(ratios[Math.floor((ratios.length - 1) / 2)]);
+  }
   return out;
 }
 
