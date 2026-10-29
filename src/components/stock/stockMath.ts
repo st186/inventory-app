@@ -1,15 +1,18 @@
 // The figures behind the stock request screen, moved out of the JSX they used to be worked out
 // in (ProductionRequests.tsx before the new look) with the same rules, so they can be checked:
-// the store's stock on hand this month, and the "requests by momo type" report.
+// the store's stock on hand, and the "requests by momo type" report.
 import { getStockFilterRange, type StockFilterPreset } from './requestPeriods';
+import { salesPieces, storeExpected, type Baseline } from './countMath';
+import { sumShippedPieces } from './recalibrationMath';
+import { RECEIVED_STATUSES, receivedAtIST } from '../../utils/requestStock';
 
 export type FinishedProduct = { key: string; camelKey: string; label: string; legacySalesKey: string; unit?: string };
 type Row = Record<string, any>;
 
 // ---------------------------------------------------------------------------------------------
-// Store stock on hand: opening balance (last count on or before the 1st) + received this month
-// (shipped amounts of delivered requests) - sold this month; a count made during the month
-// replaces the opening balance from its date on.
+// Store stock on hand: each store's last stock count that wasn't rejected + momos delivered since
+// - sold since - wastage logged since (countMath.storeExpected, the figure the stock count expects).
+// Received and sold are also shown for this month, with the opening being what that leaves.
 
 export type StoreStockLine = { camelKey: string; label: string; received: number; sold: number; stock: number; opening: number; totalAvailable: number };
 export type StoreStockResult = {
@@ -18,120 +21,55 @@ export type StoreStockResult = {
   lines: StoreStockLine[];
   totalStockSum: number;
 };
+/** A store's starting point for On hand (useStockRequests). */
+export type StoreBase = { storeId: string; base: Baseline; wastage: Row[] };
 
 export function computeStoreStock({
   productionRequests,
   salesData,
   finishedProducts,
-  storeOpeningBalance,
-  mostRecentRecalibration,
+  storeBases,
   matchesStoreScope,
 }: {
   productionRequests: Row[];
   salesData: Row[];
   finishedProducts: FinishedProduct[];
   /** null while it is still loading. */
-  storeOpeningBalance: Record<string, number> | null;
-  mostRecentRecalibration: { date: string; stock: Record<string, number> } | null;
+  storeBases: StoreBase[] | null;
   matchesStoreScope: (storeId?: string | null) => boolean;
 }): StoreStockResult | null {
   const { start: rangeStart, end: rangeEnd } = getStockFilterRange('thisMonth', { from: '', to: '' });
-  const inRange = (dateStr: string | undefined) => !!dateStr && dateStr.substring(0, 10) >= rangeStart && dateStr.substring(0, 10) <= rangeEnd;
+  // Not shown until the counts have loaded.
+  if (storeBases === null) return null;
+  const inRange = (day: string | null | undefined) => !!day && day.substring(0, 10) >= rangeStart && day.substring(0, 10) <= rangeEnd;
 
-  const deliveredRequests = productionRequests.filter((req) => {
-    // Only delivered / part delivered requests have reached the store.
-    if (req.status !== 'delivered' && req.status !== 'partially-delivered') return false;
-    const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
-    if (!inRange(deliveryDate)) return false;
-    // Momos delivered to an event stall (events.ts) are the event's stock, not a store's.
-    if (req.eventId) return false;
-    return matchesStoreScope(req.storeId);
-  });
-
-  // The shipped amount when the ship step recorded one, else what was asked for.
-  const totalReceived = deliveredRequests.reduce((acc: Record<string, number>, req) => {
-    finishedProducts.forEach(({ camelKey }) => {
-      const shipped = req.shippedQuantities?.[camelKey];
-      const newFormat = req[camelKey] || 0;
-      const oldFormat = req[camelKey + 's'] || 0;
-      const value = shipped !== undefined ? shipped : newFormat + oldFormat;
-      acc[camelKey] = (acc[camelKey] || 0) + value;
-    });
-    return acc;
-  }, {});
-
-  const storeSales = salesData.filter((s) => inRange(s.date) && matchesStoreScope(s.storeId));
-  const salesOf = (sale: Row, legacySalesKey: string) => {
-    let salesValue = sale.data?.[legacySalesKey] || 0;
-    // Older records spell it "Corn Cheese Momos".
-    if (legacySalesKey === 'Cheese Corn Momos' && salesValue === 0) salesValue = sale.data?.['Corn Cheese Momos'] || 0;
-    return salesValue;
-  };
-  const totalSales = storeSales.reduce((acc: Record<string, number>, sale) => {
-    finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
-      acc[camelKey] = (acc[camelKey] || 0) + salesOf(sale, legacySalesKey);
-    });
-    return acc;
-  }, {});
-
-  const openingBalance = storeOpeningBalance || finishedProducts.reduce((acc: Record<string, number>, { camelKey }) => {
-    acc[camelKey] = 0;
-    return acc;
-  }, {});
-
-  // Not shown until the opening balance has loaded.
-  if (storeOpeningBalance === null) return null;
-
-  const storeStock: Record<string, number> = {};
-  if (mostRecentRecalibration) {
-    // A count during the month: count + received after it - sold from its day on (sales have
-    // no time, so the count's own day counts as after).
-    const recalDateOnly = mostRecentRecalibration.date.substring(0, 10);
-    const receivedAfterRecal: Record<string, number> = {};
-    const soldAfterRecal: Record<string, number> = {};
-    deliveredRequests.forEach((req) => {
-      const deliveryDate = req.deliveredAt || req.requestDate || req.createdAt;
-      const deliveryDateOnly = deliveryDate ? deliveryDate.substring(0, 10) : '';
-      if (deliveryDateOnly && deliveryDateOnly > recalDateOnly) {
-        finishedProducts.forEach(({ camelKey }) => {
-          const shipped = req.shippedQuantities?.[camelKey];
-          const value = shipped !== undefined ? shipped : req[camelKey] || 0;
-          receivedAfterRecal[camelKey] = (receivedAfterRecal[camelKey] || 0) + value;
-        });
-      }
-    });
-    storeSales.forEach((sale) => {
-      const saleDateOnly = sale.date ? sale.date.substring(0, 10) : '';
-      if (saleDateOnly && saleDateOnly >= recalDateOnly) {
-        finishedProducts.forEach(({ camelKey, legacySalesKey }) => {
-          soldAfterRecal[camelKey] = (soldAfterRecal[camelKey] || 0) + salesOf(sale, legacySalesKey);
-        });
-      }
-    });
-    finishedProducts.forEach(({ camelKey }) => {
-      storeStock[camelKey] = (mostRecentRecalibration.stock[camelKey] || 0) + (receivedAfterRecal[camelKey] || 0) - (soldAfterRecal[camelKey] || 0);
-    });
-  } else {
-    finishedProducts.forEach(({ camelKey }) => {
-      storeStock[camelKey] = (openingBalance[camelKey] || 0) + (totalReceived[camelKey] || 0) - (totalSales[camelKey] || 0);
-    });
+  // This month, by India delivery day: shipped amounts of delivered requests (event stalls' are theirs).
+  const monthReceived = sumShippedPieces(productionRequests.filter((req) =>
+    RECEIVED_STATUSES.includes(req.status) && !req.eventId && matchesStoreScope(req.storeId) && inRange(receivedAtIST(req))));
+  const monthSold: Record<string, number> = {};
+  for (const sale of salesData) {
+    if (!inRange(sale.date) || !matchesStoreScope(sale.storeId)) continue;
+    for (const { camelKey } of finishedProducts) monthSold[camelKey] = (monthSold[camelKey] || 0) + salesPieces(sale, camelKey);
   }
 
-  const totalReceivedSum = Object.values(totalReceived).reduce((sum, val) => sum + val, 0);
-  const totalOpeningBalanceSum = Object.values(openingBalance).reduce((sum, val) => sum + val, 0);
-  const totalRecalibrationSum = mostRecentRecalibration
-    ? Object.values(mostRecentRecalibration.stock || {}).reduce((sum: number, val: any) => sum + val, 0)
-    : 0;
+  const stock: Record<string, number> = {};
+  for (const { storeId, base, wastage } of storeBases) {
+    const { expected } = storeExpected({ base, storeId, requests: productionRequests, sales: salesData, wastage });
+    for (const { camelKey } of finishedProducts) stock[camelKey] = (stock[camelKey] || 0) + (expected[camelKey] || 0);
+  }
 
+  const lines = finishedProducts.map(({ camelKey, label }) => {
+    const received = monthReceived[camelKey] || 0;
+    const sold = monthSold[camelKey] || 0;
+    const now = stock[camelKey] || 0;
+    const opening = now - received + sold;
+    return { camelKey, label, received, sold, stock: now, opening, totalAvailable: opening + received };
+  });
   return {
     rangeStart,
     rangeEnd,
-    totalStockSum: totalReceivedSum + totalOpeningBalanceSum + totalRecalibrationSum,
-    lines: finishedProducts.map(({ camelKey, label }) => {
-      const received = totalReceived[camelKey] || 0;
-      const opening = openingBalance[camelKey] || 0;
-      return { camelKey, label, received, sold: totalSales[camelKey] || 0, stock: storeStock[camelKey] || 0, opening, totalAvailable: opening + received };
-    }),
+    totalStockSum: lines.reduce((sum, l) => sum + l.received + Math.abs(l.stock) + Math.max(0, l.opening), 0),
+    lines,
   };
 }
 

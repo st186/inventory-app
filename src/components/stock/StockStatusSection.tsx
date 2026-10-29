@@ -1,4 +1,4 @@
-// "On hand at the store" (this month: opening or counted stock + received - sold, in pieces and
+// "On hand at the store" (the last stock count + received - sold - wastage since, in pieces and
 // plates, with the store's alert levels) and the stock jobs next to it: log wastage, count stock,
 // alert levels, plate size, count reports.
 import * as React from 'react';
@@ -17,7 +17,7 @@ import { DEFAULT_THRESHOLDS, computeStoreStock, isLowShare, stockLevel } from '.
 export function StoreStockOnHand({ vm, defaultOpen = false }: { vm: StockRequestsVM; defaultOpen?: boolean }) {
   const { t, lang } = useT();
   const {
-    context, salesData, finishedProducts, storeOpeningBalance, mostRecentRecalibration, matchesStoreScope, stockThresholds, momosPerPlate,
+    context, salesData, finishedProducts, storeBases, matchesStoreScope, stockThresholds, momosPerPlate,
     handleSyncPosNow, isSyncingPos, storeDisplayName,
   } = vm;
   const result = React.useMemo(
@@ -25,13 +25,12 @@ export function StoreStockOnHand({ vm, defaultOpen = false }: { vm: StockRequest
       productionRequests: context.productionRequests || [],
       salesData,
       finishedProducts,
-      storeOpeningBalance,
-      mostRecentRecalibration,
+      storeBases,
       matchesStoreScope,
     }),
     // matchesStoreScope is rebuilt every render; the store scope itself is in the other inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [context.productionRequests, salesData, finishedProducts, storeOpeningBalance, mostRecentRecalibration, vm.storeScopeKey],
+    [context.productionRequests, salesData, finishedProducts, storeBases, vm.storeScopeKey],
   );
   const lowCount = result ? result.lines.filter((l) => stockLevel(l.stock, stockThresholds[l.camelKey] || DEFAULT_THRESHOLDS) !== 'high').length : 0;
 

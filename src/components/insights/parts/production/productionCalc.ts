@@ -3,6 +3,7 @@
 // here changes a number; scripts in the WP8 number check compare these with the old code.
 import { formatDateIST, addDays } from '../../../../utils/timezone';
 import { MOMO_TYPES, ALL_POOL_IDS, getPoolLabel } from '../../../../constants/momoTypes';
+import { houseExpected } from '../../../stock/countMath';
 
 type Range = { startDate: string; endDate: string };
 export type ZipPrev = <T extends Record<string, any>>(current: T[], previous: T[], keys: (keyof T)[]) => any[];
@@ -323,8 +324,9 @@ export function buildStock(args: {
     });
   };
 
+  // Entries waiting for approval are momos made all the same; only rejected ones are left out.
   const approvedMonthlyProduction = monthlyFilteredProduction
-    .filter((p) => p.approvalStatus === 'approved'); // CRITICAL: Only count approved production
+    .filter((p) => p.approvalStatus !== 'rejected');
   approvedMonthlyProduction.forEach((p) => addProductionRecordToTotals(p, totalProduced));
 
   // First, resolve the production house UUID. For production incharges,
@@ -401,31 +403,32 @@ export function buildStock(args: {
   };
   fulfilledRequests.forEach((req: any) => addDeliveredRequestToTotals(req, totalSentToStores));
 
-  // Stock = Opening Balance + Current Month Production - Current Month Deliveries
-  const openingBalance: Record<string, number> = {};
-  finishedProductsForCalc.forEach((item: any) => {
-    const stockKey = getStockKey(item.name);
-    // Try multiple key formats: stockKey ("chicken"), item.name ("chicken_momo"), and item.id (UUID)
-    openingBalance[stockKey] = (previousMonthStock as any)?.[stockKey] ||
-      (previousMonthStock as any)?.[item.name] ||
-      (previousMonthStock as any)?.[item.id] ||
-      0;
-  });
-
-  // Stock = Opening Balance + This Month Produced - Sent to Stores.
-  // Base momos also lose stock when converted into Kurkure momos.
+  // Stock now = the last stock count that wasn't rejected + everything made and sent since
+  // (stock/countMath.ts), the figure the stock count expects. `previousMonthStock` holds that count
+  // and the event leftovers counted back in (useAnalyticsData); until it loads, this month only.
+  // The month's own figures stay for the rows, with the opening being what that leaves.
+  const allStoresForStock = stores.length > 0 ? stores : (context.stores || []);
+  const now = previousMonthStock
+    ? houseExpected({
+      base: previousMonthStock.base ?? null,
+      ids: { productionHouseUUID, effectiveStoreId: effectiveProductionHouseId, originalStoreId: effectiveProductionHouseId },
+      productionData: filteredProduction,
+      requests: context.productionRequests || [],
+      stores: allStoresForStock,
+      returns: previousMonthStock.returns || [],
+    }).expected
+    : null;
   const productionHouseStock: Record<string, number> = {};
+  const openingBalance: Record<string, number> = {};
   finishedProductsForCalc.forEach((item: any) => {
     const stockKey = getStockKey(item.name);
     const convertedToKurkure =
       stockKey === 'chicken' ? (totalProduced.chickenKurkure || 0) :
       stockKey === 'veg' ? (totalProduced.vegKurkure || 0) :
       0;
-    productionHouseStock[stockKey] =
-      (openingBalance[stockKey] || 0) +
-      (totalProduced[stockKey] || 0) -
-      (totalSentToStores[stockKey] || 0) -
-      convertedToKurkure;
+    const monthChange = (totalProduced[stockKey] || 0) - (totalSentToStores[stockKey] || 0) - convertedToKurkure;
+    productionHouseStock[stockKey] = now ? now[stockKey] || 0 : monthChange;
+    openingBalance[stockKey] = productionHouseStock[stockKey] - monthChange;
   });
 
   const snakeToCamel = (str: string) => str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());

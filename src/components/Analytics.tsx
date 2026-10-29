@@ -274,7 +274,6 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
           <MonthlyStockRecalibration
             context={context}
             selectedStoreId={analyticsMode === 'production' ? selectedProductionHouseId : effectiveStoreId}
-            currentCalculatedStock={analyticsMode === 'production' ? (window as any).__currentProductionHouseStock : undefined}
             onClose={() => {
               setShowRecalibration(false);
               // Refresh opening balance data after recalibration
@@ -292,7 +291,6 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
               // Clear cached data
               setPreviousMonthStock(null);
               setLatestRecalibration(null);
-              (window as any).__currentProductionHouseStock = null;
               // Force immediate refetch
               setTimeout(() => {
                 fetchRecalibrationAndCalculateOpeningBalance();
