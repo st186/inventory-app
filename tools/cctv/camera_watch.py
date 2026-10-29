@@ -8,14 +8,16 @@ Runs on a PC on the same Wi-Fi (2.4 GHz) as a Tapo camera and talks to the Bunny
 The server keeps the schedule, the working hours and the AI budget; this only grabs pictures.
 
 Settings: %LOCALAPPDATA%\\BunnyCamera\\camera_watch.ini (never in the project folder - it holds
-the camera's password and key). Log: camera_watch.log next to it.
-Needs Python 3 with OpenCV (cv2). Run:  pythonw camera_watch.py   (no window)
+the camera's password and key): a [server] section, then one [camera] section, or several named
+[camera:<anything>] sections (one PC watching all of a place's cameras, each in its own thread).
+Log: camera_watch.log next to it. Needs Python 3 with OpenCV (cv2). Run:  pythonw camera_watch.py
 """
 import base64
 import configparser
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -38,9 +40,19 @@ MOTION_COOLDOWN_S = 120   # after sending a movement still, wait this long befor
 CONFIG_EVERY_S = 900      # ask the server what to do at least this often
 
 
-def log(msg):
+_log_lock = threading.Lock()
+_face_lock = threading.Lock()  # one face model, shared by the camera threads
+
+
+def log(msg, cam=None):
     os.makedirs(HOME, exist_ok=True)
-    line = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {msg}"
+    who = f"[{cam['id']}] " if cam and cam.get("many") else ""
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S}  {who}{msg}"
+    with _log_lock:
+        _write(line)
+
+
+def _write(line):
     try:
         if os.path.exists(LOG) and os.path.getsize(LOG) > 2_000_000:
             os.replace(LOG, LOG + ".old")
@@ -53,19 +65,28 @@ def log(msg):
 
 
 def load_settings():
+    """The cameras in the settings file: [camera], or [camera:...] sections."""
     cp = configparser.ConfigParser()
     if not cp.read(CONFIG, encoding="utf-8"):
         sys.exit(f"No settings file at {CONFIG}")
-    s = {
-        "server": cp.get("server", "url").rstrip("/"),
-        "id": cp.get("camera", "id"),
-        "key": cp.get("camera", "key"),
-        "still_url": cp.get("camera", "still_url"),
-        "watch_url": cp.get("camera", "watch_url"),
-    }
-    if "PASSWORD" in s["still_url"] or "PASSWORD" in s["watch_url"]:
-        sys.exit("Put the camera account's name and password into still_url and watch_url in " + CONFIG)
-    return s
+    server = cp.get("server", "url").rstrip("/")
+    sections = [sec for sec in cp.sections() if sec == "camera" or sec.startswith("camera:")]
+    if not sections:
+        sys.exit(f"No [camera] section in {CONFIG}")
+    cams = []
+    for sec in sections:
+        cam = {
+            "server": server,
+            "id": cp.get(sec, "id"),
+            "key": cp.get(sec, "key"),
+            "still_url": cp.get(sec, "still_url"),
+            "watch_url": cp.get(sec, "watch_url"),
+            "many": len(sections) > 1,
+        }
+        if any(x in cam["still_url"] + cam["watch_url"] for x in ("PASSWORD", "CAMERA-IP")):
+            sys.exit(f"Fill in the camera account and address for {cam['id']} in {CONFIG}")
+        cams.append(cam)
+    return cams
 
 
 def call(s, path, body=None):
@@ -83,21 +104,21 @@ def call(s, path, body=None):
             detail = json.loads(e.read().decode()).get("error", "")
         except Exception:
             detail = ""
-        log(f"server said {e.code} {detail}")
+        log(f"server said {e.code} {detail}", s)
         if e.code == 401:
             time.sleep(600)  # wrong key: don't hammer the server
         return None
     except Exception as e:
-        log(f"server not reachable: {type(e).__name__}")
+        log(f"server not reachable: {type(e).__name__}", s)
         return None
 
 
-def grab_still(url):
+def grab_still(s):
     """One fresh full-size frame: (base64 JPEG, the frame) or (None, None)."""
-    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
-            log("camera not reachable (check the Wi-Fi band, the address and the camera account)")
+            log("camera not reachable (check the Wi-Fi band, the address and the camera account)", s)
             return None, None
         frame = None
         for _ in range(12):  # skip the first frames so the picture is current and complete
@@ -105,7 +126,7 @@ def grab_still(url):
             if ok:
                 frame = f
         if frame is None:
-            log("camera sent no picture")
+            log("camera sent no picture", s)
             return None, None
         h, w = frame.shape[:2]
         small = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
@@ -116,28 +137,29 @@ def grab_still(url):
 
 
 def send_still(s, kind):
-    image, frame = grab_still(s["still_url"])
+    image, frame = grab_still(s)
     if not image:
         return None
     body = {"kind": kind, "image": image}
     # Names of the staff recognised in the full-size frame (the face numbers never leave this PC).
     if face_book is not None:
         try:
-            seen = face_book.identify(frame)
+            with _face_lock:
+                seen = face_book.identify(frame)
             if seen is not None:
                 body["faces"] = seen
                 if seen["names"] or seen["unknown"]:
                     known = ", ".join(seen["names"]) or "none known"
                     extra = f" + {seen['unknown']} unknown" if seen["unknown"] else ""
-                    log(f"faces: {known}{extra}")
+                    log(f"faces: {known}{extra}", s)
         except Exception as e:  # noqa: BLE001
-            log(f"face check failed: {type(e).__name__}")
+            log(f"face check failed: {type(e).__name__}", s)
     res = call(s, "/cctv/frame", body)
     if res:
         if res.get("skipped"):
-            log(f"{kind} still skipped: {res['skipped']}")
+            log(f"{kind} still skipped: {res['skipped']}", s)
         else:
-            log(f"{kind} still checked: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}")
+            log(f"{kind} still checked: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
     return res
 
 
@@ -146,16 +168,16 @@ def watch_for_movement(s, seconds):
     end = time.time() + seconds
     cap = cv2.VideoCapture(s["watch_url"], cv2.CAP_FFMPEG)
     if not cap.isOpened():
-        log("small stream not reachable; trying again in a minute")
+        log("small stream not reachable; trying again in a minute", s)
         time.sleep(60)
         return
-    log("watching for movement (outside working hours)")
+    log("watching for movement (outside working hours)", s)
     prev, streak, last_sent = None, 0, 0.0
     try:
         while time.time() < end:
             ok, frame = cap.read()
             if not ok:
-                log("small stream dropped; reconnecting")
+                log("small stream dropped; reconnecting", s)
                 break
             small = cv2.GaussianBlur(cv2.cvtColor(cv2.resize(frame, (320, 180)), cv2.COLOR_BGR2GRAY), (7, 7), 0)
             if prev is not None:
@@ -163,7 +185,7 @@ def watch_for_movement(s, seconds):
                 share = cv2.countNonZero(diff) / diff.size
                 streak = streak + 1 if share > MOTION_SHARE else 0
                 if streak >= MOTION_FRAMES and time.time() - last_sent > MOTION_COOLDOWN_S:
-                    log(f"movement ({share:.1%} of the picture)")
+                    log(f"movement ({share:.1%} of the picture)", s)
                     cap.release()
                     send_still(s, "motion")
                     last_sent, streak, prev = time.time(), 0, None
@@ -177,9 +199,9 @@ def watch_for_movement(s, seconds):
         cap.release()
 
 
-def main():
-    s = load_settings()
-    log("camera watcher started")
+def run_camera(s):
+    """One camera's loop: stills on schedule in working hours, movement watching after them."""
+    log("camera watcher started", s)
     plan, plan_at = None, 0.0
     while True:
         if not plan or time.time() - plan_at > CONFIG_EVERY_S:
@@ -190,7 +212,7 @@ def main():
                 time.sleep(60)
                 continue
         if not plan.get("active"):
-            log("camera paused in the app")
+            log("camera paused in the app", s)
             time.sleep(600)
             plan = None
             continue
@@ -209,18 +231,33 @@ def main():
             plan = None
 
 
-if __name__ == "__main__":
-    # Keeps going through anything unexpected (a camera that drops, a bad frame): log it, wait a
-    # minute, start again. A missing or unfilled settings file stops it (sys.exit).
+def keep_running(s):
+    # Keeps a camera going through anything unexpected (a camera that drops, a bad frame): log it,
+    # wait a minute, start again.
     while True:
         try:
-            main()
+            run_camera(s)
+        except Exception as e:  # noqa: BLE001
+            log(f"error, restarting in a minute: {type(e).__name__}: {e}", s)
+            time.sleep(60)
+
+
+if __name__ == "__main__":
+    try:
+        cams = load_settings()
+    except SystemExit as e:  # a missing or unfilled settings file stops it
+        log(f"not running: {e}")
+        raise
+    if len(cams) == 1:
+        try:
+            keep_running(cams[0])
         except KeyboardInterrupt:
             log("stopped")
-            break
-        except SystemExit as e:
-            log(f"not running: {e}")
-            break
-        except Exception as e:
-            log(f"error, restarting in a minute: {type(e).__name__}: {e}")
-            time.sleep(60)
+    else:
+        for cam in cams:
+            threading.Thread(target=keep_running, args=(cam,), name=cam["id"], daemon=True).start()
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            log("stopped")

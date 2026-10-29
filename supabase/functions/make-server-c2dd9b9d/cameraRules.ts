@@ -24,6 +24,23 @@ export function minutesUntilHours(now: string, from: string, to: string): number
   return (toMin(from) - toMin(now) + 1440) % 1440;
 }
 
+/** Minutes until working hours end (0 when outside them). */
+export function minutesUntilHoursEnd(now: string, from: string, to: string): number {
+  if (!inHours(now, from, to) || toMin(from) === toMin(to)) return 0;
+  return (toMin(to) - toMin(now) + 1440) % 1440;
+}
+
+/**
+ * Seconds until the camera PC should next send a scheduled still. A camera with nothing to check
+ * (a door, the customer area) sends none in working hours - it only watches after them.
+ */
+export function nextStillSeconds(o: { now: string; from: string; to: string; active: boolean; everyMin: number; hasChecks: boolean; sinceLastS: number }): number {
+  if (!o.active) return 3600;
+  if (!inHours(o.now, o.from, o.to)) return minutesUntilHours(o.now, o.from, o.to) * 60;
+  if (!o.hasChecks) return Math.max(60, minutesUntilHoursEnd(o.now, o.from, o.to) * 60);
+  return Math.max(0, Math.round(o.everyMin * 60 - o.sinceLastS));
+}
+
 /** People seen clearly without each item (only a clear "no" counts; "unclear" never alerts). */
 export function missingPpe(look: Look, checks: PpeItem[]): Partial<Record<PpeItem, number>> {
   const out: Partial<Record<PpeItem, number>> = {};

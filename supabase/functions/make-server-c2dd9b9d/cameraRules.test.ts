@@ -1,7 +1,7 @@
 // Tests for cameraRules.ts. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/cameraRules.test.ts
 import assert from 'node:assert/strict';
-import { cleanFaces, decide, inHours, istClock, minutesUntilHours, missingPpe, missingText, onlyKnownStaff } from './cameraRules.ts';
+import { cleanFaces, decide, inHours, istClock, minutesUntilHours, minutesUntilHoursEnd, missingPpe, missingText, nextStillSeconds, onlyKnownStaff } from './cameraRules.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -51,6 +51,17 @@ test('recognised faces: only known colleagues after hours is not an intruder', (
   assert.equal(onlyKnownStaff({ names: ['Vijay Das'], unknown: 0 }, 2), false); // someone whose face wasn't seen
   assert.equal(onlyKnownStaff({ names: [], unknown: 0 }, 1), false); // back to the camera: can't tell
   assert.equal(onlyKnownStaff(null, 1), false);
+});
+
+test('the schedule: PPE cameras every N minutes; door and customer-area cameras only after hours', () => {
+  const base = { from: '09:00', to: '23:30', active: true, everyMin: 30 };
+  assert.equal(minutesUntilHoursEnd('22:30', '09:00', '23:30'), 60);
+  assert.equal(minutesUntilHoursEnd('08:00', '09:00', '23:30'), 0);
+  assert.equal(nextStillSeconds({ ...base, now: '12:00', hasChecks: true, sinceLastS: Infinity }), 0);
+  assert.equal(nextStillSeconds({ ...base, now: '12:00', hasChecks: true, sinceLastS: 600 }), 1200);
+  assert.equal(nextStillSeconds({ ...base, now: '22:30', hasChecks: false, sinceLastS: Infinity }), 3600); // idle till closing
+  assert.equal(nextStillSeconds({ ...base, now: '23:45', hasChecks: false, sinceLastS: Infinity }), 555 * 60); // after hours: watch till 9 AM
+  assert.equal(nextStillSeconds({ ...base, now: '12:00', hasChecks: true, sinceLastS: 0, active: false }), 3600);
 });
 
 console.log(`cameraRules: ${passed} tests passed`);

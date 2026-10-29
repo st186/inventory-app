@@ -9,6 +9,10 @@ isn't checked in there is an "after hours" alert). Alerts and settings: app › 
 - Settings: `%LOCALAPPDATA%\BunnyCamera\camera_watch.ini` (camera id, its key from the app, and
   the RTSP links with the Tapo camera account). Never put it in this folder.
 - Log: `%LOCALAPPDATA%\BunnyCamera\camera_watch.log`.
+- One PC can watch several cameras: one `[camera:<id>]` section each (a thread per camera).
+- New PC (the store): copy the kit (this folder + its camera_watch.ini) and double-click
+  `Install Bunny cameras.bat` - it asks for the camera account and IPs, installs Python + OpenCV,
+  copies the program to C:BunnyCamera and makes it start with Windows.
 - Run without a window: `pythonw camera_watch.py`. It starts with Windows from
   `shell:startup\Bunny camera watcher.bat`.
 - Tapo C200 links: `rtsp://USER:PASS@IP:554/stream1` (full) and `/stream2` (small). The PC must

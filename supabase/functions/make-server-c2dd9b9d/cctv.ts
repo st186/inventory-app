@@ -16,7 +16,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtCamera } from './insights.ts';
-import { PPE_ITEMS, cleanFaces, decide, inHours, istClock, minutesUntilHours, missingText, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
+import { PPE_ITEMS, cleanFaces, decide, inHours, istClock, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
 const KEEP_DAYS = 30;
@@ -137,7 +137,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     return {
       active: cam.active, from: cam.from, to: cam.to, everyMin: cam.everyMin, working,
       // Seconds until the next scheduled still (working hours) or until watching for movement matters.
-      nextStillInSec: !cam.active ? 3600 : working ? Math.max(0, Math.round(cam.everyMin * 60 - sinceLast)) : minutesUntilHours(now, cam.from, cam.to) * 60,
+      nextStillInSec: nextStillSeconds({ now, from: cam.from, to: cam.to, active: cam.active, everyMin: cam.everyMin, hasChecks: cam.checks.length > 0, sinceLastS: sinceLast }),
     };
   };
 
@@ -165,7 +165,10 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const p = plan(cam);
       // The server keeps the schedule, whatever the PC's clock says (and the AI budget with it).
       if (!cam.active) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'paused', ...p }); }
-      if (kind === 'scheduled' && (!p.working || p.nextStillInSec > 60)) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: p.working ? 'too soon' : 'outside working hours', ...p }); }
+      if (kind === 'scheduled' && (!p.working || !cam.checks.length || p.nextStillInSec > 60)) {
+        await deps.kv.set(`cctv-camera:${cam.id}`, cam);
+        return c.json({ skipped: !p.working ? 'outside working hours' : !cam.checks.length ? 'nothing to check in working hours' : 'too soon', ...p });
+      }
       if (kind === 'motion') {
         if (p.working) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'working hours', ...p }); }
         if (cam.lastMotionLookAt && nowMs - Date.parse(cam.lastMotionLookAt) < MOTION_LOOK_GAP_MS) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'looked a moment ago', ...p }); }
