@@ -545,11 +545,68 @@ const STORE_CREW: Chapter[] = [
   },
 ];
 
+// Kitchen crew (Rudra): Bengali screens. Practice data: on shift at the production house since
+// 7:56 AM, recipes to weigh (R-02 Kurkure batter has 1 of 3 batches). Leave and pay are the store
+// crew's chapters.
+const crewChapter = (id: string) => STORE_CREW.find((c) => c.id === id)!;
+const KITCHEN_CREW: Chapter[] = [
+  findYourWay([
+    { path: 'pay', title: two('Tap Pay', 'বেতন চাপুন'), say: two('What you have earned this month, your payslips and any advance.', 'এই মাসে কত হল, পে-স্লিপ আর অ্যাডভান্স।') },
+    { path: 'me', title: two('Tap Me', 'আমি চাপুন'), say: two('Attendance and leave, KPIs, the recipes to weigh, emergency numbers and Learn the app.', 'হাজিরা আর ছুটি, KPI, ওজন করার রেসিপি, জরুরি নম্বর আর অ্যাপ শিখুন।') },
+  ]),
+  {
+    id: 'shift', practice: true, minutes: 1,
+    title: two('Your shift', 'আপনার শিফট'),
+    about: two('Your attendance at the production house.', 'প্রোডাকশন হাউসে আপনার হাজিরা।'),
+    steps: [
+      { id: 'card', go: 'home', find: tour('shift'), title: two('Your shift', 'আপনার শিফট'), body: two('8 AM to 7 PM at the production house. Tap Start shift when you arrive; the time is your attendance. Practice: nothing is saved.', 'প্রোডাকশন হাউসে সকাল ৮টা থেকে সন্ধ্যা ৭টা। পৌঁছে Start shift চাপুন; সেই সময়টাই হাজিরা। অভ্যাস: কিছু সেভ হয় না।') },
+      { id: 'end', find: button(k('shift.end')), title: two('End shift', 'শিফট শেষ'), body: two('Before you leave, tap End shift. Forgetting it leaves your day open.', 'বেরোনোর আগে শিফট শেষ চাপুন। ভুলে গেলে দিনটা খোলা থেকে যায়।') },
+      { id: 'why', find: button(k('shift.whyLocation')), optional: true, title: two('Why location?', 'লোকেশন কেন?'), body: two('The phone checks you are at the production house when you start and end, nothing more.', 'শুরু আর শেষের সময় ফোন শুধু দেখে আপনি প্রোডাকশন হাউসে আছেন কিনা, আর কিছু না।') },
+    ],
+  },
+  {
+    id: 'recipes', practice: true, minutes: 3,
+    title: two('Weigh a recipe', 'রেসিপি ওজন করা'),
+    about: two('Make it the usual way and weigh everything.', 'যেভাবে বানান সেভাবেই বানান, আর সব ওজন করুন।'),
+    steps: [
+      { id: 'open', go: 'me', find: button(k('recipes.title')), act: 'tap', title: two('Tap Recipes', 'রেসিপি চাপুন'), body: two('Me › Recipes: every recipe the production house makes.', 'আমি › রেসিপি: প্রোডাকশন হাউসের সব রেসিপি।') },
+      { id: 'why', find: text(k('recipes.introTitle')), title: two('Why we weigh', 'কেন ওজন করি'), body: two('Each recipe is weighed 3 times on different days. The app averages them, and that becomes the standard: what each momo really costs.', 'প্রতিটা রেসিপি আলাদা দিনে ৩ বার ওজন হয়। অ্যাপ গড় করে, সেটাই স্ট্যান্ডার্ড: প্রতিটা মোমোর আসল খরচ।') },
+      { id: 'recipe', find: button('R-02'), act: 'tap', title: two('Open a recipe', 'একটা রেসিপি খুলুন'), body: two('Kurkure batter: 1 of 3 batches weighed. Tap it.', 'কুরকুরে ব্যাটার: ৩টের মধ্যে ১টা ব্যাচ ওজন হয়েছে। চাপুন।') },
+      { id: 'todo', find: text(k('recipes.form.usualWay')), title: two('What to do', 'কী করবেন'), body: two('Read this first: what to weigh, and when.', 'আগে এটা পড়ুন: কী ওজন করবেন, কখন।') },
+      { id: 'start', find: button(['Start batch', 'শুরু করুন']), act: 'tap', title: two('Start the next batch', 'পরের ব্যাচ শুরু'), body: two('Tap it when you start making it.', 'বানানো শুরু করলে চাপুন।') },
+      { id: 'maida', find: field(['Weight of Maida', 'ময়দা-এর ওজন']), act: 'do', ready: filled(['Weight of Maida', 'ময়দা-এর ওজন']), title: two('Weigh before it goes in', 'দেওয়ার আগে ওজন'), body: two('Weigh the maida and type it, e.g. 1000 g. Pick g or kg, and S (small scale) or B (big scale).', 'ময়দা ওজন করে লিখুন, যেমন 1000 g। g বা kg, আর S (ছোট মেশিন) বা B (বড় মেশিন) বাছুন।') },
+      { id: 'corn', find: field(['Weight of Corn flour', 'কর্ন ফ্লাওয়ার-এর ওজন']), act: 'do', ready: filled(['Weight of Corn flour', 'কর্ন ফ্লাওয়ার-এর ওজন']), title: two('Every ingredient', 'প্রতিটা উপকরণ'), body: two('Then the corn flour, e.g. 200. Something you did not use: tap Not used.', 'তারপর কর্ন ফ্লাওয়ার, যেমন 200। যা দেননি: দিইনি চাপুন।') },
+      { id: 'finished', find: field(k('recipes.form.finishedWeight')), title: two('The finished weight', 'তৈরি জিনিসের ওজন'), body: two('At the end, weigh what you made and type it here.', 'শেষে যা তৈরি হল ওজন করে এখানে লিখুন।') },
+      { id: 'send', find: button(k('recipes.form.send')), title: two('Send the batch', 'ব্যাচ পাঠান'), body: two('Everything weighed? Send batch. No signal? It waits on the phone and goes by itself. (Practice: nothing is sent.)', 'সব ওজন হয়েছে? ব্যাচ পাঠান। নেট নেই? ফোনে থাকে, নিজেই চলে যায়। (অভ্যাসে কিছু যায় না।)') },
+    ],
+  },
+  {
+    id: 'running-low', practice: true, minutes: 1,
+    title: two('Running low', 'কিছু কমে আসছে'),
+    about: two('Warn the team before something runs out.', 'শেষ হওয়ার আগে টিমকে জানান।'),
+    steps: [
+      { id: 'card', go: 'home', find: tour('low'), title: two('Running low on something?', 'কিছু কমে আসছে?'), body: two('Maida, oil, gas: tell the team a day or two before it runs out.', 'ময়দা, তেল, গ্যাস: শেষ হওয়ার এক-দুদিন আগে টিমকে জানান।') },
+      { id: 'open', find: button(k('supply.flag')), act: 'tap', title: two('Tap Tell the team', 'জানান চাপুন'), body: two('A short form opens.', 'ছোট একটা ফর্ম খুলবে।') },
+      { id: 'item', find: field(k('supply.item'), sheet), act: 'do', ready: filled(k('supply.item'), sheet), title: two('What is running low?', 'কী কমে আসছে?'), body: two('Type it, e.g. Cabbage.', 'লিখুন, যেমন বাঁধাকপি।') },
+      { id: 'send', find: button(k('supply.send', 'common.send'), { ...sheet, exact: true }), act: 'tap', title: two('Send it', 'পাঠিয়ে দিন'), body: two('The production incharge, operations and the owner get it, and it goes on the shopping list.', 'প্রোডাকশন ইনচার্জ, অপারেশনস আর মালিক পেয়ে যান, আর বাজারের লিস্টে ওঠে।') },
+    ],
+  },
+  crewChapter('leave'),
+  crewChapter('pay'),
+  {
+    ...crewChapter('kpis'),
+    steps: crewChapter('kpis').steps.map((s) => (s.id === 'score'
+      ? { ...s, body: two('Attendance, on time, a full shift, hygiene, and production logged with little wastage.', 'হাজিরা, সময়ে আসা, পুরো শিফট, পরিচ্ছন্নতা, আর কম নষ্টে প্রোডাকশন লেখা।') }
+      : s)),
+  },
+];
+
 const CHAPTERS: Record<string, Chapter[]> = {
   'store-incharge': STORE_INCHARGE,
   'production-incharge': PRODUCTION_INCHARGE,
   operations: OPERATIONS,
   'store-crew': STORE_CREW,
+  'kitchen-crew': KITCHEN_CREW,
 };
 
 /** This role's chapters (none yet: the one-minute tour only). */

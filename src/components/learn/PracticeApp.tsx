@@ -6,9 +6,14 @@ import { installGuideMock } from '../../gallery/guidePreview/mock';
 import { FlaskConical } from 'lucide-react';
 import { PreviewShell } from '../../gallery/guidePreview/PreviewShell';
 import { useT } from '../../utils/i18n';
+import { setDraftOwner } from '../../utils/recipesApi';
 import { leavePractice, practiceLang, type PracticeSession } from './learn';
 
 installGuideMock();
+// Recipe batches are kept on the phone until sent, under whoever is signed in - in practice that
+// is the real person, so a practice batch would show (and could be sent) in their real Recipes.
+// Practice batches belong to a practice owner the real app never shows or sends.
+setDraftOwner('practice');
 
 function PracticeBanner() {
   const { t } = useT();
