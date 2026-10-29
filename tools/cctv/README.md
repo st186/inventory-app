@@ -20,7 +20,7 @@ isn't checked in there is an "after hours" alert). Alerts and settings: app › 
 
 ## Recording for our own kitchen dataset (owner, 29 Oct 2026)
 
-`recorder.py` records each camera's own video, untouched and without sound, in 10-minute pieces:
+`recorder.py` records each camera's own video, untouched and without sound, in 30-minute pieces:
 `D:\BunnyCamera\recordings\<camera>\<date>\HH-MM-SS.mp4`, plus one `still.jpg` a day. The times,
 days and folder are in the `[record]` section of `camera_watch.ini`. The first run is 8 AM to 8 PM,
 30 Oct to 5 Nov 2026, and it stops by itself after that. It needs FFmpeg (`winget install Gyan.FFmpeg`)

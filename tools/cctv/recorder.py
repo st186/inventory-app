@@ -2,7 +2,7 @@
 dataset of kitchen work - folding, phone, steaming, packing, cleaning, at the machine, idle).
 
 Saves each camera's own video exactly as the camera sends it (no re-encoding, no sound) in
-10-minute pieces:   <folder>\\<camera id>\\<date>\\HH-MM-SS.mp4
+30-minute pieces:   <folder>\\<camera id>\\<date>\\HH-MM-SS.mp4
 plus one reference picture a day (<date>\\still.jpg) to draw and check the kitchen zones on
 (zones.py). Several cameras in the same place are recorded side by side; their zones share names
 where their views overlap. Nothing leaves this PC.
@@ -17,6 +17,7 @@ the [camera:...] sections camera_watch.py uses):
     folder = D:\\BunnyCamera\\recordings
     cameras =                 (camera ids, comma-separated; blank = every camera in the file)
     min_free_gb = 15          (stops before the disk fills up)
+    segment_min = 30          (minutes per video file; owner, 29 Oct 2026)
 Stops by itself after the last day. Log: recorder.log next to the settings. Needs FFmpeg
 (winget install Gyan.FFmpeg). Run:  pythonw recorder.py
 """
@@ -35,7 +36,6 @@ import cv2
 import camera_watch as cw
 
 LOG = os.path.join(cw.HOME, "recorder.log")
-SEGMENT_S = 600
 _log_lock = threading.Lock()
 
 
@@ -76,6 +76,7 @@ def load_plan():
         "to": r.get("to", "20:00").strip(),
         "folder": r.get("folder", r"D:\BunnyCamera\recordings").strip(),
         "min_free_gb": r.getfloat("min_free_gb", 15.0),
+        "segment_s": max(60, int(r.getfloat("segment_min", 30) * 60)),
         "ffmpeg": find_ffmpeg(r.get("ffmpeg", "").strip()),
     }
     wanted = [x.strip() for x in r.get("cameras", "").split(",") if x.strip()]
@@ -118,7 +119,7 @@ def start_ffmpeg(plan, cam, day_folder):
     os.makedirs(day_folder, exist_ok=True)
     args = [
         plan["ffmpeg"], "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", cam["still_url"],
-        "-an", "-c:v", "copy", "-f", "segment", "-segment_time", str(SEGMENT_S), "-reset_timestamps", "1", "-strftime", "1",
+        "-an", "-c:v", "copy", "-f", "segment", "-segment_time", str(plan.get("segment_s", 1800)), "-reset_timestamps", "1", "-strftime", "1",
         os.path.join(day_folder, "%H-%M-%S.mp4"),
     ]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)

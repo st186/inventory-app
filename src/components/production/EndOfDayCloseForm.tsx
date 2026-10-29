@@ -149,7 +149,7 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
                     </Field>
                   )}
                   <Field label={t('stock.prod.closingCount')} error={looksLikeGrams(closingRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
-                    <Input type="text" inputMode="decimal" className="num" value={closingRaw} onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled || closed} placeholder={closed ? t('stock.prod.notCounted') : '0.00'} />
+                    <Input type="text" inputMode="decimal" className="num" value={closingRaw} onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled || closed} placeholder={closed ? t('stock.prod.notCounted') : t('stock.prod.weighIt')} />
                   </Field>
                   <Field label={t('stock.prod.wastageKg')} error={looksLikeGrams(wastageRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
                     <Input type="text" inputMode="decimal" className="num" value={wastageRaw} onChange={(e) => setWastageInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.-]/g, '') }))} disabled={disabled || closed} placeholder="-" />
