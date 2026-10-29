@@ -2598,6 +2598,13 @@ export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss',
   await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
 }
 
+/** Delete the entry a check is about (a double entry, or one logged for the wrong place); the server closes its checks. */
+export async function deleteFlaggedEntry(flag: ExpenseFlag, accessToken?: string): Promise<void> {
+  const token = await tokenOr(accessToken);
+  if (flag.source === 'overhead') await deleteOverhead(token, flag.expenseId);
+  else await deleteInventory(token, flag.expenseId);
+}
+
 // Production checks (server productionReview.ts): anomalies in a day's production entry, from the
 // rules and from Bunny (byAi). The owner and operations managers see all; a production incharge their house.
 export interface ProductionFlag {

@@ -7,7 +7,7 @@ import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
 import { registerInsightsRoutes } from './insights.ts';
-import { recheckAmount, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
+import { recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
@@ -1371,6 +1371,7 @@ app.delete('/make-server-c2dd9b9d/inventory/:id', async (c) => {
 
     await kvWithRetry.del(key);
     await cascadeProductionCashForExpense(targetInventory);
+    await afterResponse('Expense checks', () => closeFlagsOf(expenseReviewDeps, itemId, authResult.user.user_metadata?.name || authResult.user.email || 'Someone'));
 
     return c.json({ success: true });
   } catch (error) {
@@ -1584,6 +1585,7 @@ app.delete('/make-server-c2dd9b9d/overheads/:id', async (c) => {
 
     await kvWithRetry.del(key);
     await cascadeProductionCashForExpense(targetOverhead);
+    await afterResponse('Expense checks', () => closeFlagsOf(expenseReviewDeps, itemId, authResult.user.user_metadata?.name || authResult.user.email || 'Someone'));
 
     return c.json({ success: true });
   } catch (error) {

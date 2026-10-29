@@ -37,7 +37,7 @@ export const SHOPPING_LIST_BY_MIN = 7 * 60;
 export const SHOPPING_LIST_FROM = '2026-11-01';
 export const EXPENSE_MISTAKES: Record<string, string> = {
   category: 'wrong category', amount: 'amount unclear', weight: 'unit or quantity slip', bundle: 'wrong pieces per pack',
-  duplicate: 'logged twice', detail: 'repair or labour without details',
+  duplicate: 'logged twice', detail: 'repair or labour without details', place: 'logged for the wrong place',
 };
 
 // Store cover (owner, 28 Oct 2026): someone who works at the production house from 8 AM goes to

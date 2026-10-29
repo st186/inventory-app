@@ -11,7 +11,9 @@
 // unlike before), category (filed unlike before, or a word that belongs elsewhere), detail (a
 // repair or labour entry that doesn't say what), repeat (a consumable bought again and again),
 // unusual (far above what this kind of spend usually is here), duplicate (same amount, kind and
-// place within two days), amount (doesn't say how much: "Butter 8 pcs" with no pack size - owner,
+// place within two days, or the same purchase logged for another place within a day), place (an
+// ingredient this place hasn't bought in 90 days that another place buys regularly - owner, 29 Oct
+// 2026: tandoori masala logged for the store and the production house on the same day), amount (doesn't say how much: "Butter 8 pcs" with no pack size - owner,
 // 29 Oct 2026; it closes itself when the entry is edited to a clear amount); for repairs, labour and equipment (expensePaperwork.ts) also bill (no
 // photo of the bill above ₹500), approval (above ₹2,000: waits for the owner's OK) and replace
 // (a machine repaired 3 times in 4 months, or repairs reaching 40% of its price).
@@ -61,6 +63,17 @@ const median = (xs: number[]) => {
 };
 const amountOf = (r: any) => Number(r?.totalCost ?? r?.amount ?? 0) || 0;
 const nameOf = (r: any) => String(r?.itemName || r?.description || '').trim();
+const sameQty = (a: any, b: any) => {
+  const x = canonical(Number(a?.quantity) || 0, a?.unit);
+  const y = canonical(Number(b?.quantity) || 0, b?.unit);
+  return x.qty > 0 && x.unit === y.unit && Math.abs(x.qty - y.qty) < 1e-6;
+};
+// "Bunny Momos 1", "Main Production House BWN".
+async function placeName(deps: Pick<ExpenseReviewDeps, 'kv'>, place: string) {
+  const [kind, id] = place.split(':');
+  const rec = id ? await deps.kv.get(kind === 'production' ? `production_house_${id}` : `store:${id}`).catch(() => null) : null;
+  return String(rec?.name || '').trim() || (kind === 'production' ? 'the production house' : 'the store');
+}
 
 // Consumables bought again and again (kitchen towels, gloves, dusters...).
 const CONSUMABLE_CATEGORIES = ['cleaning_supplies', 'cleaning_sanitation', 'hygiene_ppe', 'utensils', 'office_supplies', 'deep_cleaning'];
@@ -245,6 +258,34 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
       flags.push({ kind: 'duplicate', title: 'Logged twice?', message: `${rupees(amount)} for ${nameOf(twin) || 'the same thing'} was also logged on ${twin.date}. Delete one if it is the same bill.` });
     }
 
+    // The same purchase logged for another place too: same item, same amount or quantity, within a day.
+    const otherTwin = !twin && key0 ? sameItem.find((r: any) => !samePlace(r) && Math.abs(Date.parse(r.date) - Date.parse(item.date)) <= 86400000
+      && (Math.abs(amountOf(r) - amount) < 0.5 || sameQty(r, item))) : undefined;
+    // An ingredient this place hasn't bought in 90 days that another place buys regularly.
+    let usualElsewhere: { place: string; times: number } | null = null;
+    if (source === 'inventory' && key0 && !sameItem.some(samePlace)) {
+      const times = new Map<string, number>();
+      sameItem.forEach((r: any) => times.set(placeOf(r), (times.get(placeOf(r)) || 0) + 1));
+      const [top, n] = [...times].sort((a, b) => b[1] - a[1])[0] || ['', 0];
+      if (n >= 3) usualElsewhere = { place: top, times: n };
+    }
+    if (usualElsewhere) {
+      const [here, there] = await Promise.all([placeName(deps, place), placeName(deps, usualElsewhere.place)]);
+      const both = otherTwin && placeOf(otherTwin) === usualElsewhere.place;
+      flags.push({ kind: 'place', title: both ? 'Logged for the wrong place too?' : 'Not usually bought here', message: `${name} is bought for ${there} (${usualElsewhere.times} times in 90 days), never for ${here}. ${both ? `It was logged for ${there} on ${otherTwin.date} too, so this looks like the same purchase twice: delete this one.` : `If it was bought for ${there}, delete it here and log it there.`}` });
+    } else if (otherTwin) {
+      // The other entry is the one at the unusual place (already flagged "not usually bought
+      // here"): say there it was logged twice, and leave this one - the right place - alone.
+      const odd: Flag | null = await deps.kv.get(`expense-flag:${otherTwin.id}:place`);
+      const here = await placeName(deps, place);
+      if (odd?.status === 'open') {
+        await deps.kv.set(`expense-flag:${odd.id}`, { ...odd, title: 'Logged for the wrong place too?', message: `${odd.message.replace(/ If it was bought for .*$/, '')} It was logged for ${here} on ${item.date} too, so this looks like the same purchase twice: delete this one.` });
+      } else {
+        const there = await placeName(deps, placeOf(otherTwin));
+        flags.push({ kind: 'duplicate', title: 'Logged for two places?', message: `${name} · ${rupees(amount)} was also logged for ${there} on ${otherTwin.date}. If it is one purchase, delete the entry at the wrong place.` });
+      }
+    }
+
     // Repairs, labour and equipment: the bill, the owner's OK, and a machine that keeps breaking.
     if (needsPaperwork(source, item)) {
       const what = describeRepair(item) || catLabel(item.category);
@@ -288,6 +329,18 @@ export async function recheckAmount(deps: Pick<ExpenseReviewDeps, 'kv'>, item: a
     await deps.kv.set(`expense-flag:${id}`, { ...flag, status: 'fixed', decidedBy: by, decidedAt: new Date().toISOString(), note: 'The entry was edited' });
   } catch (error) {
     console.log('Expense recheck failed:', error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** An entry was deleted (a double entry, or one logged for the wrong place): its open checks are
+ *  done. They still count for the KPI - it was fixed, not marked correct. Never throws. */
+export async function closeFlagsOf(deps: Pick<ExpenseReviewDeps, 'kv' | 'rows'>, expenseId: string, by: string) {
+  try {
+    const open = (await deps.rows(`expense-flag:${expenseId}:`)).filter((f: Flag) => f?.status === 'open' && f.expenseId === expenseId);
+    const now = new Date().toISOString();
+    for (const f of open) await deps.kv.set(`expense-flag:${f.id}`, { ...f, status: 'fixed', decidedBy: by, decidedAt: now, note: 'The entry was deleted' });
+  } catch (error) {
+    console.log('Closing expense checks failed:', error instanceof Error ? error.message : String(error));
   }
 }
 
