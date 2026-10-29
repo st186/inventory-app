@@ -197,8 +197,153 @@ const STORE_INCHARGE: Chapter[] = [
   },
 ];
 
+// The production incharge (owner's timings from kpiCore: ship each request by 3 PM; production
+// logged every day; wastage kept down). Practice data: a Fri request from Bunny Momos 1 waiting,
+// the morning shopping list with 2 of 7 marked, 16 photo checks, riders Raju and Bapi.
+const PRODUCTION_INCHARGE: Chapter[] = [
+  findYourWay(
+    [
+      { path: 'production', title: two('Tap Production', 'Production চাপুন'), say: two('The stores\' requests to accept, pack and ship; today\'s batches; and the riders.', 'দোকানের রিকোয়েস্ট Accept, প্যাক আর পাঠানো; আজকের ব্যাচ; আর রাইডার।') },
+      { path: 'money', title: two('Tap Money', 'Money চাপুন'), say: two('The production house\'s expenses. Add each one on the day you pay it.', 'প্রোডাকশন হাউসের খরচ। যেদিন টাকা দেবেন, সেদিনই লিখুন।') },
+      { path: 'team', title: two('Tap Team', 'Team চাপুন'), say: two('The kitchen crew\'s timesheets and leave, and the workplace photos.', 'কিচেন স্টাফদের টাইমশিট আর ছুটি, আর কাজের জায়গার ছবি।') },
+      { path: 'me', title: two('Tap Me', 'Me চাপুন'), say: two('Your KPIs, the photo guide, emergency numbers, and Learn the app.', 'আপনার KPI, ছবির নিয়ম, জরুরি নম্বর, আর Learn the app।') },
+    ],
+    [{ id: 'bunny', close: true, find: tour('ask-bunny'), optional: true, title: two('Ask Bunny', 'বানিকে জিজ্ঞেস করুন'), body: two('Stuck on a screen? Ask Bunny in plain words, Bengali is fine. It explains what you are looking at.', 'কোনো স্ক্রিনে আটকে গেলে বানিকে সহজ কথায় জিজ্ঞেস করুন, বাংলায় চলবে। যা দেখছেন তা বুঝিয়ে দেবে।') }],
+  ),
+  {
+    id: 'shift', practice: true, minutes: 1,
+    title: two('Start your shift', 'শিফট শুরু'),
+    about: two('Check in when you reach the production house; it is your attendance.', 'প্রোডাকশন হাউসে পৌঁছে চেক-ইন; এটাই আপনার হাজিরা।'),
+    steps: [
+      { id: 'card', go: 'home', find: tour('shift'), title: two('Your shift', 'আপনার শিফট'), body: two('8 AM to 7 PM at the production house. Practice: made-up data, nothing is saved.', 'প্রোডাকশন হাউসে সকাল ৮টা থেকে সন্ধ্যা ৭টা। অভ্যাস: বানানো হিসাব, কিছু সেভ হয় না।') },
+      { id: 'start', find: button('Start shift'), act: 'tap', title: two('Tap Start shift', 'Start shift চাপুন'), body: two('When you arrive. The phone checks you are at the production house, so allow location if asked.', 'পৌঁছেই চাপুন। ফোন দেখে নেয় আপনি প্রোডাকশন হাউসে আছেন কিনা, তাই লোকেশন চাইলে Allow দিন।') },
+      { id: 'on', find: tour('shift'), title: two('You are on shift', 'শিফট চলছে'), body: two('The start time is your attendance. Late by more than 10 minutes counts against your KPI.', 'শুরুর সময়টাই আপনার হাজিরা। ১০ মিনিটের বেশি দেরি হলে KPI-তে কাটে।') },
+      { id: 'end', find: button('End shift'), title: two('End shift when you leave', 'যাওয়ার সময় End shift'), body: two('After today\'s production is sent. Forgetting it leaves your day open.', 'আজকের প্রোডাকশন পাঠানোর পর। ভুলে গেলে দিনটা খোলা থেকে যায়।') },
+    ],
+  },
+  {
+    id: 'shopping', practice: true, minutes: 2,
+    title: two('Morning shopping', 'সকালের বাজার'),
+    about: two('Mark each item on operations\' list as you get it.', 'অপারেশনসের লিস্টে প্রতিটা জিনিস পেলেই দাগ দিন।'),
+    steps: [
+      { id: 'card', go: 'home', find: tour('shopping'), title: two('Today\'s shopping list', 'আজকের বাজারের লিস্ট'), body: two('Operations sends it the night before. The vendors already have their part on WhatsApp.', 'অপারেশনস আগের রাতে পাঠায়। ভেন্ডররা WhatsApp-এ নিজেদের অংশ আগেই পেয়ে গেছে।') },
+      { id: 'open', find: button('Open the list'), act: 'tap', title: two('Tap Open the list', 'Open the list চাপুন'), body: two('Take it to the market.', 'বাজারে নিয়ে যান।') },
+      { id: 'note', find: text('Chicken first', sheet), optional: true, title: two('Read the note', 'নোটটা পড়ুন'), body: two('Operations\' note comes first: here, chicken before 9.', 'অপারেশনসের নোট সবার আগে: এখানে, ৯টার আগে চিকেন।') },
+      { id: 'got', find: button('Got it', { ...sheet, exact: true }), act: 'tap', title: two('Got it', 'পেয়ে গেছি'), body: two('Tap Got it as each thing goes in the bag. A different amount? Tap Change after.', 'প্রতিটা জিনিস ব্যাগে উঠলেই Got it চাপুন। পরিমাণ আলাদা হলে পরে Change চাপুন।') },
+      { id: 'missing', find: button('Not found', { ...sheet, exact: true }), act: 'tap', title: two('Not found', 'পাওয়া যায়নি'), body: two('Not in the market? Tap Not found, so operations can get it elsewhere.', 'বাজারে নেই? Not found চাপুন, যাতে অপারেশনস অন্য জায়গা থেকে আনাতে পারে।') },
+      { id: 'bill', find: button('Bill photo', sheet), title: two('Photograph every bill', 'প্রতিটা বিলের ছবি তুলুন'), body: two('Tap Bill photo for each bill. Operations puts the prices into the expenses from it. (Practice: no photo is sent.)', 'প্রতিটা বিলের জন্য Bill photo চাপুন। তা দেখে অপারেশনস দাম খরচে তোলে। (অভ্যাসে ছবি যায় না।)') },
+      { id: 'left', find: text('left to mark', sheet), title: two('Until nothing is left', 'সব দাগ না হওয়া পর্যন্ত'), body: two('When every line is marked, the list is done and operations gets told.', 'সব লাইন দাগ হলে লিস্ট শেষ, অপারেশনস খবর পেয়ে যায়।') },
+    ],
+  },
+  {
+    id: 'requests', practice: true, minutes: 3,
+    title: two('Accept, pack and ship', 'Accept, প্যাক আর পাঠানো'),
+    about: two('A store\'s request, from Accept to on the way, by 3 PM.', 'দোকানের রিকোয়েস্ট, Accept থেকে রওনা পর্যন্ত, দুপুর ৩টের মধ্যে।'),
+    steps: [
+      { id: 'tabs', go: 'production/requests', find: button('To pack'), title: two('The stores\' requests', 'দোকানের রিকোয়েস্ট'), body: two('To pack, Packed and Sent. Each store sends tomorrow\'s request by midnight.', 'To pack, Packed আর Sent। প্রতিটা দোকান রাত ১২টার মধ্যে কালকের রিকোয়েস্ট পাঠায়।') },
+      { id: 'open', find: button('· sent'), act: 'tap', title: two('Open a request', 'রিকোয়েস্ট খুলুন'), body: two('Bunny Momos 1\'s request for tomorrow. Tap it.', 'Bunny Momos 1-এর কালকের রিকোয়েস্ট। চাপুন।') },
+      { id: 'notes', find: text('Saturday rush', sheet), optional: true, title: two('Read the notes', 'নোট পড়ুন'), body: two('The store\'s note, here a Saturday rush. Every momo, sauce and supply is listed above it.', 'দোকানের নোট, এখানে শনিবারের ভিড়। ওপরে সব মোমো, সস আর জিনিস লেখা।') },
+      { id: 'accept', find: button('Accept', { ...sheet, exact: true }), act: 'tap', title: two('Tap Accept', 'Accept চাপুন'), body: two('Accept in the morning, so the store knows it is coming.', 'সকালেই Accept করুন, যাতে দোকান জানে মাল আসছে।') },
+      { id: 'pack', find: button('Start packing', sheet), act: 'tap', title: two('Tap Start packing', 'Start packing চাপুন'), body: two('When you start filling the bags.', 'ব্যাগ ভরা শুরু করলে।') },
+      { id: 'packed', find: button('Mark packed', sheet), act: 'tap', title: two('Tap Mark packed', 'Mark packed চাপুন'), body: two('Every bag packed and labelled.', 'সব ব্যাগ প্যাক করে লেবেল লাগানো হয়ে গেলে।') },
+      { id: 'ship', find: button('Ship', { ...sheet, exact: true }), act: 'tap', title: two('Tap Ship', 'Ship চাপুন'), body: two('You check what is really going, bag by bag.', 'ব্যাগ ধরে ধরে কী যাচ্ছে মিলিয়ে নিন।') },
+      { id: 'less', find: button('Less Veg', sheet), act: 'tap', title: two('Short of something?', 'কিছু কম?'), body: two('Say only 4 bags of Veg are ready: tap − once.', 'ধরুন Veg মাত্র ৪ ব্যাগ তৈরি: একবার − চাপুন।') },
+      { id: 'why', find: field('Why is it different?', sheet), act: 'do', ready: filled('Why is it different?', sheet), title: two('Write why', 'কারণ লিখুন'), body: two('Anything different needs a reason, e.g. Not enough in stock. The store sees it.', 'আলাদা হলে কারণ লাগে, যেমন Not enough in stock। দোকান দেখতে পায়।') },
+      { id: 'checked', find: button('I am sending these', sheet), act: 'tap', title: two('You checked it', 'মিলিয়ে নিয়েছেন'), body: two('Tick: I am sending these and have checked the quantities.', 'টিক দিন: যা পাঠাচ্ছি মিলিয়ে নিয়েছি।') },
+      { id: 'send', find: button('Ship', { ...sheet, exact: true }), act: 'tap', title: two('Ship it', 'পাঠিয়ে দিন'), body: two('Tap Ship.', 'Ship চাপুন।') },
+      { id: 'way', find: text('20 short', sheet), title: two('On the way', 'রওনা হয়ে গেল'), body: two('The store sees Veg 20 short with your reason. Shipped by 3 PM counts as on time for your KPI.', 'দোকান দেখবে Veg ২০টা কম, আপনার কারণসহ। দুপুর ৩টের মধ্যে পাঠালে KPI-তে সময়মতো ধরা হয়।') },
+    ],
+  },
+  {
+    id: 'rider', practice: true, minutes: 1,
+    title: two('Call a rider', 'রাইডার ডাকুন'),
+    about: two('Send the packed stock to the store with a rider.', 'প্যাক করা মাল রাইডার দিয়ে দোকানে পাঠান।'),
+    steps: [
+      { id: 'call', go: 'production/riders', find: button('Call a rider'), act: 'tap', title: two('Tap Call a rider', 'Call a rider চাপুন'), body: two('Production › Riders. Call one as soon as the bags are packed.', 'Production › Riders। ব্যাগ প্যাক হলেই ডাকুন।') },
+      { id: 'who', find: button('Raju', sheet), act: 'tap', title: two('Pick the rider', 'রাইডার বাছুন'), body: two('Pick one who is Available, e.g. Raju.', 'যে Available আছে তাকে বাছুন, যেমন Raju।') },
+      { id: 'where', find: button('Bunny Momos 1', sheet), act: 'tap', title: two('Where to', 'কোথায়'), body: two('Tap the store it is going to.', 'যে দোকানে যাচ্ছে সেটায় চাপুন।') },
+      { id: 'fare', find: field('Fare for this ride', sheet), title: two('The fare', 'ভাড়া'), body: two('The rider\'s usual fare. Change it only for an unusual ride.', 'রাইডারের সাধারণ ভাড়া। অন্যরকম রাইড হলে তবেই বদলান।') },
+      { id: 'now', find: button('Call rider now', sheet), act: 'tap', title: two('Tap Call rider now', 'Call rider now চাপুন'), body: two('The rider\'s phone rings.', 'রাইডারের ফোন বেজে ওঠে।') },
+      { id: 'track', find: section('In progress'), title: two('Follow the ride', 'রাইড দেখুন'), body: two('Called, on the way, delivered: each step shows here. Fares are paid from Team › Pay.', 'ডাকা হল, রাস্তায়, পৌঁছে গেল: প্রতিটা ধাপ এখানে দেখায়। ভাড়া Team › Pay থেকে দেওয়া হয়।') },
+    ],
+  },
+  {
+    id: 'batches', practice: true, minutes: 2,
+    title: two('Log today\'s production', 'আজকের প্রোডাকশন লেখা'),
+    about: two('Each batch as it is made, then send the day.', 'প্রতিটা ব্যাচ বানানোর সঙ্গে সঙ্গে, তারপর দিনটা পাঠান।'),
+    steps: [
+      { id: 'plan', go: 'production/batches', find: text('planned pieces'), title: two('Today\'s plan', 'আজকের প্ল্যান'), body: two('Tomorrow\'s expected sales plus 15%, in bags, for each momo.', 'প্রতিটা মোমোর জন্য কালকের আন্দাজি বিক্রি আর ১৫% বেশি, ব্যাগে।') },
+      { id: 'open', find: button('Stuffing and coating'), act: 'tap', title: two('Log a batch', 'ব্যাচ লিখুন'), body: two('Tap Stuffing and coating each time a batch is made.', 'প্রতিবার ব্যাচ বানালে Stuffing and coating চাপুন।') },
+      { id: 'kg', find: field('Stuffing (kg)'), act: 'do', ready: filled('Stuffing (kg)'), title: two('How much stuffing', 'কত স্টাফিং'), body: two('Pick the momo type above, then type the kg, e.g. 5.', 'ওপরে মোমোর ধরন বেছে kg লিখুন, যেমন 5।') },
+      { id: 'add', find: button('Add to today\'s batches'), act: 'tap', title: two('Tap Add to today\'s batches', 'Add to today\'s batches চাপুন'), body: two('It joins today\'s list with the time.', 'সময়সহ আজকের লিস্টে উঠে যায়।') },
+      { id: 'made', find: field('Chicken · Pieces made'), act: 'do', ready: filled('Chicken · Pieces made'), title: two('Pieces made', 'কত পিস হল'), body: two('Type the pieces made, e.g. 250 Chicken. Keep it up to date through the day.', 'কত পিস হল লিখুন, যেমন চিকেন 250। সারাদিন আপডেট রাখুন।') },
+      { id: 'left', find: button('Leftover count'), title: two('At the end of the day', 'দিনের শেষে'), body: two('Count what is left. It becomes tomorrow\'s opening stock. Wastage goes under Other wastage.', 'কী বাকি গুনে লিখুন। সেটাই কালকের শুরুর স্টক। নষ্ট হলে Other wastage-এ লিখুন।') },
+      { id: 'send', find: button('Send today\'s production'), act: 'tap', title: two('Tap Send today\'s production', 'Send today\'s production চাপুন'), body: two('Once a day, when production is done.', 'দিনে একবার, প্রোডাকশন শেষ হলে।') },
+      { id: 'final', find: button('Send today\'s production', sheet), act: 'tap', title: two('Check and send', 'মিলিয়ে পাঠান'), body: two('Pieces made against the plan. Tap Send today\'s production.', 'প্ল্যানের সঙ্গে কত পিস হল মিলিয়ে Send today\'s production চাপুন।') },
+      { id: 'done', title: two('Sent for approval', 'মঞ্জুরির জন্য পাঠানো হল'), body: two('Operations approves it. Logging production every day is 15 points of your KPI.', 'অপারেশনস মঞ্জুর করে। রোজ প্রোডাকশন লেখা আপনার KPI-র ১৫ পয়েন্ট।') },
+    ],
+  },
+  {
+    id: 'photos', practice: true, minutes: 1,
+    title: two('Workplace photos', 'কাজের জায়গার ছবি'),
+    about: two('The morning photo checks: which photos, by when.', 'সকালের ছবি চেক: কোন ছবি, কখনের মধ্যে।'),
+    steps: [
+      { id: 'mine', go: 'team/checks', find: button('My checks', { exact: true }), act: 'tap', title: two('Tap My checks', 'My checks চাপুন'), body: two('Team › Checks › My checks: today\'s photos for the production house.', 'Team › Checks › My checks: প্রোডাকশন হাউসের আজকের ছবি।') },
+      { id: 'count', find: text('of 16 done'), title: two('16 checks', '১৬টা চেক'), body: two('Freezers, kneader, sheet machine, steamer and the rest, each with its time.', 'ফ্রিজার, ময়দা মাখার মেশিন, শিট মেশিন, স্টিমার ইত্যাদি, প্রতিটার সময়সহ।') },
+      { id: 'shots', find: text('Inside the bowl'), title: two('Which photos', 'কোন ছবি'), body: two('Each check names its photos, e.g. Inside the bowl and Full machine. Tap a name to take that photo.', 'প্রতিটা চেকে ছবির নাম লেখা, যেমন Inside the bowl আর Full machine। নামে চাপলে সেই ছবি তোলা যায়।') },
+      { id: 'late', find: text('Late: send it now'), optional: true, title: two('Late?', 'দেরি?'), body: two('Send it anyway: late is better than missing. Bunny scores each photo out of 10.', 'তবুও পাঠান: না পাঠানোর চেয়ে দেরি ভালো। বানি প্রতিটা ছবিকে ১০-এর মধ্যে নম্বর দেয়।') },
+      { id: 'guide', go: 'photo-guide', find: text('Lid seal clean'), optional: true, title: two('The photo guide', 'ছবির নিয়ম'), body: two('Me › Photo guide: each check\'s time, its photos, and what they must show, with a good sample once the owner adds one.', 'Me › Photo guide: প্রতিটা চেকের সময়, কোন ছবি, কী দেখা যাবে, আর মালিক দিলে একটা ভালো নমুনা।') },
+    ],
+  },
+  {
+    id: 'expense', practice: true, minutes: 1,
+    title: two('Add an expense', 'খরচ লেখা'),
+    about: two('Log a production house purchase.', 'প্রোডাকশন হাউসের কেনাকাটা লিখুন।'),
+    steps: [
+      { id: 'add', go: 'money/expenses', find: button('Add expense', { exact: true }), act: 'tap', title: two('Tap Add expense', 'Add expense চাপুন'), body: two('Add every expense on the day you pay it.', 'যেদিন টাকা দেবেন, সেদিনই খরচ লিখুন।') },
+      { id: 'what', find: field('What was it for?', sheet), act: 'do', ready: filled('What was it for?', sheet), title: two('What was it for?', 'কী কেনা হল?'), body: two('Type it, e.g. Cabbage. Or tap Say it instead and speak, Bengali is fine.', 'লিখুন, যেমন Cabbage। অথবা Say it instead চেপে বলুন, বাংলায় চলবে।') },
+      { id: 'amount', find: field('Amount paid', sheet), act: 'do', ready: filled('Amount paid', sheet), title: two('Amount paid', 'কত টাকা দিলেন'), body: two('The total you paid. Over ₹500: photograph the bill.', 'মোট কত দিলেন। ₹৫০০-র বেশি হলে বিলের ছবি তুলুন।') },
+      { id: 'save', find: button('Save expense', sheet), act: 'tap', title: two('Tap Save expense', 'Save expense চাপুন'), body: two('It goes under Production. Bunny checks it: the same thing bought twice, or at the wrong place, is flagged.', 'এটা Production-এ যায়। বানি মিলিয়ে দেখে: একই জিনিস দুবার, বা ভুল জায়গায় লেখা হলে ধরে ফেলে।') },
+    ],
+  },
+  {
+    id: 'running-low', practice: true, minutes: 1,
+    title: two('Running low', 'কিছু কমে আসছে'),
+    about: two('Warn the team before something runs out.', 'শেষ হওয়ার আগে টিমকে জানান।'),
+    steps: [
+      { id: 'card', go: 'home', find: tour('low'), title: two('Running low on something?', 'কিছু কমে আসছে?'), body: two('Maida, gas, oil: tell the team a day or two before it runs out.', 'ময়দা, গ্যাস, তেল: শেষ হওয়ার এক-দুদিন আগে টিমকে জানান।') },
+      { id: 'open', find: button('Tell the team'), act: 'tap', title: two('Tap Tell the team', 'Tell the team চাপুন'), body: two('A short form opens.', 'ছোট একটা ফর্ম খুলবে।') },
+      { id: 'item', find: field('Item', sheet), act: 'do', ready: filled('Item', sheet), title: two('What is running low?', 'কী কমে আসছে?'), body: two('Type it, e.g. Maida (flour).', 'লিখুন, যেমন Maida (flour)।') },
+      { id: 'send', find: button('Send', { ...sheet, exact: true }), act: 'tap', title: two('Tap Send', 'Send চাপুন'), body: two('Operations puts it on the shopping list; you will see it on tomorrow\'s list.', 'অপারেশনস বাজারের লিস্টে তোলে; কালকের লিস্টে দেখতে পাবেন।') },
+    ],
+  },
+  {
+    id: 'team', practice: true, minutes: 1,
+    title: two('Your team', 'আপনার টিম'),
+    about: two('Approve the kitchen crew\'s timesheets.', 'কিচেন স্টাফদের টাইমশিট মঞ্জুর।'),
+    steps: [
+      { id: 'list', go: 'team/attendance', find: text('Timesheets'), title: two('Waiting for you', 'আপনার অপেক্ষায়'), body: two('The crew\'s timesheets and leave requests. Check them the next day.', 'স্টাফদের টাইমশিট আর ছুটির আবেদন। পরের দিন মিলিয়ে নিন।') },
+      { id: 'approve', find: button('Approve Kitchen Crew'), act: 'tap', title: two('Approve a timesheet', 'টাইমশিট মঞ্জুর'), body: two('Check the times against what you saw, then tap the tick.', 'নিজে যা দেখেছেন তার সঙ্গে সময় মিলিয়ে টিকে চাপুন।') },
+      { id: 'all', find: button('Approve all'), title: two('Approve all', 'সব মঞ্জুর'), body: two('When every one looks right. Wrong times? Tap the cross and say why.', 'সব ঠিক থাকলে। সময় ভুল হলে ক্রসে চেপে কারণ লিখুন।') },
+    ],
+  },
+  {
+    id: 'kpis', practice: true, minutes: 1,
+    title: two('Your KPIs and help', 'আপনার KPI আর সাহায্য'),
+    about: two('Your score, and where help is.', 'আপনার স্কোর, আর সাহায্য কোথায়।'),
+    steps: [
+      { id: 'open', go: 'me', find: button('My KPIs'), act: 'tap', title: two('Tap My KPIs', 'My KPIs চাপুন'), body: two('Your score this month, and the variable pay it gives.', 'এই মাসের স্কোর, আর তাতে কত ভেরিয়েবল পে।') },
+      { id: 'score', find: text('out of 100'), title: two('Out of 100', '১০০-র মধ্যে'), body: two('Each KPI shows how you are doing: production logged, wastage, shipped by 3 PM, attendance.', 'প্রতিটা KPI-তে কেমন চলছে দেখায়: প্রোডাকশন লেখা, নষ্ট, ৩টের মধ্যে পাঠানো, হাজিরা।') },
+      { id: 'wins', find: text('Biggest wins'), optional: true, title: two('Biggest wins', 'সবচেয়ে বড় লাভ'), body: two('What would raise your score most next time.', 'পরের বার কী করলে স্কোর সবচেয়ে বাড়বে।') },
+      { id: 'contacts', go: 'me', find: button('Emergency contacts'), act: 'tap', title: two('Emergency contacts', 'জরুরি নম্বর'), body: two('Police, fire, ambulance, technicians and suppliers, one tap to call.', 'পুলিশ, দমকল, অ্যাম্বুলেন্স, মিস্ত্রি আর সাপ্লায়ার, এক চাপে ফোন।') },
+      { id: 'again', go: 'me', find: button('Learn the app'), optional: true, title: two('Practise again any time', 'যখন খুশি আবার অভ্যাস'), body: two('Me › Learn the app has every chapter.', 'Me › Learn the app-এ সব অধ্যায় আছে।') },
+    ],
+  },
+];
+
 const CHAPTERS: Record<string, Chapter[]> = {
   'store-incharge': STORE_INCHARGE,
+  'production-incharge': PRODUCTION_INCHARGE,
 };
 
 /** This role's chapters (none yet: the one-minute tour only). */

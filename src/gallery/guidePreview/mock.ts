@@ -134,6 +134,28 @@ const BOUGHT = {
   boughtAt: at('08:40', yesterday), bills: [{ path: 'bills/demo-1.jpg', at: at('08:41', yesterday) }],
   progress: { total: 7, got: 7, missing: 0, left: 0, toLog: 7 }, canShop: false,
 };
+// Practice: the shopper's and operations' taps on a list (got it, not found, bill, done, priced).
+const LISTS = () => [SHOPPING, BOUGHT] as { id: string; status: string; lines: Record<string, any>[]; progress: Record<string, number>; bills?: unknown[]; boughtAt?: string; vendorOrders?: Record<string, unknown> }[];
+function listChange(id: string, what: string, b: Record<string, any>) {
+  const list = LISTS().find((l) => l.id === id);
+  if (!list) return { list: null };
+  const line = b.lineId ? list.lines.find((l) => l.id === b.lineId) : null;
+  const now = new Date().toISOString();
+  if (what === 'got' && line) {
+    if (b.missing) Object.assign(line, { got: null, missing: true, missingAt: now });
+    else Object.assign(line, { got: { qty: b.qty ?? line.qty, at: now }, missing: false });
+  }
+  if (what === 'bill') list.bills = [...(list.bills || []), { path: b.path || 'bills/practice.jpg', at: now }];
+  if (what === 'done') Object.assign(list, { status: 'bought', boughtAt: now });
+  if (what === 'logged' && line) Object.assign(line, b.skip ? { skipped: true } : { logged: { kind: b.kind || 'inventory', id: b.recordId || `rec-${Date.now()}`, at: now } });
+  if (what === 'vendor-sent') list.vendorOrders = { ...(list.vendorOrders || {}), [b.vendorId]: { at: now, byName: ME.name, sig: b.sig } };
+  if (what === 'got' && list.status === 'sent') list.status = 'shopping';
+  const got = list.lines.filter((l) => l.got).length;
+  const missing = list.lines.filter((l) => l.missing).length;
+  list.progress = { total: list.lines.length, got, missing, left: list.lines.length - got - missing, toLog: list.lines.filter((l) => l.got && !l.logged && !l.skipped).length };
+  if (what === 'logged' && !list.progress.toLog) list.status = 'logged';
+  return { list };
+}
 const VENDORS = [
   { id: 'v1', name: 'Chicken vendor', kind: 'meat', phone: '9800000011', items: ['Chicken (boneless)', 'Chicken (with bone)'] },
   { id: 'v2', name: 'Vegetable vendor', kind: 'vegetables', phone: '9800000012', items: ['Cabbage', 'Onion', 'Coriander leaves', 'Pudina'] },
@@ -373,6 +395,7 @@ export const guideRoutes: Route[] = [
       ...(LEADS ? { people: [{ id: PEOPLE['production-incharge'].id, name: PEOPLE['production-incharge'].name, designation: 'production_incharge' }], places: [STORE, HOUSE] } : {}),
     }),
   },
+  { method: 'POST', re: /\/shopping-lists\/([^/]+)\/(got|bill|done|logged|vendor-sent)$/, reply: (m, b) => listChange(decodeURIComponent(m[1]), m[2], b || {}) },
   { method: 'GET', re: /\/supply-vendors$/, reply: () => ({ vendors: VENDORS, specs: [] }) },
   { method: 'GET', re: /\/supply-alerts$/, reply: () => ({ alerts: ALERTS, canManage: LEADS, myPlace: AT_HOUSE ? HOUSE : AT_STORE ? STORE : null, ...(LEADS ? { places: [STORE, HOUSE] } : {}) }) },
   {

@@ -76,6 +76,10 @@ export function input(label: string, o: Where = {}): HTMLInputElement | HTMLText
     const el = (l.htmlFor ? document.getElementById(l.htmlFor) : null) || l.querySelector('input,textarea,select');
     if (el && visible(el)) return el as HTMLInputElement;
   }
+  // A box named only for screen readers (a row of boxes under one heading).
+  for (const el of Array.from(root.querySelectorAll('input[aria-label],textarea[aria-label],select[aria-label]'))) {
+    if (!el.closest('[data-coach]') && norm(el.getAttribute('aria-label')).startsWith(want) && visible(el)) return el as HTMLInputElement;
+  }
   return null;
 }
 
