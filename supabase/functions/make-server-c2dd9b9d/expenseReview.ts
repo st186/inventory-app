@@ -17,7 +17,18 @@
 // 29 Oct 2026; it closes itself when the entry is edited to a clear amount); for repairs, labour and equipment (expensePaperwork.ts) also bill (no
 // photo of the bill above ₹500), approval (above ₹2,000: waits for the owner's OK) and replace
 // (a machine repaired 3 times in 4 months, or repairs reaching 40% of its price).
+//
+// Why a big buy was right (owner, 29 Oct 2026: "if I tell him it's correct will it be able to
+// understand why ... so next time it's able to see and understand the trend"): marking "Much
+// bigger than usual" correct asks why (BIG_BUY_REASONS). The answer is kept on the entry
+// (explained) and remembered for later checks:
+//   expense-explained:{place}:{item}   the last few explained big buys of one item at one place
+//   expense-season:{place}             a festival stock-up or buying ahead: the next 14 days
+// A later big buy says what happened last time, the festival season it falls in, or a festival in
+// the calendar (store-calendar:{date}) just ahead, and comes with that reason picked. Explained
+// buys stay out of "usual", and an item with its own history is held to its own usual amount.
 import { askClaudeForJson } from './insights.ts';
+import { BIG_BUY_REASONS } from './bigBuyReasons.ts';
 import { amountFix, amountIssue, itemKey, type ItemSpec } from './suppliesRules.ts';
 import {
   APPROVAL_ABOVE, BILL_PHOTO_ABOVE, REPLACE_AFTER_REPAIRS, REPLACE_SHARE, REPLACE_WINDOW_DAYS, describeRepair, isBillPath, needsPaperwork,
@@ -42,7 +53,39 @@ type Flag = {
   title: string; message: string; suggestion?: Record<string, unknown>; suggestionText?: string;
   status: 'open' | 'fixed' | 'dismissed'; createdAt: string; loggedBy?: string;
   decidedBy?: string; decidedAt?: string; note?: string;
+  /** Why it was right (BIG_BUY_REASONS), and the reason a later check suggests. */
+  reason?: string; hint?: { reason: string; text: string };
 };
+
+const ASKS_WHY = ['unusual'];
+const SEASON_DAYS = 14;
+type Explained = { date: string; amount: number; reason: string; note?: string; by: string };
+const explainedKey = (place: string, item: string) => `expense-explained:${place}:${norm(item).slice(0, 60)}`;
+const seasonKey = (place: string) => `expense-season:${place}`;
+// 28 Oct, or 28 Oct 2026 when it is not the year of `ref`.
+const shortDate = (date: string, ref = date) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(date.slice(0, 4) !== ref.slice(0, 4) ? { year: 'numeric' } : {}), timeZone: 'UTC' });
+const why = (e: { reason: string; note?: string }) => `${BIG_BUY_REASONS[e.reason] || e.reason}${e.note ? ` (${e.note})` : ''}`;
+
+/** What a big buy probably is, from what people said before and the festival calendar. */
+async function bigBuyHint(kv: Kv, place: string, name: string, date: string): Promise<{ reason: string; text: string } | null> {
+  const past: Explained[] = (name ? await kv.get(explainedKey(place, name)).catch(() => null) : null) || [];
+  const last = past.filter((e) => e.date < date).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const season = await kv.get(seasonKey(place)).catch(() => null);
+  if (season && date >= addDays(season.from, -2) && date <= season.until) {
+    return { reason: season.reason, text: `${season.by} noted a festival stock-up here from ${shortDate(season.from)}: ${why(season)}.` };
+  }
+  // A festival in the calendar within the next 14 days (or the last 2): stocking up starts early.
+  const days = Array.from({ length: 17 }, (_, i) => addDays(date, i - 2));
+  const marks = kv.mget ? await kv.mget(days.map((d) => `store-calendar:${d}`)).catch(() => []) : [];
+  const festival = (marks || []).find((m: any) => m?.name && m?.date && m.effect !== 'closed');
+  if (last) {
+    const text = `Last time (${shortDate(last.date, date)}, ${last.by}): ${why(last)}.${festival ? ` ${festival.name} is on ${shortDate(festival.date)}.` : ''}`;
+    return { reason: festival && last.reason !== 'price_up' ? 'festival' : last.reason, text };
+  }
+  if (festival) return { reason: 'festival', text: `${festival.name} is on ${shortDate(festival.date)}: a festival stock-up?` };
+  return null;
+}
 
 const P = '/make-server-c2dd9b9d';
 const rupees = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
@@ -240,12 +283,19 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
       }
     }
 
-    // Far above what this kind of spend usually is at this place.
-    const sameCat = pool.filter((r: any) => r.category === item.category && samePlace(r));
-    if (sameCat.length >= 5 && amount >= 500) {
-      const usual = median(sameCat.map(amountOf).filter((x: number) => x > 0));
+    // Far above what this item - or, without enough of its own history, this kind of spend - usually
+    // is at this place. Big buys someone already explained are left out of "usual".
+    const ownBuys = sameItem.filter((r: any) => samePlace(r) && !r.explained).map(amountOf).filter((x: number) => x > 0);
+    const sameCat = pool.filter((r: any) => r.category === item.category && samePlace(r) && !r.explained);
+    const byItem = ownBuys.length >= 3;
+    if ((byItem || sameCat.length >= 5) && amount >= 500) {
+      const usual = median(byItem ? ownBuys : sameCat.map(amountOf).filter((x: number) => x > 0));
       if (usual > 0 && amount >= usual * 3) {
-        flags.push({ kind: 'unusual', title: 'Much bigger than usual', message: `${rupees(amount)} for ${name || catLabel(item.category)}; a ${catLabel(item.category).toLowerCase()} entry here is usually about ${rupees(usual)}.` });
+        const base = byItem
+          ? `${rupees(amount)} for ${name}; it is usually about ${rupees(usual)} here.`
+          : `${rupees(amount)} for ${name || catLabel(item.category)}; a ${catLabel(item.category).toLowerCase()} entry here is usually about ${rupees(usual)}.`;
+        const hint = await bigBuyHint(deps.kv, place, name, item.date);
+        flags.push({ kind: 'unusual', title: 'Much bigger than usual', message: hint ? `${base} ${hint.text}` : base, ...(hint ? { hint } : {}) });
       }
     }
 
@@ -421,6 +471,23 @@ async function tellPeople(deps: ExpenseReviewDeps, item: any, place: string, fla
 
 const SUGGESTION_FIELDS = ['quantity', 'unit', 'costPerUnit', 'piecesPerCarton', 'cartonCount', 'category'];
 
+/** Keep why a big buy was right: on the entry, in the item's memory, and as a festival season. */
+async function rememberBigBuy(kv: Kv, flag: Flag, reason: string, note: string | undefined, by: string, at: string) {
+  const entry = await kv.get(flag.expenseKey).catch(() => null);
+  if (!entry) return;
+  await kv.set(flag.expenseKey, { ...entry, explained: { kind: flag.kind, reason, ...(note ? { note } : {}), by, at } });
+  const name = nameOf(entry);
+  if (name) {
+    const key = explainedKey(flag.place, name);
+    const past: Explained[] = (await kv.get(key).catch(() => null)) || [];
+    const mine: Explained = { date: entry.date, amount: amountOf(entry), reason, ...(note ? { note } : {}), by };
+    await kv.set(key, [mine, ...past.filter((e) => e.date !== entry.date)].slice(0, 6));
+  }
+  if (reason === 'festival' || reason === 'shop_closed') {
+    await kv.set(seasonKey(flag.place), { reason, ...(note ? { note } : {}), by, from: entry.date, until: addDays(entry.date, SEASON_DAYS), at });
+  }
+}
+
 export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
   // Who sees and decides flags: the owner and operations managers everywhere, an incharge for
   // their own store or production house.
@@ -484,7 +551,13 @@ export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
         const before = Object.fromEntries(Object.keys(fix).map((k) => [k, entry[k] ?? null]));
         await deps.kv.set(flag.expenseKey, { ...entry, ...fix, reviewFixes: [...(entry.reviewFixes || []), { kind: flag.kind, before, after: fix, by: v.name, at: new Date().toISOString() }] });
       }
-      const next: Flag = { ...flag, status: action === 'apply' ? 'fixed' : 'dismissed', decidedBy: v.name, decidedAt: new Date().toISOString(), note: typeof body?.note === 'string' ? body.note.slice(0, 300) : undefined };
+      const note = typeof body?.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 300) : undefined;
+      // Marking a big buy correct says why (older app versions don't send it).
+      const reason = action === 'dismiss' && ASKS_WHY.includes(flag.kind) && BIG_BUY_REASONS[body?.reason] ? String(body.reason) : undefined;
+      if (reason === 'other' && !note) return c.json({ error: 'Write why it was bigger' }, 400);
+      const at = new Date().toISOString();
+      if (reason) await rememberBigBuy(deps.kv, flag, reason, note, v.name, at);
+      const next: Flag = { ...flag, status: action === 'apply' ? 'fixed' : 'dismissed', decidedBy: v.name, decidedAt: at, note, ...(reason ? { reason } : {}) };
       await deps.kv.set(`expense-flag:${id}`, next);
       return c.json({ flag: next });
     } catch (error) {

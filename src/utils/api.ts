@@ -2580,6 +2580,9 @@ export interface ExpenseFlag {
   decidedAt?: string;
   entry: (Record<string, any> & { id: string; date: string }) | null;
   canDecide?: boolean; // an expense waiting for the owner's OK is only the owner's to decide
+  /** Why a big buy was right (BigBuyReason), and the reason a later check suggests from it. */
+  reason?: string;
+  hint?: { reason: string; text: string };
 }
 
 async function tokenOr(accessToken?: string): Promise<string> {
@@ -2594,8 +2597,9 @@ export async function getExpenseFlags(accessToken?: string, status: 'open' | 'al
   return data.flags || [];
 }
 
-export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss', note?: string, accessToken?: string): Promise<void> {
-  await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note }) });
+/** reason: why a big buy was right ("Much bigger than usual": festival, shop_closed, bulk, price_up, other). */
+export async function decideExpenseFlag(id: string, action: 'apply' | 'dismiss', note?: string, accessToken?: string, reason?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/expense-flags/${encodeURIComponent(id)}/${action}`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ note, reason }) });
 }
 
 /** Delete the entry a check is about (a double entry, or one logged for the wrong place); the server closes its checks. */

@@ -189,6 +189,14 @@ let FLAGS = [
     status: 'open', createdAt: at('12:10', addDays(today, -1)), loggedBy: 'Ops Manager', canDecide: true,
     entry: { id: 'x1', date: addDays(today, -1), itemName: 'Tandoori masala', quantity: 1, unit: 'packet', totalCost: 305, category: 'spices_seasonings', storeId: 'STORE-1' },
   },
+  // A festival stock-up, for the owner (asks why when marked correct).
+  ...(PERSONA === 'owner' ? [{
+    id: 'x2:unusual', expenseId: 'x2', expenseKey: 'inventory:u:x2', source: 'inventory', kind: 'unusual', date: addDays(today, -1), place: 'production:PH-1',
+    title: 'Much bigger than usual', message: '₹1,650 for Aromatic powder; it is usually about ₹160 here. Kali Puja is on 8 Nov: a festival stock-up?',
+    hint: { reason: 'festival', text: 'Kali Puja is on 8 Nov: a festival stock-up?' },
+    status: 'open', createdAt: at('18:20', addDays(today, -1)), loggedBy: 'Ops Manager', canDecide: true,
+    entry: { id: 'x2', date: addDays(today, -1), itemName: 'Aromatic powder', quantity: 10, unit: 'pcs', totalCost: 1650, category: 'spices_seasonings', entityType: 'production_house', productionHouseId: 'PH-1' },
+  }] : []),
 ];
 
 // Each role's KPIs: the real list and weights from the team's KPI settings; the scores are made up.

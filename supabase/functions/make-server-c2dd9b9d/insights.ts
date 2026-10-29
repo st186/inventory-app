@@ -11,6 +11,7 @@
 
 import Anthropic from 'npm:@anthropic-ai/sdk';
 import { addDaysISO as eventDay, STAFF_WINDOW_AFTER_DAYS, STAFF_WINDOW_BEFORE_DAYS } from './eventRules.ts';
+import { BIG_BUY_REASONS } from './bigBuyReasons.ts';
 import {
   FORECAST_TYPES, forecastDays, learnEffects, prepareHistory, addDaysISO, weekdayOf, WEEKDAY_SHORT,
   backtest, summarizeAccuracy, tuneSettings, roundUpToBag,
@@ -496,7 +497,7 @@ const ASK_TOOLS = [
   { name: 'get_wastage', description: 'Store momo wastage per day in a date range, with reason codes.', input_schema: dateRange },
   { name: 'get_store_requests', description: 'Stock requests from the store to the production house in a date range: status and pieces sent per type.', input_schema: dateRange },
   { name: 'get_production', description: 'Momos made per type per day at the production house in a date range.', input_schema: dateRange },
-  { name: 'get_expenses', description: 'Costs by category in a date range, the way the profit figures count them (equipment and the scooter spread over 36 months, loan EMIs left out), plus cash actually spent, one-time purchases and loan repayments. No salaries.', input_schema: dateRange },
+  { name: 'get_expenses', description: 'Costs by category in a date range, the way the profit figures count them (equipment and the scooter spread over 36 months, loan EMIs left out), plus cash actually spent, one-time purchases and loan repayments. No salaries. Also the big buys the team explained (a festival stock-up, buying ahead of a shop closing, a bulk buy, a price rise) with their reasons: use them to explain spikes in spending.', input_schema: dateRange },
 ];
 
 async function runTool(deps: Deps, storeId: string | null, name: string, input: any) {
@@ -567,6 +568,14 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
         }
       }
       const foodAndPackaging = Object.entries(profitCost).filter(([k]) => FOOD_CATEGORIES.has(k)).reduce((t, [, v]) => t + v, 0);
+      // Big buys the team said were right, and why (expenseReview.ts, owner 29 Oct 2026).
+      const explainedBigBuys = [...inv, ...ovh]
+        .filter((r: any) => r?.explained && typeof r.date === 'string' && r.date >= from && r.date <= to && inScope(r))
+        .map((r: any) => ({
+          date: r.date, item: String(r.itemName || r.description || r.category || ''), amount: Math.round(Number(r.totalCost ?? r.amount) || 0),
+          place: r.entityType === 'production_house' ? 'production house' : 'store', reason: BIG_BUY_REASONS[r.explained.reason] || r.explained.reason, note: r.explained.note || undefined,
+        }))
+        .slice(0, 40);
       return {
         from, to,
         costsCountedInProfit: profitCost,
@@ -574,6 +583,7 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
         cashSpentByCategory: cashSpent,
         oneTimePurchasesInRange: oneTimePurchases,
         loanRepaymentsInRange: Math.round(loanRepayments),
+        explainedBigBuys,
         notes: [
           'costsCountedInProfit is what Analytics and the profit figures use: equipment, furniture, electricals and the scooter are spread over 36 months, the software subscription over 12 months, bulk packaging over 120 days.',
           'cashSpentByCategory is money paid out in the range. One-time purchases (equipment, the scooter) are not a cost of the month they were paid - quote their monthlyCostInProfit instead.',
