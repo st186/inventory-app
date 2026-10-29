@@ -1,5 +1,7 @@
 // Rider: finished and cancelled rides for a chosen period, with the rides, earnings and
-// cancellations it adds up to. Loads only while it is on screen (it used to wait for "Past rides"
+// cancellations it adds up to. Staff (the Riders screen, owner 30 Oct 2026: "doesnt have a past
+// ride logs"): the same for every rider they can see, each ride under its rider's name and route,
+// and the fares instead of "earned". Loads only while it is on screen (it used to wait for "Past rides"
 // to be opened), and again whenever a ride finishes.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { History } from 'lucide-react';
@@ -19,7 +21,7 @@ import { useRideWords } from './rideWords';
 import { RideRow } from './RideRow';
 import { PAST_PERIODS, istToday, pastRange, pastTotals, shiftIso, wholeRupees, type PastPeriod } from './tripUtils';
 
-export function RiderHistory({ refreshKey, onOpenTrip }: { refreshKey: number; onOpenTrip: (trip: RiderTrip) => void }) {
+export function RiderHistory({ refreshKey, onOpenTrip, staff = false }: { refreshKey: number; onOpenTrip: (trip: RiderTrip) => void; staff?: boolean }) {
   const rapi = useRiderApi();
   const w = useRideWords();
   const [period, setPeriod] = useState<PastPeriod>('today');
@@ -86,7 +88,7 @@ export function RiderHistory({ refreshKey, onOpenTrip }: { refreshKey: number; o
             <StatSplit
               items={[
                 { label: w.t('rider.past.rides'), value: totals.rides },
-                { label: w.t('rider.past.earned'), value: <Money value={wholeRupees(totals.earned)} /> },
+                { label: staff ? w.t('rider.past.fares') : w.t('rider.past.earned'), value: <Money value={wholeRupees(totals.earned)} /> },
                 { label: w.t('rider.past.cancelled'), value: totals.cancelled },
               ]}
             />
@@ -101,7 +103,10 @@ export function RiderHistory({ refreshKey, onOpenTrip }: { refreshKey: number; o
                 <RideRow
                   key={x.id}
                   trip={x}
-                  subtitle={`${w.day(x.date)} · ${w.t('rider.ride', { n: x.tripNumber })} · ${w.time(x.status === 'delivered' ? x.deliveredAt : x.cancelledAt)}`}
+                  title={staff ? x.riderName : undefined}
+                  subtitle={staff
+                    ? `${w.day(x.date)} · ${w.route(x)} · ${w.t('rider.ride', { n: x.tripNumber })} · ${w.time(x.status === 'delivered' ? x.deliveredAt : x.cancelledAt)}`
+                    : `${w.day(x.date)} · ${w.t('rider.ride', { n: x.tripNumber })} · ${w.time(x.status === 'delivered' ? x.deliveredAt : x.cancelledAt)}`}
                   amount={x.fare}
                   struck={x.status !== 'delivered'}
                   onClick={() => onOpenTrip(x)}

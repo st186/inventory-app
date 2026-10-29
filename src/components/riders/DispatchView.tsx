@@ -21,6 +21,7 @@ import { CallRiderSheet } from './CallRiderSheet';
 import { LiveTripMap } from './LiveTripMap';
 import { MapPinsRow } from './MapPinsSheet';
 import { RideRow } from './RideRow';
+import { RiderHistory } from './RiderHistory';
 import { TripDetailSheet } from './TripDetail';
 import { useRiderApi } from './riderApi';
 import { useRideWords } from './rideWords';
@@ -59,8 +60,11 @@ export function DispatchView({ state, canDispatch, stores, defaultStoreId, stock
     return () => clearInterval(interval);
   }, [canDispatch, rapi, loadPlaces]);
 
-  const detailTrip = useMemo(() => trips.find((x) => x.id === detailId) || null, [trips, detailId]);
+  // A past ride (not in today's list) is opened as it was loaded.
+  const [pastTrip, setPastTrip] = useState<RiderTrip | null>(null);
+  const detailTrip = useMemo(() => trips.find((x) => x.id === detailId) || (pastTrip?.id === detailId ? pastTrip : null), [trips, detailId, pastTrip]);
   const openDetail = (x: RiderTrip) => { setDetailId(x.id); setDetailOpen(true); };
+  const openPast = (x: RiderTrip) => { setPastTrip(x); openDetail(x); };
   const openCall = (riderId: string | null) => { setPresetRiderId(riderId); setCallOpen(true); };
   const fares = useMemo(() => faresByRider(trips), [trips]);
   const watchable = useMemo(() => active.filter((x) => canWatchLive(x, canDispatch)), [active, canDispatch]);
@@ -112,6 +116,12 @@ export function DispatchView({ state, canDispatch, stores, defaultStoreId, stock
           )}
         </ListGroup>
       )}
+
+      {/* Past rides of every rider, by period (owner, 30 Oct 2026). */}
+      <section className="flex flex-col gap-3" aria-labelledby="past-rides">
+        <h2 id="past-rides" className="text-subtitle font-semibold text-text">{w.t('rider.staff.past')}</h2>
+        <RiderHistory staff refreshKey={done.length} onOpenTrip={openPast} />
+      </section>
     </div>
   );
 
