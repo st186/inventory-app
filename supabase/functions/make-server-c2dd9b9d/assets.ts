@@ -15,11 +15,18 @@
 //
 // Photos live in the private Storage bucket `asset-photos` (created on first upload) and are
 // shown through signed links that last an hour.
+//
+// Lost equipment (owner, 30 Oct 2026): anyone at a place can report an item (or part of a set)
+// missing - when it was last seen, where it was kept, what happened - and the owner, the
+// operations managers and the place's incharge are told at once. It stays missing until someone
+// finds it or the owner / an operations manager writes it off. Every 3 months each place checks
+// its list (seen / not found / broken, a count for sets, a photo for anything over Rs 2,000):
+// `asset-check:{kind}:{id}:{YYYY-MM}`; anything not found becomes missing the same way.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import {
-  ASSETS_FROM_DATE, ASSET_CATEGORY_KEYS, ASSET_CONDITION_KEYS, assetCategoryLabel, planReconcile,
-  type Asset, type AssetLocationKind,
+  ASSETS_FROM_DATE, ASSET_CATEGORY_KEYS, ASSET_CONDITION_KEYS, assetCategoryLabel, checkNeedsPhoto, checkPeriodOf, checkable,
+  nextCheckPeriod, planReconcile, type Asset, type AssetCondition, type AssetLocationKind,
 } from './assetRules.ts';
 
 type Kv = {
@@ -35,6 +42,7 @@ type Deps = {
   // Paginated read: inventory: has 4,000+ rows and the plain prefix read stops at 1,000.
   getAllByPrefix: (prefix: string) => Promise<any[]>;
   getTodayIST: () => string;
+  notifyUser?: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<unknown>;
 };
 
 const P = '/make-server-c2dd9b9d';
@@ -255,6 +263,7 @@ export function registerAssetsRoutes(app: any, deps: Deps) {
     }
     if (body.condition !== undefined) {
       if (!ASSET_CONDITION_KEYS.includes(body.condition)) return { error: 'Pick a condition' };
+      if (body.condition === 'missing') return { error: 'Use "Report missing" for an item that is lost' };
       f.condition = body.condition;
     }
     if (body.notes !== undefined) {
@@ -353,9 +362,10 @@ export function registerAssetsRoutes(app: any, deps: Deps) {
         map.set(key, r);
       };
       const byLocation = new Map<string, any>(), byCategory = new Map<string, any>(), byLocationCategory = new Map<string, any>();
-      const totals = { items: 0, quantity: 0, totalCost: 0, needsReview: 0, needsRepair: 0, broken: 0, disposed: 0 };
+      const totals = { items: 0, quantity: 0, totalCost: 0, needsReview: 0, needsRepair: 0, broken: 0, disposed: 0, missing: 0 };
       for (const a of rows) {
         if (a.needsReview || a.expenseChanged) totals.needsReview++;
+        if (a.missing && a.condition !== 'disposed') totals.missing++;
         if (a.condition === 'disposed') { totals.disposed++; continue; }
         if (a.condition === 'needs_repair') totals.needsRepair++;
         if (a.condition === 'broken') totals.broken++;
@@ -468,6 +478,191 @@ export function registerAssetsRoutes(app: any, deps: Deps) {
       }
       return c.json({ success: true, asset: await save(next, actor) });
     } catch (err) { return fail(c, err, 'Could not save the item'); }
+  });
+
+  // ---------------- Lost equipment and the equipment check ----------------
+
+  const placeName = async (kind: string, id: string) => (await loadLocations()).find((l) => l.kind === kind && l.id === id)?.name || 'the place';
+  // The owner, the operations managers and the incharge of the item's place.
+  const tellAboutPlace = async (kind: AssetLocationKind, id: string, type: string, title: string, message: string, relatedId?: string) => {
+    if (!deps.notifyUser) return;
+    const designation = kind === 'store' ? 'store_incharge' : 'production_incharge';
+    const people = (await deps.getAllByPrefix('unified-employee:')).filter((e: any) => e?.authUserId && !['inactive', 'archived'].includes(e.status) && (
+      e.role === 'cluster_head'
+      || (e.role === 'manager' && !INCHARGE.includes(e.designation))
+      || (e.designation === designation && [e.storeId, e.productionHouseId, ...arr(e.assignedStoreIds), ...arr(e.assignedProductionHouseIds)].map(String).includes(id))
+    ));
+    for (const p of people) await deps.notifyUser(p.authUserId, type, title, message, relatedId, deps.getTodayIST()).catch(() => undefined);
+  };
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const clip = (v: any, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const missingText = (a: Asset, count: number) => (a.quantity > 1 ? `${count} of ${a.quantity} ${a.name}` : a.name);
+
+  // POST /assets/:id/missing {count?, lastSeen?, where, note, policeRef?} - anyone who works there.
+  app.post(`${P}/assets/:id/missing`, async (c: any) => {
+    const g = await actorOf(c);
+    if (g.error) return g.error;
+    const actor = g.actor!;
+    try {
+      const asset = await deps.kv.get<Asset>(`asset:${String(c.req.param('id') || '')}`);
+      if (!asset || asset.dismissed || asset.condition === 'disposed') return c.json({ error: 'That item is not in the register any more' }, 404);
+      if (!canView(actor, asset.locationKind, asset.locationId)) return c.json({ error: 'Only people at this place can report it' }, 403);
+      const body = await c.req.json().catch(() => ({}));
+      const count = Math.round(Number(body?.count ?? asset.quantity));
+      if (!(count >= 1 && count <= asset.quantity)) return c.json({ error: `Say how many are missing (1 to ${asset.quantity})` }, 400);
+      const where = clip(body?.where, 120);
+      const note = clip(body?.note, 300);
+      if (where.length < 2) return c.json({ error: 'Say where it was kept' }, 400);
+      if (note.length < 5) return c.json({ error: 'Say what happened, or when it was noticed' }, 400);
+      const lastSeen = DAY.test(String(body?.lastSeen || '')) ? String(body.lastSeen) : null;
+      const next: Asset = {
+        ...asset,
+        missing: {
+          reportedAt: new Date().toISOString(), by: actor.name, count, lastSeen, where, note, policeRef: clip(body?.policeRef, 60), source: 'report',
+          prevCondition: asset.missing?.prevCondition || (asset.condition === 'missing' ? 'good' : asset.condition),
+        },
+        condition: count >= asset.quantity ? 'missing' : asset.condition,
+      };
+      const saved = await save(next, actor);
+      const place = await placeName(asset.locationKind, asset.locationId);
+      await tellAboutPlace(asset.locationKind, asset.locationId, 'asset_missing', `Missing: ${missingText(asset, count)} (${place})`,
+        `Reported by ${actor.name}.${lastSeen ? ` Last seen ${lastSeen}.` : ''} Kept at: ${where}. ${note}${next.missing!.policeRef ? ` Police report: ${next.missing!.policeRef}.` : ''} Open Equipment and assets to mark it found or write it off.`, asset.id);
+      return c.json({ success: true, asset: saved });
+    } catch (err) { return fail(c, err, 'Could not report it missing'); }
+  });
+
+  // POST /assets/:id/found {note?} - the incharge, an operations manager or the owner.
+  app.post(`${P}/assets/:id/found`, async (c: any) => {
+    const g = await actorOf(c);
+    if (g.error) return g.error;
+    try {
+      const one = await loadOne(c, g.actor!);
+      if (one.error) return one.error;
+      const a = one.asset!;
+      if (!a.missing) return c.json({ error: 'It is not marked missing' }, 400);
+      const body = await c.req.json().catch(() => ({}));
+      const note = clip(body?.note, 200);
+      const today = deps.getTodayIST();
+      const next: Asset = {
+        ...a, condition: a.condition === 'missing' ? (a.missing.prevCondition as AssetCondition) : a.condition, missing: null, lastCheckedAt: new Date().toISOString(),
+        notes: [a.notes, `Found ${today} (${g.actor!.name})${note ? `: ${note}` : ''}`].filter(Boolean).join('\n').slice(-500),
+      };
+      return c.json({ success: true, asset: await save(next, g.actor!) });
+    } catch (err) { return fail(c, err, 'Could not mark it found'); }
+  });
+
+  // POST /assets/:id/write-off {note} - the owner or an operations manager: it is gone. The whole
+  // item leaves the list (disposed); part of a set takes the quantity down. Its cost was already
+  // booked when it was bought, so nothing new goes into the expenses.
+  app.post(`${P}/assets/:id/write-off`, async (c: any) => {
+    const g = await actorOf(c);
+    if (g.error) return g.error;
+    if (!g.actor!.canEditAll) return c.json({ error: 'Only the owner or an operations manager can write it off' }, 403);
+    try {
+      const one = await loadOne(c, g.actor!);
+      if (one.error) return one.error;
+      const a = one.asset!;
+      if (!a.missing) return c.json({ error: 'Report it missing first' }, 400);
+      const body = await c.req.json().catch(() => ({}));
+      const note = clip(body?.note, 200);
+      const now = new Date().toISOString();
+      const count = a.missing.count;
+      const whole = count >= a.quantity;
+      const next: Asset = {
+        ...a,
+        writtenOff: { at: now, by: g.actor!.name, note, count },
+        missing: null,
+        ...(whole
+          ? { condition: 'disposed' as AssetCondition, disposedAt: now }
+          : { quantity: a.quantity - count, totalCost: a.unitCost != null ? round2(a.unitCost * (a.quantity - count)) : a.totalCost }),
+        notes: [a.notes, `Written off ${deps.getTodayIST()} (${g.actor!.name}): ${whole ? 'lost' : `${count} lost`}${note ? ` - ${note}` : ''}`].filter(Boolean).join('\n').slice(-500),
+      };
+      return c.json({ success: true, asset: await save(next, g.actor!) });
+    } catch (err) { return fail(c, err, 'Could not write it off'); }
+  });
+
+  const checkKey = (kind: string, id: string, period: string) => `asset-check:${kind}:${id}:${period}`;
+  const checkItems = async (kind: string, id: string) => (await deps.getAllByPrefix('asset:'))
+    .filter((a: any) => a?.id && a.locationKind === kind && a.locationId === id && checkable(a))
+    .sort((a: Asset, b: Asset) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+
+  // GET /assets/check?locationKind=&locationId= - the place's check: open now or when next, done or
+  // not, and the items with whether each needs a photo.
+  app.get(`${P}/assets/check`, async (c: any) => {
+    const g = await actorOf(c);
+    if (g.error) return g.error;
+    const actor = g.actor!;
+    try {
+      const kind = c.req.query('locationKind');
+      const id = c.req.query('locationId');
+      if (!kind || !id || !canView(actor, kind, id)) return c.json({ error: 'Pick your store or production house' }, 400);
+      const today = deps.getTodayIST();
+      const open = checkPeriodOf(today);
+      const period = open || nextCheckPeriod(today);
+      const record = await deps.kv.get<any>(checkKey(kind, id, period));
+      const items = await withPhotoUrls(await checkItems(kind, id));
+      return c.json({
+        open: !!open, period, done: !!record, record, canCheck: canEdit(actor, kind, id),
+        items: items.map((a: any) => ({ ...a, needsPhoto: checkNeedsPhoto(a) })),
+      });
+    } catch (err) { return fail(c, err, 'Could not load the equipment check'); }
+  });
+
+  // POST /assets/check {locationKind, locationId, results: {[assetId]: {status: 'seen'|'not_found'|'broken', counted?}}}
+  // Every item answered; anything over Rs 2,000 seen needs a photo taken today (the item's photo).
+  app.post(`${P}/assets/check`, async (c: any) => {
+    const g = await actorOf(c);
+    if (g.error) return g.error;
+    const actor = g.actor!;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const kind = String(body?.locationKind || '');
+      const id = String(body?.locationId || '');
+      if (!canEdit(actor, kind, id)) return c.json({ error: 'Only the incharge of this place, an operations manager or the owner checks its equipment' }, 403);
+      const today = deps.getTodayIST();
+      const period = checkPeriodOf(today) || today.slice(0, 7);
+      const items: Asset[] = await checkItems(kind, id);
+      const results = body?.results || {};
+      const unanswered = items.filter((a) => !['seen', 'not_found', 'broken'].includes(results[a.id]?.status));
+      if (unanswered.length) return c.json({ error: `Check every item: ${unanswered.slice(0, 5).map((a) => a.name).join(', ')}${unanswered.length > 5 ? '...' : ''}` }, 400);
+      const dayAgo = Date.now() - 20 * 3600000;
+      const noPhoto = items.filter((a) => results[a.id].status === 'seen' && checkNeedsPhoto(a) && !(a.photo?.uploadedAt && Date.parse(a.photo.uploadedAt) >= dayAgo));
+      if (noPhoto.length) return c.json({ error: `Take a photo of: ${noPhoto.map((a) => a.name).join(', ')}` }, 400);
+      const now = new Date().toISOString();
+      const short: string[] = [], notFound: string[] = [], broken: string[] = [];
+      for (const a of items) {
+        const r = results[a.id];
+        const next: Asset = { ...a, lastCheckedAt: now };
+        if (r.status === 'seen') {
+          const counted = a.quantity > 1 ? Math.max(0, Math.min(a.quantity, Math.round(Number(r.counted ?? a.quantity)))) : a.quantity;
+          if (counted >= a.quantity) {
+            // Found again in the check: no longer missing.
+            if (a.missing) { next.condition = a.condition === 'missing' ? (a.missing.prevCondition as AssetCondition) : a.condition; next.missing = null; }
+          } else {
+            const count = a.quantity - counted;
+            next.missing = { reportedAt: now, by: actor.name, count, lastSeen: null, where: '', note: `Counted ${counted} of ${a.quantity} in the equipment check`, policeRef: '', source: 'check', prevCondition: a.missing?.prevCondition || (a.condition === 'missing' ? 'good' : a.condition) };
+            short.push(missingText(a, count));
+          }
+        } else if (r.status === 'not_found') {
+          next.missing = { reportedAt: now, by: actor.name, count: a.quantity, lastSeen: null, where: '', note: 'Not found in the equipment check', policeRef: '', source: 'check', prevCondition: a.missing?.prevCondition || (a.condition === 'missing' ? 'good' : a.condition) };
+          next.condition = 'missing';
+          notFound.push(missingText(a, a.quantity));
+        } else {
+          next.condition = 'broken';
+          if (a.missing) next.missing = null;
+          broken.push(a.name);
+        }
+        await save(next, actor);
+      }
+      const record = { period, at: now, by: actor.name, items: items.length, notFound, short, broken, results };
+      await deps.kv.set(checkKey(kind, id, period), record);
+      const place = await placeName(kind, id);
+      const problems = [notFound.length ? `not found: ${notFound.join(', ')}` : '', short.length ? `short: ${short.join(', ')}` : '', broken.length ? `broken: ${broken.join(', ')}` : ''].filter(Boolean);
+      await tellAboutPlace(kind as AssetLocationKind, id, problems.length ? 'asset_missing' : 'equipment_check_done',
+        problems.length ? `Equipment check at ${place}: ${notFound.length + short.length} missing` : `Equipment check done at ${place}`,
+        problems.length ? `${actor.name} checked ${items.length} items - ${problems.join('; ')}. Open Equipment and assets.` : `${actor.name} checked all ${items.length} items: everything is there.`);
+      return c.json({ success: true, record });
+    } catch (err) { return fail(c, err, 'Could not save the equipment check'); }
   });
 
   app.post(`${P}/assets/:id/dispose`, async (c: any) => {

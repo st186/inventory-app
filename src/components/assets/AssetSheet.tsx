@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Camera, Receipt, Trash2, Undo2 } from 'lucide-react';
+import { Camera, Receipt, SearchX, Trash2, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ASSET_CATEGORIES, ASSET_CONDITIONS, type AssetCategory, type AssetCondition } from '../../utils/assetRules';
 import { useT } from '../../utils/i18n';
@@ -17,8 +17,8 @@ import { ResponsiveModal } from '../ui/responsive-modal';
 import { confirm } from '../ui/confirm';
 import { assetCategoryIcon } from '../setup/setupIcons';
 import {
-  compressPhoto, deleteAsset, dismissAsset, inr, locationKey, restoreAsset, shortDate, updateAsset, uploadAssetPhoto,
-  type AssetLocation, type AssetRow,
+  compressPhoto, deleteAsset, dismissAsset, inr, locationKey, markFound, reportMissing, restoreAsset, shortDate, updateAsset, uploadAssetPhoto,
+  writeOffAsset, type AssetLocation, type AssetRow,
 } from './assetsApi';
 import { ConditionBadge } from './ConditionBadge';
 import { assetCategoryKey, conditionKey } from './assetLabels';
@@ -32,6 +32,8 @@ type Props = {
   locations: AssetLocation[];
   editableLocations: string[];
   canDelete: boolean;
+  // The owner and operations managers write off what is lost.
+  canWriteOff?: boolean;
   onClose: () => void;
   /** After the close animation (the parent drops the sheet then). */
   onClosed?: () => void;
@@ -39,7 +41,7 @@ type Props = {
   onRemoved: (id: string) => void;
 };
 
-export function AssetSheet({ open, asset, mode, locations, editableLocations, canDelete, onClose, onClosed, onSaved, onRemoved }: Props) {
+export function AssetSheet({ open, asset, mode, locations, editableLocations, canDelete, canWriteOff, onClose, onClosed, onSaved, onRemoved }: Props) {
   const { t } = useT();
   const readOnly = mode === 'view';
   const startLoc = asset.locationId ? locationKey(asset.locationKind, asset.locationId) : '';
@@ -53,6 +55,10 @@ export function AssetSheet({ open, asset, mode, locations, editableLocations, ca
   const [notes, setNotes] = useState(asset.notes || '');
   const [preview, setPreview] = useState<string | null>(asset.photoUrl);
   const [busy, setBusy] = useState<string | null>(null);
+  // Report missing (owner, 30 Oct 2026): anyone at the place.
+  const [reporting, setReporting] = useState(false);
+  const [lost, setLost] = useState({ count: String(asset.quantity || 1), lastSeen: '', where: '', note: '', policeRef: '' });
+  const canReport = !asset.dismissed && !asset.needsReview && asset.condition !== 'disposed' && !asset.missing;
 
   const dirty = !readOnly && (
     name !== asset.name || category !== asset.category || quantity !== String(asset.quantity || 1)
@@ -81,7 +87,7 @@ export function AssetSheet({ open, asset, mode, locations, editableLocations, ca
       quantity: q,
       totalCost: cost.trim() === '' ? null : Number(cost),
       purchaseDate: purchaseDate || null,
-      condition,
+      ...(condition !== asset.condition ? { condition } : {}),
       notes,
       locationKind: locationKind as AssetRow['locationKind'],
       locationId: rest.join(':'),
@@ -131,6 +137,32 @@ export function AssetSheet({ open, asset, mode, locations, editableLocations, ca
       await deleteAsset(asset.id);
       toast.success(t('assets.deleted'));
       onRemoved(asset.id);
+      onClose();
+    });
+  };
+
+  const sendMissing = () => run('missing', async () => {
+    const saved = await reportMissing(asset.id, {
+      count: asset.quantity > 1 ? Number(lost.count) : 1, lastSeen: lost.lastSeen || undefined, where: lost.where, note: lost.note, policeRef: lost.policeRef || undefined,
+    });
+    toast.success(t('assets.missing.sent'));
+    setReporting(false);
+    onSaved(saved);
+    onClose();
+  });
+  const found = () => run('found', async () => {
+    const saved = await markFound(asset.id);
+    toast.success(t('assets.missing.foundDone'));
+    onSaved(saved);
+    onClose();
+  });
+  const writeOff = async () => {
+    const ok = await confirm({ title: t('assets.missing.writeOffTitle', { name: asset.name }), body: t('assets.missing.writeOffBody'), confirmLabel: t('assets.missing.writeOff'), tone: 'danger' });
+    if (!ok) return;
+    run('writeoff', async () => {
+      const saved = await writeOffAsset(asset.id, '');
+      toast.success(t('assets.missing.writtenOff'));
+      onSaved(saved);
       onClose();
     });
   };
@@ -202,6 +234,53 @@ export function AssetSheet({ open, asset, mode, locations, editableLocations, ca
               </span>
             ) : undefined}
           </Callout>
+        )}
+
+        {asset.missing && (
+          <Callout
+            tone="danger"
+            icon={SearchX}
+            title={asset.quantity > 1 && asset.missing.count < asset.quantity ? t('assets.missing.someTitle', { n: asset.missing.count, of: asset.quantity }) : t('assets.missing.title')}
+            action={(
+              <div className="flex flex-wrap gap-2">
+                {!readOnly && <Button variant="secondary" size="sm" disabled={!!busy} loading={busy === 'found'} onClick={found}>{t('assets.missing.found')}</Button>}
+                {canWriteOff && <Button variant="danger-ghost" size="sm" disabled={!!busy} loading={busy === 'writeoff'} onClick={writeOff}>{t('assets.missing.writeOff')}</Button>}
+              </div>
+            )}
+          >
+            {[t('assets.missing.by', { name: asset.missing.by, date: shortDate(asset.missing.reportedAt) }), asset.missing.lastSeen ? t('assets.missing.lastSeen', { date: shortDate(asset.missing.lastSeen) }) : '', asset.missing.where ? t('assets.missing.keptAt', { where: asset.missing.where }) : '', asset.missing.note, asset.missing.policeRef ? t('assets.missing.police', { ref: asset.missing.policeRef }) : ''].filter(Boolean).join(' · ')}
+          </Callout>
+        )}
+
+        {canReport && !reporting && (
+          <Button variant="secondary" leadingIcon={<SearchX />} className="self-start" onClick={() => setReporting(true)}>{t('assets.missing.report')}</Button>
+        )}
+        {reporting && (
+          <section className="flex flex-col gap-3 rounded-lg border border-danger/40 bg-danger-soft/40 p-3" aria-label={t('assets.missing.report')}>
+            <p className="text-body-sm font-semibold text-text">{t('assets.missing.report')}</p>
+            {asset.quantity > 1 && (
+              <Field label={t('assets.missing.howMany', { of: asset.quantity })}>
+                <Input type="number" inputMode="numeric" min={1} max={asset.quantity} className="num w-24" value={lost.count} onChange={(e) => setLost({ ...lost, count: e.target.value })} />
+              </Field>
+            )}
+            <Field label={t('assets.missing.lastSeenQ')} optional>
+              <Input type="date" value={lost.lastSeen} onChange={(e) => setLost({ ...lost, lastSeen: e.target.value })} />
+            </Field>
+            <Field label={t('assets.missing.whereQ')}>
+              <Input value={lost.where} maxLength={120} onChange={(e) => setLost({ ...lost, where: e.target.value })} placeholder={t('assets.missing.wherePh')} />
+            </Field>
+            <Field label={t('assets.missing.whatQ')}>
+              <Textarea value={lost.note} maxLength={300} rows={2} onChange={(e) => setLost({ ...lost, note: e.target.value })} placeholder={t('assets.missing.whatPh')} />
+            </Field>
+            <Field label={t('assets.missing.policeQ')} optional>
+              <Input value={lost.policeRef} maxLength={60} onChange={(e) => setLost({ ...lost, policeRef: e.target.value })} />
+            </Field>
+            <p className="text-caption text-text-3">{t('assets.missing.whoSees')}</p>
+            <div className="flex gap-2">
+              <Button variant="secondary" disabled={!!busy} onClick={() => setReporting(false)}>{t('common.cancel')}</Button>
+              <Button variant="danger" className="flex-1" loading={busy === 'missing'} disabled={!!busy || lost.where.trim().length < 2 || lost.note.trim().length < 5} onClick={sendMissing}>{t('assets.missing.send')}</Button>
+            </div>
+          </section>
         )}
 
         {asset.dismissed && (
@@ -280,14 +359,14 @@ export function AssetSheet({ open, asset, mode, locations, editableLocations, ca
 
         <div className="flex flex-col gap-1.5">
           <span className="text-body-sm font-medium text-text">{t('assets.condition')}</span>
-          {readOnly ? (
+          {readOnly || condition === 'missing' ? (
             <ConditionBadge condition={condition} />
           ) : (
             <ChoiceChips
               aria-label={t('assets.condition')}
               value={condition}
               onValueChange={(v) => setCondition(v)}
-              options={ASSET_CONDITIONS.map((c) => ({ value: c.key, label: t(conditionKey(c.key)) }))}
+              options={ASSET_CONDITIONS.filter((c) => c.key !== 'missing').map((c) => ({ value: c.key, label: t(conditionKey(c.key)) }))}
             />
           )}
         </div>

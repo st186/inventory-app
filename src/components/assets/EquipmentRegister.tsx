@@ -19,12 +19,13 @@ import { ResponsiveModal } from '../ui/responsive-modal';
 import { LoadingList } from '../setup/SetupPage';
 import { assetCategoryIcon } from '../setup/setupIcons';
 import { AssetSheet } from './AssetSheet';
+import { EquipmentCheckSheet } from './EquipmentCheckSheet';
 import { AddAssetsSheet } from './AddAssetsSheet';
 import { ConditionBadge } from './ConditionBadge';
 import { assetCategoryKey, conditionKey } from './assetLabels';
 import {
-  dismissAsset, importPastPurchases, inr, listAssets, locationKey, shortDate, updateAsset,
-  type AssetList, type AssetRow,
+  dismissAsset, getEquipmentCheck, importPastPurchases, inr, listAssets, locationKey, shortDate, updateAsset,
+  type AssetList, type AssetRow, type EquipmentCheck,
 } from './assetsApi';
 
 // Equipment & assets register (owner, 27 Oct 2026): everything each store and production house
@@ -33,7 +34,7 @@ import {
 // and the incharges - the server's permissions decide which actions show.
 
 type ConditionFilter = 'in_use' | AssetCondition;
-const CONDITION_FILTERS: ConditionFilter[] = ['in_use', 'needs_repair', 'broken', 'disposed'];
+const CONDITION_FILTERS: ConditionFilter[] = ['in_use', 'missing', 'needs_repair', 'broken', 'disposed'];
 const keyOf = (a: AssetRow) => (a.locationId ? locationKey(a.locationKind, a.locationId) : 'none');
 
 function AssetThumb({ asset }: { asset: AssetRow }) {
@@ -58,6 +59,9 @@ export function EquipmentRegister() {
   const [showRemoved, setShowRemoved] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [quickBusy, setQuickBusy] = useState<string | null>(null);
+  // The 3-monthly equipment check of the place in view (owner, 30 Oct 2026).
+  const [check, setCheck] = useState<EquipmentCheck | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,12 +98,14 @@ export function EquipmentRegister() {
       .filter((a) => (condition === 'in_use' ? a.condition !== 'disposed' : a.condition === condition))
       .filter((a) => !q || a.name.toLowerCase().includes(q) || (a.notes || '').toLowerCase().includes(q));
     const inUse = live.filter((a) => a.condition !== 'disposed');
+    const missingNow = live.filter((a) => a.missing && a.condition !== 'disposed');
     const counts = new Map<string, number>();
     for (const a of all) if (!a.dismissed && a.condition !== 'disposed') counts.set(keyOf(a), (counts.get(keyOf(a)) || 0) + 1);
     return {
       review,
       listed,
       removed: here.filter((a) => a.dismissed),
+      missing: missingNow,
       groups: ASSET_CATEGORIES.map((c) => ({ ...c, items: listed.filter((a) => a.category === c.key) })).filter((g) => g.items.length),
       totals: {
         items: inUse.length,
@@ -145,6 +151,15 @@ export function EquipmentRegister() {
       await load();
     } catch (e: any) { toast.error(e?.message || t('assets.import.failed')); } finally { setImporting(false); }
   };
+
+  // One place in view: its equipment check (open now, done, or when next).
+  const checkPlace = (locations.length === 1 ? locations[0] : locations.find((l) => locationKey(l.kind, l.id) === loc)) || null;
+  useEffect(() => {
+    setCheck(null);
+    if (!checkPlace) return;
+    getEquipmentCheck(checkPlace.kind, checkPlace.id).then(setCheck).catch(() => undefined);
+  }, [checkPlace?.kind, checkPlace?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const periodName = (p: string) => new Date(`${p}-01T00:00:00Z`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
   if (loading && !data) return <LoadingList withTile rows={6} />;
   if (loadError && !data) return <ErrorState body={loadError} onRetry={load} retrying={loading} />;
@@ -206,6 +221,29 @@ export function EquipmentRegister() {
           ]}
         />
       </StatTile>
+
+      {/* Missing first, then the equipment check */}
+      {view.missing.length > 0 && (
+        <Callout tone="danger" title={t('assets.missing.listTitle', { n: view.missing.length })}
+          action={<Button variant="secondary" size="sm" onClick={() => setCondition('missing')}>{t('assets.missing.show')}</Button>}>
+          {view.missing.map((a) => a.name).slice(0, 6).join(', ')}
+        </Callout>
+      )}
+      {checkPlace && check && (
+        <Callout
+          tone={check.done ? 'success' : check.open ? 'warning' : 'neutral'}
+          title={check.done ? t('assets.check.doneTitle', { when: periodName(check.period) }) : check.open ? t('assets.check.dueTitle') : t('assets.check.nextTitle', { when: periodName(check.period) })}
+          action={check.canCheck && !check.done && (check.open || perms?.canEditAll) ? <Button size="sm" onClick={() => setChecking(true)}>{t('assets.check.start')}</Button> : undefined}
+        >
+          {check.done && check.record
+            ? t('assets.check.doneBody', { name: check.record.by, n: check.record.items, missing: check.record.notFound.length + check.record.short.length })
+            : check.open ? t('assets.check.dueBody') : undefined}
+        </Callout>
+      )}
+      {checkPlace && (
+        <EquipmentCheckSheet open={checking} locationKind={checkPlace.kind} locationId={checkPlace.id} placeName={checkPlace.name}
+          onClose={() => setChecking(false)} onDone={() => { load(); getEquipmentCheck(checkPlace.kind, checkPlace.id).then(setCheck).catch(() => undefined); }} />
+      )}
 
       {/* Needs review first */}
       {view.review.length > 0 && (
@@ -314,7 +352,7 @@ export function EquipmentRegister() {
                     leading={<AssetThumb asset={a} />}
                     title={<span className={a.condition === 'disposed' ? 'text-text-3 line-through' : undefined}>{a.name}</span>}
                     subtitle={<span className="num">{parts.join(' · ')}</span>}
-                    trailing={<ConditionBadge condition={a.condition} />}
+                    trailing={a.missing && a.condition !== 'missing' ? <StatusChip tone="danger">{t('assets.missing.nMissing', { n: a.missing.count })}</StatusChip> : <ConditionBadge condition={a.condition} />}
                     onClick={() => openAsset(a)}
                   />
                 );
@@ -362,6 +400,7 @@ export function EquipmentRegister() {
           mode={sheet.mode}
           locations={locations}
           editableLocations={editable}
+          canWriteOff={!!perms?.canEditAll}
           canDelete={perms.canDelete}
           onClose={() => setSheetOpen(false)}
           onClosed={() => setSheet(null)}

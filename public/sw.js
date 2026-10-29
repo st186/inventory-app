@@ -170,6 +170,9 @@ const NOTIFICATION_VIEW_MAP = {
   performance_due: { view: 'performance' },
   cctv_ppe: { view: 'cameras' },
   cctv_intruder: { view: 'cameras' },
+  asset_missing: { view: 'assets' },
+  equipment_check_due: { view: 'assets' },
+  equipment_check_done: { view: 'assets' },
   shift_checkin: { view: 'my-kpis' }, // phone saw an arrival / exit - the check-in card is on top there
   // Server reminders that had no screen to open (WP0b): stock requests waiting for the production
   // house, deliveries to confirm, the end-of-day data alert, production cash gaps, salary and backup.

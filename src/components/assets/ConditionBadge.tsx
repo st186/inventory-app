@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Trash2, Wrench } from 'lucide-react';
+import { AlertTriangle, Check, SearchX, Trash2, Wrench } from 'lucide-react';
 import { ASSET_CONDITIONS, type AssetCondition } from '../../utils/assetRules';
 import { StatusChip, type StatusTone } from '../ui/status-chip';
 import { useT } from '../../utils/i18n';
@@ -9,9 +9,10 @@ export const CONDITION_TONE: Record<AssetCondition, StatusTone> = {
   good: 'success',
   needs_repair: 'warning',
   broken: 'danger',
+  missing: 'danger',
   disposed: 'neutral',
 };
-const CONDITION_ICON = { good: Check, needs_repair: Wrench, broken: AlertTriangle, disposed: Trash2 } as const;
+const CONDITION_ICON = { good: Check, needs_repair: Wrench, broken: AlertTriangle, missing: SearchX, disposed: Trash2 } as const;
 
 export function ConditionBadge({ condition }: { condition: AssetCondition; /** Kept for callers; the label is in the app language now. */ bn?: boolean }) {
   const { t } = useT();

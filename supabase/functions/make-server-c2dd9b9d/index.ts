@@ -20,6 +20,7 @@ import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 import { registerAssetsRoutes } from './assets.ts';
+import { CHECK_MONTHS } from './assetRules.ts';
 import { registerWorkplaceRoutes, markCheckOk } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
@@ -15262,8 +15263,27 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
       await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
       results.push({ store: store.name, to: to.map((u: any) => u.name) });
     }
-    console.log(`Stock count reminders (${slot}, month ending ${last}):`, JSON.stringify(results));
-    return c.json({ success: true, slot, monthEnd: last, reminded: results });
+    // Every 3 months the equipment check goes with the momo count (owner, 30 Oct 2026): each store
+    // and production house incharge, same five reminders, until their place's check is saved.
+    const equipment: any[] = [];
+    if (CHECK_MONTHS.includes(Number(last.slice(5, 7)))) {
+      const houses = (await getAllByPrefixWithRetry('production_house_')).filter((h: any) => h?.id && h.status !== 'inactive');
+      const places = [...stores.map((st: any) => ({ kind: 'store', id: String(st.id), name: st.name, designation: 'store_incharge' })), ...houses.map((h: any) => ({ kind: 'production_house', id: String(h.id), name: h.name || 'Production house', designation: 'production_incharge' }))];
+      for (const pl of places) {
+        if (await kv.get(`asset-check:${pl.kind}:${pl.id}:${last.slice(0, 7)}`)) continue;
+        const onceKey = `equipment-check-reminder:${pl.kind}:${pl.id}:${last.slice(0, 7)}:${slot}`;
+        if (await kv.get(onceKey)) continue;
+        const to = staff.filter((u: any) => u.designation === pl.designation && [u.storeId, u.productionHouseId, ...(u.assignedStoreIds || []), ...(u.assignedProductionHouseIds || [])].map(String).includes(pl.id));
+        if (dry) { equipment.push({ place: pl.name, to: to.map((u: any) => u.name), dry: true }); continue; }
+        const title = def.day === 'eve' ? `Equipment check due (${pl.name})` : `Check the equipment today: ${pl.name}`;
+        const message = `Every 3 months: open More > Equipment and assets > Check the equipment. Tick each item seen, not found or broken, count the sets, and photograph anything over Rs 2,000. Reminder ${def.n} of 5.`;
+        for (const u of to) await notifyUser(u.authUserId, 'equipment_check_due', title, message, undefined, last).catch(() => undefined);
+        await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+        equipment.push({ place: pl.name, to: to.map((u: any) => u.name) });
+      }
+    }
+    console.log(`Stock count reminders (${slot}, month ending ${last}):`, JSON.stringify(results), 'equipment:', JSON.stringify(equipment));
+    return c.json({ success: true, slot, monthEnd: last, reminded: results, equipment });
   } catch (error: any) {
     console.error('Error sending stock count reminders:', error);
     return c.json({ error: error.message }, 500);
@@ -18027,7 +18047,7 @@ registerBackupRoutes(app, { supabase, kv: kvWithRetry, verifyUser, appVersion: L
 
 // Festival calendar, forecast and the Claude-written insights (insights.ts).
 registerProfileRoutes(app, { kv: kvWithRetry, verifyUser });
-registerAssetsRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, getTodayIST });
+registerAssetsRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, getTodayIST, notifyUser: (u, type, title, message, relatedId, relatedDate) => notifyUser(u, type, title, message, relatedId, relatedDate) });
 registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyUser, getAllClusterHeads, storage: supabase.storage });
 // Recipe capture sheets, standards and cost per piece (recipes.ts).
 registerRecipeRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, getAllByPrefix: getAllByPrefixWithRetry, storage: supabase.storage });

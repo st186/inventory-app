@@ -11,6 +11,7 @@
 //   site-audit:{id}   one audit: place, auditor, window, payout, checklist, results, report, payment
 // Photos: private bucket audit-photos at {auditId}/{random}.{ext}, shown through signed links.
 
+import { pickSpotCheck } from './assetRules.ts';
 import { askClaudeWithImages } from './insights.ts';
 import { inBackground } from './background.ts';
 
@@ -249,9 +250,15 @@ export function registerSiteAuditRoutes(app: any, deps: SiteAuditDeps) {
         auditorId = String(e.employeeId); auditorName = String(e.name || e.employeeId); auditorAuthId = e.authUserId || null;
       }
       const extra = (Array.isArray(body?.extraItems) ? body.extraItems : []).map((t: any) => str(t, 160)).filter(Boolean).slice(0, 15);
-      const items = [...defaultItems(placeKind), ...extra.map((text: string, i: number) => ({ id: `x${i + 1}`, section: 'Also check', text }))];
+      const auditId = `${Date.now().toString(36)}${rid().slice(0, 6)}`;
+      // 5 of the place's own equipment to find and photograph (owner, 30 Oct 2026), the same
+      // pick for this audit every time (assetRules.ts pickSpotCheck).
+      const assetKind = placeKind === 'production' ? 'production_house' : 'store';
+      const spot = pickSpotCheck(((await kv.getByPrefix('asset:')) || []).filter((r: any) => r?.id && r.locationKind === assetKind && r.locationId === placeId), auditId)
+        .map((r: any) => ({ id: `eq-${r.id}`, section: 'Equipment spot check', text: `Find and photograph: ${r.name}${r.quantity > 1 ? ` (count them: ${r.quantity} on the list)` : ''}` }));
+      const items = [...defaultItems(placeKind), ...spot, ...extra.map((text: string, i: number) => ({ id: `x${i + 1}`, section: 'Also check', text }))];
       const x: SiteAudit = {
-        id: `${Date.now().toString(36)}${rid().slice(0, 6)}`, placeKind, placeId, placeName: String(place.name || placeId),
+        id: auditId, placeKind, placeId, placeName: String(place.name || placeId),
         auditorId, auditorName, auditorAuthId, byOwner, from, to, payout: byOwner ? 0 : payout, notes: str(body?.notes, 600),
         items, results: {}, observations: [], status: 'assigned', createdBy: a.name, createdAt: new Date().toISOString(),
       };
