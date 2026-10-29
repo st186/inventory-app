@@ -101,9 +101,10 @@ const CAUSE_TEXT: Record<string, string> = {
   no_plan_check: "didn't check today's plan", no_leftover_check: "didn't check what was left from yesterday",
   told: 'told to make extra', batch_size: 'the recipe batch is a fixed size',
 };
-export const LEFTOVER_PLANS = ['use_first', 'discard', 'freezer'] as const;
+// 'fridge': thawed in the fridge overnight, ready first thing (frozen stuffing takes 4-5 hours).
+export const LEFTOVER_PLANS = ['fridge', 'use_first', 'discard', 'freezer'] as const;
 const PLAN_TEXT: Record<string, string> = {
-  use_first: 'used first tomorrow (less fresh stuffing made)', discard: 'thrown away (not fit to use)', freezer: 'kept in the freezer',
+  fridge: 'in the fridge to thaw for tomorrow', use_first: 'used first tomorrow (less fresh stuffing made)', discard: 'thrown away (not fit to use)', freezer: 'kept in the freezer',
 };
 const KIND_TEXT: Record<string, string> = {
   power_cut: 'Power cut', late_start: 'Late start', long_break: 'Break went too long', machine: 'Machine broke down',

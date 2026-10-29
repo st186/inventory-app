@@ -72,4 +72,23 @@ test('no momos of a type entered: all of its stuffing should still be there', ()
   assert.equal(gapMatters(d), false);
 });
 
+test('frozen leftover: fresh for the first 4.5 hours, the thawed stock after; the rest rolls over', () => {
+  // 29 Oct with the 8.88 kg frozen: 45% of the day's folding happens before it thaws.
+  const d = itemDay(item('stuffing:chicken'), { opening: 8.88, prepared: 0, closingActual: null }, { chicken: 750 }, {}, perKg, { frozen: true });
+  assert.equal(d.frozen, true);
+  assert.equal(d.freshEarly, 3.67); // 8.15 kg x 0.45
+  assert.equal(d.makeKg, 4);
+  assert.equal(d.rollsOver, 4.4); // 8.88 - (8.15 - 3.67): half a day's worth comes back tonight
+  // Thawed in the fridge overnight: usable at once, nothing to make.
+  const fridge = itemDay(item('stuffing:chicken'), { opening: 8.88, prepared: 0, closingActual: null }, { chicken: 750 }, {}, perKg, { frozen: false });
+  assert.equal(fridge.makeKg, 0);
+  assert.equal(fridge.rollsOver, null);
+  // A small frozen leftover: the plan needs more than it anyway.
+  const small = itemDay(item('stuffing:chicken'), { opening: 1, prepared: 7.5, closingActual: null }, { chicken: 750 }, {}, perKg, { frozen: true });
+  assert.equal(small.makeKg, 7.5); // 8.15 - 1
+  assert.equal(small.stillToMake, 0);
+  assert.equal(small.overMade, false);
+  assert.equal(small.rollsOver, 0);
+});
+
 console.log(`kitchenDay: ${passed} tests passed`);

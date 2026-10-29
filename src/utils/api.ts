@@ -730,7 +730,8 @@ export interface ProductionLedgerItem {
 
 // The guided production day (owner, 29 Oct 2026): the morning weigh-in, and when each item was
 // last weighed (a night count or a morning weigh-in).
-export interface MorningWeighIn { productionHouseId: string; date: string; counts: Record<string, number>; at: string; by: string; byName: string }
+// thaw: which stuffing was frozen when weighed (it can be used ~4.5 h after it comes out).
+export interface MorningWeighIn { productionHouseId: string; date: string; counts: Record<string, number>; thaw?: Record<string, { frozen: boolean }>; at: string; by: string; byName: string }
 export type LastCounted = Record<string, { date: string; kg: number; when: 'night' | 'morning' }>;
 
 export async function getProductionLedger(accessToken: string, productionHouseId: string, date: string): Promise<{ entry: ProductionLedgerEntry | null; live: ProductionLedgerLive | null; items: ProductionLedgerItem[]; hasAnyPriorRecord: boolean; morning: MorningWeighIn | null; lastCounted: LastCounted }> {
@@ -738,9 +739,9 @@ export async function getProductionLedger(accessToken: string, productionHouseId
   return { entry: data.entry || null, live: data.live || null, items: data.items || [], hasAnyPriorRecord: !!data.hasAnyPriorRecord, morning: data.morning || null, lastCounted: data.lastCounted || {} };
 }
 
-export async function saveMorningWeighIn(accessToken: string, productionHouseId: string, date: string, counts: Record<string, number>): Promise<MorningWeighIn> {
+export async function saveMorningWeighIn(accessToken: string, productionHouseId: string, date: string, counts: Record<string, number>, thaw: Record<string, { frozen: boolean }> = {}): Promise<MorningWeighIn> {
   const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/morning`, accessToken, {
-    method: 'PUT', body: JSON.stringify({ counts }),
+    method: 'PUT', body: JSON.stringify({ counts, thaw }),
   });
   return data.morning;
 }
@@ -825,7 +826,7 @@ export async function closeProductionLedgerDay(accessToken: string, productionHo
 // needs to ask it: the house's staff with today's check-in and lateness, and its machines.
 export type LeftoverKind = 'over_prepared' | 'old_not_used' | 'slow_folding' | 'dough_problem' | 'power_cut' | 'late_start' | 'long_break' | 'machine' | 'low_demand' | 'planned' | 'short_staff' | 'other';
 export type OverPreparedCause = 'no_plan_check' | 'no_leftover_check' | 'told' | 'batch_size';
-export type LeftoverPlan = 'use_first' | 'discard' | 'freezer';
+export type LeftoverPlan = 'fridge' | 'use_first' | 'discard' | 'freezer';
 export interface LeftoverReason {
   kind: LeftoverKind;
   periods?: { from: string; to: string }[];

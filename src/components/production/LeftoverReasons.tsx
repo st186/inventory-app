@@ -81,6 +81,7 @@ const CAUSES: { cause: OverPreparedCause; label: I18nKey }[] = [
   { cause: 'batch_size', label: 'stock.prod.why.causeBatch' },
 ];
 const PLANS: { plan: LeftoverPlan; label: I18nKey }[] = [
+  { plan: 'fridge', label: 'stock.prod.why.planFridge' },
   { plan: 'use_first', label: 'stock.prod.why.planUseFirst' },
   { plan: 'discard', label: 'stock.prod.why.planDiscard' },
   { plan: 'freezer', label: 'stock.prod.why.planFreezer' },

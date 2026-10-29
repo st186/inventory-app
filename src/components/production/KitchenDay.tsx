@@ -22,7 +22,7 @@ import { toast } from '../ui/sonner';
 import { momoName } from '../stock/stockShared';
 import { MOMO_TYPES } from '../../constants/momoTypes';
 import { looksLikeGrams } from './ledgerKg';
-import { coachFacts, countState, gapMatters, itemDay, itemsForDay, type Item, type ItemDay } from './kitchenDayMath';
+import { THAW_HOURS, coachFacts, countState, gapMatters, itemDay, itemsForDay, type Item, type ItemDay } from './kitchenDayMath';
 
 /** The guided day applies from this date (earlier days keep the old layout's data as it is). */
 export const KITCHEN_DAY_FROM = '2026-10-30';
@@ -58,7 +58,8 @@ export function useItemLabel() {
 }
 
 function MorningWeighInForm({ items, lastCounted, date, morning, onSave }: {
-  items: Item[]; lastCounted: LastCounted; date: string; morning: MorningWeighIn | null; onSave: (counts: Record<string, number>) => Promise<void>;
+  items: Item[]; lastCounted: LastCounted; date: string; morning: MorningWeighIn | null;
+  onSave: (counts: Record<string, number>, thaw: Record<string, { frozen: boolean }>) => Promise<void>;
 }) {
   const { t } = useT();
   const label = useItemLabel();
@@ -68,6 +69,8 @@ function MorningWeighInForm({ items, lastCounted, date, morning, onSave }: {
     const s = countState(it, lastCounted, date);
     return [it.id, s.state === 'last_night' ? String(s.kg) : ''];
   })));
+  // Stuffing there in the morning: frozen (default) or thawed in the fridge overnight.
+  const [frozen, setFrozen] = useState<Record<string, boolean>>(() => Object.fromEntries(items.map((it) => [it.id, morning?.thaw?.[it.id]?.frozen ?? true])));
   const [saving, setSaving] = useState(false);
   const grams = Object.values(values).some(looksLikeGrams);
   const missing = items.filter((it) => (values[it.id] ?? '').trim() === '');
@@ -77,7 +80,8 @@ function MorningWeighInForm({ items, lastCounted, date, morning, onSave }: {
     if (missing.length) { toast.error(t('kd.errAll', { items: missing.map(label).join(', ') })); return; }
     setSaving(true);
     try {
-      await onSave(Object.fromEntries(items.map((it) => [it.id, parseFloat(values[it.id]) || 0])));
+      const counts = Object.fromEntries(items.map((it) => [it.id, parseFloat(values[it.id]) || 0]));
+      await onSave(counts, Object.fromEntries(items.filter((it) => it.type && counts[it.id] > 0).map((it) => [it.id, { frozen: frozen[it.id] !== false }])));
       toast.success(t('kd.weighedSaved'));
     } catch (e: any) {
       toast.error(e?.message || t('stock.prod.actionFailed'));
@@ -96,10 +100,21 @@ function MorningWeighInForm({ items, lastCounted, date, morning, onSave }: {
             : s.state === 'stale' ? t('kd.lastWeighed', { date: new Date(`${s.date}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' }), kg: kg(s.kg || 0) })
               : t('kd.neverWeighed');
           return (
-            <div key={it.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="flex min-w-0 flex-col">
+            <div key={it.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="flex min-w-0 flex-col gap-1">
                 <span className="text-body-md font-medium text-text">{label(it)}</span>
                 <span className={cn('text-caption', s.state === 'last_night' ? 'text-text-3' : 'text-warning')}>{hint}</span>
+                {it.type && (parseFloat(values[it.id] || '') || 0) > 0 && (
+                  <span className="flex flex-wrap gap-1.5" role="group" aria-label={t('kd.frozenQ')}>
+                    {[true, false].map((f) => (
+                      <button key={String(f)} type="button" aria-pressed={(frozen[it.id] !== false) === f} onClick={() => setFrozen({ ...frozen, [it.id]: f })}
+                        className={cn('hit-44 inline-flex min-h-8 items-center rounded-full border px-2.5 text-caption font-medium',
+                          (frozen[it.id] !== false) === f ? 'border-primary bg-primary-soft text-primary' : 'border-border-strong bg-surface text-text-2')}>
+                        {f ? t('kd.frozen', { h: THAW_HOURS }) : t('kd.thawed')}
+                      </button>
+                    ))}
+                  </span>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setValues({ ...values, [it.id]: '0' })}>{t('kd.none')}</Button>
@@ -133,16 +148,19 @@ function Bunny({ lines, ai }: { lines: string[]; ai: string | null }) {
   );
 }
 
-function DayRow({ d, closed }: { d: ItemDay; closed: boolean }) {
+function DayRow({ d, closed, readyAt }: { d: ItemDay; closed: boolean; readyAt: string | null }) {
   const { t } = useT();
   const label = useItemLabel();
-  const note = closed
+  const thawNote = !closed && d.frozen && d.freshEarly !== null
+    ? [t('kd.frozenPlan', { time: readyAt || '', kg: kg(Math.max(0, d.makeKg || 0)) }), d.rollsOver && d.rollsOver > 0.5 ? t('kd.rollsOver', { kg: kg(d.rollsOver) }) : ''].filter(Boolean).join(' ')
+    : null;
+  const note = thawNote || (closed
     ? (gapMatters(d) ? (d.gap! > 0 ? t('kd.moreLeft', { kg: kg(d.gap!) }) : t('kd.lessLeft', { kg: kg(-d.gap!) })) : d.overMade ? t('kd.overMade') : null)
     : d.overMade ? t('kd.overMade')
       : d.makeKg === null || !d.planned ? null
         : d.made > 0 ? (d.stillToMake! > 0 ? t('kd.makeMore', { kg: kg(d.stillToMake!) }) : t('kd.enoughMade'))
           : d.makeKg > 0 ? t('kd.makeAbout', { kg: kg(d.makeKg) })
-            : t('kd.enough', { n: (d.covers || 0).toLocaleString('en-IN') });
+            : t('kd.enough', { n: (d.covers || 0).toLocaleString('en-IN') }));
   const warn = (closed && gapMatters(d)) || d.overMade;
   const cell = (head: string, v: number | null, strong = false) => (
     <div className="flex flex-col">
@@ -171,7 +189,9 @@ export function KitchenDay({ date, houseId, accessToken, pools, morning, lastCou
   const { t, lang } = useT();
   const label = useItemLabel();
   const items = useMemo(() => itemsForDay(pools, plan, lastCounted), [pools, plan, lastCounted]);
-  const days = useMemo(() => items.map((it) => itemDay(it, pools[it.id], plan, pieces, perKg)), [items, pools, plan, pieces, perKg]);
+  const days = useMemo(() => items.map((it) => itemDay(it, pools[it.id], plan, pieces, perKg, { frozen: !!morning?.thaw?.[it.id]?.frozen })), [items, pools, plan, pieces, perKg, morning]);
+  // When the frozen stock is ready: the weigh-in time + the thaw.
+  const readyAt = morning ? (() => { const [h, m] = morning.at.slice(11, 16).split(':').map(Number); const mins = h * 60 + m + THAW_HOURS * 60; const hh = Math.floor(mins / 60) % 24; return `${hh % 12 || 12}:${String(Math.round(mins % 60)).padStart(2, '0')} ${hh >= 12 ? 'pm' : 'am'}`; })() : null;
   const stale = items.filter((it) => countState(it, lastCounted, date).state !== 'last_night' && !(morning && typeof morning.counts[it.id] === 'number'));
   const weighed = !!morning || closed;
   const [weighAgain, setWeighAgain] = useState(false);
@@ -195,6 +215,7 @@ export function KitchenDay({ date, houseId, accessToken, pools, morning, lastCou
     : days.flatMap((d) => {
       if (closed) return gapMatters(d) ? [`${label(d.item)}: ${d.gap! > 0 ? t('kd.moreLeft', { kg: kg(d.gap!) }) : t('kd.lessLeft', { kg: kg(-d.gap!) })}`] : [];
       if (d.makeKg === null || !d.planned) return [];
+      if (d.frozen && !d.made) return [`${label(d.item)}: ${t('kd.frozenPlan', { time: readyAt || '', kg: kg(d.makeKg) })}${d.rollsOver && d.rollsOver > 0.5 ? ` ${t('kd.rollsOver', { kg: kg(d.rollsOver) })}` : ''}`];
       if (d.overMade) return [`${label(d.item)}: ${t('kd.overMade')}`];
       if (d.made > 0) return d.stillToMake! > 0 ? [`${label(d.item)}: ${t('kd.makeMore', { kg: kg(d.stillToMake!) })}`] : [];
       return [d.makeKg > 0 ? `${label(d.item)}: ${t('kd.makeAbout', { kg: kg(d.makeKg) })}` : `${label(d.item)}: ${t('kd.enough', { n: (d.covers || 0).toLocaleString('en-IN') })}`];
@@ -226,11 +247,11 @@ export function KitchenDay({ date, houseId, accessToken, pools, morning, lastCou
 
       {canEdit && !closed && (!weighed || weighAgain) ? (
         <MorningWeighInForm items={items} lastCounted={lastCounted} date={date} morning={morning}
-          onSave={async (counts) => { await api.saveMorningWeighIn(accessToken, houseId, date, counts); setWeighAgain(false); await onWeighed(); }} />
+          onSave={async (counts, thaw) => { await api.saveMorningWeighIn(accessToken, houseId, date, counts, thaw); setWeighAgain(false); await onWeighed(); }} />
       ) : (
         <>
           <div className="overflow-hidden rounded-lg border border-border [&>*+*]:border-t [&>*+*]:border-border">
-            {days.map((d) => <DayRow key={d.item.id} d={d} closed={closed} />)}
+            {days.map((d) => <DayRow key={d.item.id} d={d} closed={closed} readyAt={readyAt} />)}
           </div>
           {canEdit && !closed && <Button variant="link" size="sm" className="self-start" onClick={() => setWeighAgain(true)}>{t('kd.weighAgain')}</Button>}
         </>

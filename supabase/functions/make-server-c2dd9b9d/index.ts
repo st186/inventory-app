@@ -6271,8 +6271,13 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/morning', async 
     if (!Object.keys(counts).length) return c.json({ error: 'Weigh at least one item' }, 400);
     const gramsError = ledgerGramsError(Object.values(counts));
     if (gramsError) return c.json({ error: gramsError }, 400);
+    // Which stuffing was frozen when weighed (owner, 29 Oct 2026: it takes 4-5 hours to thaw).
+    const thaw: Record<string, { frozen: boolean }> = {};
+    for (const id of Object.keys(counts)) {
+      if (/^(stuffing|coating):/.test(id) && body?.thaw?.[id] && typeof body.thaw[id].frozen === 'boolean') thaw[id] = { frozen: body.thaw[id].frozen };
+    }
     const record = {
-      productionHouseId, date, counts, at: getNowIST(),
+      productionHouseId, date, counts, thaw, at: getNowIST(),
       by: authResult.user.user_metadata?.employeeId || authResult.user.email,
       byName: authResult.user.user_metadata?.name || authResult.user.email,
     };

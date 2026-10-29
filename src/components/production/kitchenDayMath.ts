@@ -66,6 +66,14 @@ export function countState(it: Item, last: LastCounted, date: string): { state: 
   return { state: l.date >= yesterday ? 'last_night' : 'stale', date: l.date, kg: l.kg };
 }
 
+// Frozen leftover stuffing (owner, 29 Oct 2026: "it takes around 4-5 hours for the ice to melt"):
+// it can't be used for the first hours of the day, so that part of the folding needs fresh
+// stuffing whatever is in the freezer. Folding runs over the production shift (8 AM - 7 PM, less
+// the hour's break). Stuffing thawed in the fridge overnight is ready first thing.
+export const THAW_HOURS = 4.5;
+export const FOLDING_HOURS = 10;
+export const THAW_SHARE = Math.min(1, THAW_HOURS / FOLDING_HOURS);
+
 const halfUp = (kg: number) => Math.ceil(kg * 2) / 2;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -79,6 +87,9 @@ export type ItemDay = {
   covers: number | null;         // momos the morning stock covers
   makeKg: number | null;         // what the day needs making, from the morning stock (0 = don't)
   stillToMake: number | null;    // what is left to make after today's batches so far
+  frozen: boolean;               // the morning stock is frozen (usable after THAW_HOURS)
+  freshEarly: number | null;     // fresh needed for the folding before it thaws
+  rollsOver: number | null;      // frozen stock that will still be left tonight on plan
   overMade: boolean;             // made more than the plan needed, with enough already there
   used: number | null;           // kg used for the momos entered
   shouldLeft: number | null;     // morning + made - used
@@ -87,13 +98,17 @@ export type ItemDay = {
 };
 
 /** One item's day, from the numbers the screen has. */
-export function itemDay(it: Item, pool: Pool | undefined, plan: Record<string, number> | null, pieces: Record<string, number>, perKg: Record<string, number>): ItemDay {
+export function itemDay(it: Item, pool: Pool | undefined, plan: Record<string, number> | null, pieces: Record<string, number>, perKg: Record<string, number>, opts: { frozen?: boolean } = {}): ItemDay {
   const morning = pool?.opening || 0;
   const made = pool?.prepared || 0;
   const per = perKg[perKgKey(it)] || null;
   const planned = planPieces(it, plan);
   const need = per && planned ? r2(planned / per) : null;
-  const makeKg = need === null ? null : Math.max(0, halfUp(need - morning));
+  // Frozen stock covers only the folding after it thaws; the first part of the day needs fresh.
+  const frozen = !!opts.frozen && morning > 0.005 && it.type !== null;
+  const freshEarly = frozen && need !== null ? r2(need * THAW_SHARE) : null;
+  const target = need === null ? null : frozen ? Math.max(freshEarly!, need - morning) : need - morning;
+  const makeKg = target === null ? null : Math.max(0, halfUp(target));
   const usedPieces = piecesMade(it, pieces);
   // No momos of a type entered: none of its stuffing was used (all of it should still be there).
   const used = per ? r2(usedPieces / per) : null;
@@ -103,8 +118,10 @@ export function itemDay(it: Item, pool: Pool | undefined, plan: Record<string, n
     item: it, morning, made, planned, perKg: per, need,
     covers: per ? Math.round((morning * per) / 10) * 10 : null,
     makeKg,
-    stillToMake: need === null ? null : Math.max(0, halfUp(need - morning - made)),
-    overMade: need !== null && made > 0 && morning + made > need * 1.25 + 0.5,
+    stillToMake: target === null ? null : Math.max(0, halfUp(target - made)),
+    frozen, freshEarly,
+    rollsOver: frozen && need !== null ? r2(Math.max(0, morning - (need - freshEarly!))) : null,
+    overMade: target !== null && made > 0 && made > Math.max(0, target) * 1.25 + 0.5,
     used, shouldLeft, counted,
     gap: counted !== null && shouldLeft !== null ? r2(counted - shouldLeft) : null,
   };
@@ -120,6 +137,7 @@ export function coachFacts(days: ItemDay[], label: (it: Item) => string, stale: 
       item: label(d.item), morningKg: r2(d.morning), madeKg: r2(d.made), momosPlanned: d.planned || undefined,
       momosPerKg: d.perKg || undefined, planNeedsKg: d.need ?? undefined, makeKg: d.makeKg ?? undefined, morningCoversMomos: d.covers ?? undefined,
       madeMoreThanNeeded: d.overMade || undefined, usedKg: d.used ?? undefined, shouldBeLeftKg: d.shouldLeft ?? undefined, countedKg: d.counted ?? undefined,
+      frozenThawHours: d.frozen ? THAW_HOURS : undefined, freshForMorningKg: d.freshEarly ?? undefined, frozenLeftAgainTonightKg: d.rollsOver || undefined,
     })),
     notWeighedRecently: stale.length ? stale : undefined,
   };

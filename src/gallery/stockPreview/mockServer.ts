@@ -102,7 +102,7 @@ export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, 
       lastCounted: { dough: { date: yesterday, kg: 1.2, when: 'night' }, batter: { date: yesterday, kg: 0.5, when: 'night' }, 'stuffing:chicken': { date: yesterday, kg: 0.8, when: 'night' }, 'coating:chickenKurkure': { date: yesterday, kg: 0.2, when: 'night' }, 'stuffing:cheeseCorn': { date: addDays(today, -24), kg: 2.54, when: 'night' } },
     };
   } },
-  { method: 'PUT', re: /\/production-ledger\/[^/]+\/[^/]+\/morning$/, reply: (_m, body) => { morningWeighIn = { productionHouseId: 'PH-1', date: today, counts: body.counts, at: `${today}T08:12:00.000Z`, by: 'BM020', byName: 'Sohel' }; return { morning: morningWeighIn }; } },
+  { method: 'PUT', re: /\/production-ledger\/[^/]+\/[^/]+\/morning$/, reply: (_m, body) => { morningWeighIn = { productionHouseId: 'PH-1', date: today, counts: body.counts, thaw: body.thaw || {}, at: `${today}T08:12:00.000Z`, by: 'BM020', byName: 'Sohel' }; return { morning: morningWeighIn }; } },
   { method: 'POST', re: /\/production-ledger\/[^/]+\/[^/]+\/coach$/, reply: (_m, body) => ({ text: body.stage === 'summary'
     ? 'Started with 1.2 kg dough and 0.8 kg chicken stuffing, made 6 kg and 9 kg. 2.5 kg chicken stuffing left: about 230 momos more than the plan needed.'
     : body.lang === 'bn'
