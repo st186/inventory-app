@@ -3,7 +3,7 @@
 // through the month first), what needs them, today's brief and the next days' forecast.
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarCheck, Camera, ClipboardCheck, Clock3, Factory, IdCard, MessageSquareWarning, PackageCheck, ReceiptText, Scale, Trash2, Truck, Wallet, Wrench,
+  AlertTriangle, Banknote, CalendarCheck, Camera, ClipboardCheck, Clock3, Factory, IdCard, MessageSquareWarning, PackageCheck, ReceiptText, Scale, Trash2, Truck, Wallet, Wrench,
 } from 'lucide-react';
 import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
 import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
@@ -107,6 +107,23 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
           onOpen: () => open('money/sales'),
         });
       }
+    }
+    // Cash top-ups waiting for a decision (owner, 29 Oct 2026: an action item, not just a line under
+    // Money > Cash & Paytm). The owner decides them all; an operations manager only event-stall ones.
+    const topupsWaiting = (x.topups || [])
+      .filter((r) => r.status === 'pending' && (nav.perms.isClusterHead || (nav.perms.isOperationsManager && r.reason === 'event_cash')))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (topupsWaiting.length && has('money/cash')) {
+      const first = topupsWaiting[0];
+      const total = topupsWaiting.reduce((s, r) => s + (Number(r.requestedAmount) || 0), 0);
+      const forWhat = first.reason === 'production_inventory' ? 'production purchases' : first.reason === 'event_cash' ? 'an event stall' : first.reason === 'store_inventory' ? 'store purchases' : 'other spending';
+      items.push({
+        key: 'topups', icon: Banknote, tone: 'warning', rank: 0.5,
+        title: topupsWaiting.length === 1 ? `Cash top-up to approve: ${formatINR(first.requestedAmount)}` : `${topupsWaiting.length} cash top-ups to approve · ${formatINR(total)}`,
+        meta: `${first.requestedByName} · for ${forWhat} · asked ${words.short(first.date)}${topupsWaiting.length > 1 ? ' (oldest)' : ''}`,
+        count: topupsWaiting.length > 1 ? topupsWaiting.length : undefined,
+        onOpen: () => open('money/cash'),
+      });
     }
     if (x.stockOuts.length) {
       const first = [...x.stockOuts].sort((a, b) => a.startAt.localeCompare(b.startAt))[0];
