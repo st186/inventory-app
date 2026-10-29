@@ -701,7 +701,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
                 <EndOfDayCloseForm
                   pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting} dayContext={dayContext}
                   savedReport={ledgerEntry?.leftoverReport || null} readOnly={!canEditLedger} disabled={!canEditLedger}
-                  closedBy={ledgerEntry?.closedAt ? `${ledgerEntry.closedByName ? `${ledgerEntry.closedByName}, ` : ''}${new Date(ledgerEntry.closedAt).toLocaleString(lang === 'en' ? 'en-IN' : lang, { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : null}
+                  closedBy={ledgerEntry?.closedAt ? `${ledgerEntry.closedByName ? `${ledgerEntry.closedByName}, ` : ''}${new Date(ledgerEntry.closedAt).toLocaleString(lang === 'en' ? 'en-IN' : lang, { timeZone: 'UTC', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : null}
                   onSubmit={handleCloseLedgerDay}
                 />
               </div>
