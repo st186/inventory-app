@@ -15032,6 +15032,68 @@ app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
 });
 
 // ============================================
+// MONTH-END STOCK COUNT (owner, 29 Oct 2026: "we have a stock count due on 31st October ... push
+// this notification as urgent to store incharge ... repeated notifications starting from previous
+// day 6pm, max 5 notifications. Do this every month.")
+// ============================================
+// pg_cron calls this every day at 12, 4, 6, 8 and 9 PM IST. It acts only on the day before the
+// month's last day (6 PM, 9 PM) and the last day (12 PM, 4 PM, 8 PM): five reminders at most. A
+// store whose count is in - a stock count saved for it since 6 PM the day before - is left alone.
+// Urgent to the store incharge (never held for quiet hours; the owner is told if it isn't opened).
+// Once per store, month and slot. ?slot= overrides the hour and ?today= the date, and ?dry=1 only
+// says who would be reminded (for a test).
+const COUNT_SLOTS: Record<string, { day: 'eve' | 'last'; n: number }> = {
+  'eve-6pm': { day: 'eve', n: 1 }, 'eve-9pm': { day: 'eve', n: 2 }, '12pm': { day: 'last', n: 3 }, '4pm': { day: 'last', n: 4 }, '8pm': { day: 'last', n: 5 },
+};
+const COUNT_SLOT_AT_HOUR: Record<number, string> = { 18: 'eve-6pm', 21: 'eve-9pm', 12: '12pm', 16: '4pm', 20: '8pm' };
+app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const now = getNowIST();
+    const dry = c.req.query('dry') === '1';
+    const today = (dry && /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('today') || '') ? c.req.query('today')! : now.slice(0, 10));
+    const slot = c.req.query('slot') || COUNT_SLOT_AT_HOUR[Number(now.slice(11, 13))];
+    const def = COUNT_SLOTS[slot || ''];
+    const nextMonth = new Date(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) + 32 * 86400000).toISOString().slice(0, 7);
+    const last = new Date(Date.parse(`${nextMonth}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const eve = new Date(Date.parse(`${last}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    if (!def || today !== (def.day === 'eve' ? eve : last)) return c.json({ success: true, skipped: 'not a count reminder time', today, slot: slot || null });
+    // Counted: a stock count for the store saved since 6 PM the day before the last day (IST).
+    const since = `${eve}T18:00`;
+    const counted = new Set((await getAllByPrefixWithRetry('recalibration_'))
+      .filter((r: any) => r?.locationType === 'store' && typeof r.date === 'string' && r.date >= since)
+      .map((r: any) => r.locationId));
+    const stores = (await kv.getByPrefix('store:')).filter((st: any) => st?.id && st.status !== 'inactive' && st.status !== 'closed');
+    const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+    const lastName = new Date(`${last}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const results: any[] = [];
+    for (const store of stores) {
+      if (counted.has(store.id)) continue;
+      const onceKey = `stock-count-reminder:${store.id}:${last.slice(0, 7)}:${slot}`;
+      if (await kv.get(onceKey)) continue;
+      const to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+      if (dry) {
+        results.push({ store: store.name, to: to.map((u: any) => u.name), dry: true });
+        continue;
+      }
+      const title = def.day === 'eve' ? `Month-end momo count tomorrow (${lastName})` : `Count the momos today: month-end stock count`;
+      const message = def.day === 'eve'
+        ? `${store.name}: tomorrow is the month-end stock count. Count every momo type in the freezer and enter it in Stock > Count stock. Reminder ${def.n} of 5.`
+        : `${store.name}: count every momo type in the freezer and enter it in Stock > Count stock today. It shows how many momos went missing this month. Reminder ${def.n} of 5.`;
+      for (const u of to) await notifyUser(u.authUserId, 'stock_count_reminder', title, message, undefined, last).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+      results.push({ store: store.name, to: to.map((u: any) => u.name) });
+    }
+    console.log(`Stock count reminders (${slot}, month ending ${last}):`, JSON.stringify(results));
+    return c.json({ success: true, slot, monthEnd: last, reminded: results });
+  } catch (error: any) {
+    console.error('Error sending stock count reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
 // ATTENDANCE (TIMESHEET) REMINDERS
 // ============================================
 // Checks each employee/manager for missing timesheet entries over the

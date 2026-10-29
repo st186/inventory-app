@@ -17,10 +17,13 @@ const URGENT = new Set([
   'production_cash_discrepancy', 'stock_out', 'low_stock_alert', 'stock_request_delayed', 'shipped_delivery_check', 'escalation',
   'delivery_confirmation_reminder', // orders sent and not received or confirmed (owner, 29 Oct 2026: high priority)
   'stock_request_reminder', // tomorrow's stock request not sent, due by midnight (owner, 29 Oct 2026: critical)
+  'stock_count_reminder', // the month-end momo count not entered yet (owner, 29 Oct 2026: urgent, up to 5 times)
+  'compliance_overdue', // a licence, safety check or certificate past its due date (compliance.ts)
 ]);
 const ACTION = new Set([
   'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'expense_approval', 'expense_rejected', 'opening_late', 'opening_pick', 'audit_assigned', 'audit_report', 'supply_low', 'shopping_list', 'shopping_done', 'shift_checkin', 'delivery_incoming',
   'stock_request_new', 'stock_request_missed', 'event_momo_return', 'rider_fare_proposed', 'rider_called', 'calendar_suggestions', 'stock_recalibration',
+  'compliance_due',
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.

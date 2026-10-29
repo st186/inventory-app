@@ -63,8 +63,10 @@ const outDir = outArg || `${file}-opened`;
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
 const rowParts = [];
+const tableParts = [];
 let logins = [];
 let rows = 0;
+let tableRows = 0;
 for (const info of manifest.sections) {
   const s = sections.find((x) => x.index === info.i && x.type === info.type);
   if (!s) throw new Error(`Section ${info.i} is missing from the file`);
@@ -72,11 +74,13 @@ for (const info of manifest.sections) {
   if (createHash('sha256').update(raw).digest('hex') !== info.sha256) throw new Error(`Section ${info.i} does not match its checksum`);
   const text = raw.toString('utf8');
   if (info.type === 2) logins = text ? text.split('\n').map((l) => JSON.parse(l)) : [];
+  else if (info.type === 3) { if (text) tableParts.push(text); tableRows += info.rows; } // database tables {t, r}
   else { if (text) rowParts.push(text); rows += info.rows; }
 }
 writeFileSync(path.join(outDir, 'rows.ndjson'), rowParts.join('\n') + (rowParts.length ? '\n' : ''));
 writeFileSync(path.join(outDir, 'logins.json'), JSON.stringify(logins, null, 2));
+if (tableParts.length) writeFileSync(path.join(outDir, 'tables.ndjson'), tableParts.join('\n') + '\n');
 writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 console.log(`Backup made ${header.createdAtIST || header.createdAt} (app ${header.appVersion}).`);
-console.log(`${rows} records and ${logins.length} logins, all checksums match. Written to ${outDir}`);
+console.log(`${rows} records, ${tableRows} table rows and ${logins.length} logins, all checksums match. Written to ${outDir}`);
 console.log('These files are not encrypted: keep them private and delete them when done.');

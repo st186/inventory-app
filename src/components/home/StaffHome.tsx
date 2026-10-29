@@ -4,8 +4,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Camera, ClipboardList, ClipboardPlus, Clock3, Factory, IdCard, PackageCheck, PackageOpen, Receipt, ReceiptText, Trash2, Truck, UserCheck, Wrench,
-  MessageSquareWarning,
+  MessageSquareWarning, ListChecks,
 } from 'lucide-react';
+import { getLastRecalibration } from '../../utils/api';
 import { ExplainComplaintSheet, useComplaintsToExplain } from '../complaints/ExplainComplaint';
 import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
@@ -60,6 +61,26 @@ function useTimesheetsWaiting(enabled: boolean, employeeId: string | null) {
   } : null, [enabled, employeeId, data]);
 }
 
+// The month-end momo count (owner, 29 Oct 2026: due on the month's last day; reminders from 6 PM
+// the day before, server send-stock-count-reminders). Shown from 6 PM the day before until it is
+// in; the store's latest count is fetched only on those two days.
+function useMonthEndCount(store: string | null, today: string, now: number, token: string) {
+  const nextMonth = new Date(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) + 32 * 86400000).toISOString().slice(0, 7);
+  const last = new Date(Date.parse(`${nextMonth}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  const eve = new Date(Date.parse(`${last}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  const show = !!store && (today === last || (today === eve && now >= 18 * 60));
+  const [countedAt, setCountedAt] = useState<string | null>(null);
+  useEffect(() => {
+    if (!show || !store || !token) return;
+    let alive = true;
+    getLastRecalibration(token, store, 'store')
+      .then((r: any) => { if (alive) setCountedAt(typeof r?.lastRecalibration === 'string' ? r.lastRecalibration : null); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [show, store, token]);
+  return { show, isLastDay: today === last, last, done: !!countedAt && countedAt >= `${eve}T18:00` };
+}
+
 function InchargeHome() {
   const { user, context, stores, nav, router } = useShell();
   const { t } = useT();
@@ -74,6 +95,7 @@ function InchargeHome() {
   const suppliedStoreIds = useMemo(() => (isProduction ? getAssignedStoreIds(user as any, stores as any) : []), [isProduction, user, stores]);
   const today = clock.today;
   const now = clock.minutes;
+  const monthEnd = useMonthEndCount(store, today, now, token);
 
   const profile = useProfileCompletion(token);
   const focusProfile = useFocusProfile();
@@ -150,6 +172,14 @@ function InchargeHome() {
         key: 'expense-flags', icon: ReceiptText, title: expenseFlags.flags.length === 1 ? '1 expense entry to check' : `${expenseFlags.flags.length} expense entries to check`,
         meta: expenseFlags.flags[0].title, status: 'late', count: expenseFlags.flags.length, due: 0,
         onOpen: () => setFlagsOpen(true),
+      });
+    }
+    if (monthEnd.show) {
+      list.push({
+        key: 'stock-count', icon: ListChecks, title: t('home.task.stockCount'), due: monthEnd.isLastDay ? 1320 : 1439,
+        meta: monthEnd.done ? t('home.task.stockCountDone') : monthEnd.isLastDay ? t('home.task.stockCountToday') : t('home.task.stockCountTomorrow'),
+        status: monthEnd.done ? 'done' : monthEnd.isLastDay ? (now >= 20 * 60 ? 'late' : 'due') : 'later',
+        onOpen: () => open('stock/requests'),
       });
     }
     if (!isProduction && store) {
@@ -258,7 +288,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items, monthEnd]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);

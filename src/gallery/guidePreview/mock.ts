@@ -460,6 +460,22 @@ export const guideRoutes: Route[] = [
   { method: 'GET', re: /\/workplace\/alerts$/, reply: () => ({ alerts: [] }) },
   { method: 'GET', re: /\/production-flags$/, reply: () => ({ flags: [] }) },
   { method: 'GET', re: /\/complaints$/, reply: () => ({ complaints: [] }) },
+  // Compliance calendar (owner and ops): one overdue, one coming up, one later.
+  {
+    method: 'GET', re: /\/compliance$/, reply: () => ({
+      today,
+      items: [
+        { id: 'c1', starter: 'pest', title: 'Pest control', kind: 'hygiene', place: 'production:PH-1', dueDate: addDays(today, -3), repeat: 'monthly', handledBy: 'Ops Manager', history: [{ date: addDays(today, -33), by: 'Ops Manager', note: 'Gel and spray, slip kept', at: at('11:00', addDays(today, -33)) }], createdBy: 'Owner', createdAt: at('10:00', addDays(today, -60)), updatedAt: at('10:00', addDays(today, -33)), daysLeft: -3 },
+        { id: 'c2', starter: 'fssai', title: 'FSSAI licence renewal', kind: 'licence', place: 'store:STORE-1', dueDate: addDays(today, 20), repeat: 'yearly', handledBy: 'Owner', notes: 'Licence no. on the certificate by the counter', history: [], createdBy: 'Owner', createdAt: at('10:00', addDays(today, -60)), updatedAt: at('10:00', addDays(today, -60)), daysLeft: 20 },
+        { id: 'c3', starter: 'fire', title: 'Fire extinguisher refill and check', kind: 'safety', place: 'all', dueDate: addDays(today, 140), repeat: 'yearly', history: [], createdBy: 'Owner', createdAt: at('10:00', addDays(today, -60)), updatedAt: at('10:00', addDays(today, -60)), daysLeft: 140 },
+      ],
+      starters: [
+        { key: 'trade', title: 'Trade licence renewal', kind: 'licence', repeat: 'yearly', hint: 'From the municipality, renewed every year.' },
+        { key: 'medical', title: 'Staff medical fitness certificates', kind: 'staff', repeat: 'yearly', hint: 'FSSAI asks for one for every food handler each year.' },
+        { key: 'tank', title: 'Water tank cleaning', kind: 'hygiene', repeat: 'half_yearly', hint: 'The tank the kitchen water comes from.' },
+      ],
+    }),
+  },
   { method: 'GET', re: /\/expense-flags$/, reply: () => ({ flags: AT_HOUSE ? [] : FLAGS }) },
   // A flag answered, or its entry deleted, is done with.
   { method: 'POST', re: /\/expense-flags\/([^/]+)\/[a-z-]+$/, reply: (m) => { FLAGS = FLAGS.filter((f) => f.id !== decodeURIComponent(m[1])); return { success: true }; } },

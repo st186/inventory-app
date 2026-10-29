@@ -86,7 +86,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -121,6 +121,7 @@ export type ScreenSpec =
   | { screen: 'SiteAudits' }
   | { screen: 'OpeningChecklist' }
   | { screen: 'Contacts' }
+  | { screen: 'Compliance' }
   | { screen: 'AppTour' }
   | { screen: 'ShoppingLists' }
   | { screen: 'PhotoGuide' }
@@ -387,6 +388,8 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   if (kind === 'owner' || kind === 'ops') add('audits', 'more.audits', 'audit', { screen: 'SiteAudits' }, null, 'audits');
   // Store opening checklist: progress, picking who opens, and Set up (owner, 28 Oct 2026).
   if (kind === 'owner' || kind === 'ops') add('opening', 'more.opening', 'audit', { screen: 'OpeningChecklist' }, null, 'opening');
+  // Compliance calendar (owner, 29 Oct 2026): licences, safety checks and certificates with their due dates.
+  if (kind === 'owner' || kind === 'ops') add('compliance', 'more.compliance', 'compliance', { screen: 'Compliance' }, null, 'compliance');
   // Emergency contacts (owner, 29 Oct 2026): everyone can find and call a number; the owner, ops and incharges keep it up to date.
   add('contacts', 'more.contacts', 'contacts', { screen: 'Contacts' }, null, 'contacts');
   // App tour (owner, 29 Oct 2026): plays the first-open walk-through again.
@@ -421,7 +424,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening', 'compliance'),
       group('more.assets', 'equipment', 'investments'),
       group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'photo-guide', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
@@ -437,7 +440,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'my-kpis'),
+      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'compliance', 'my-kpis'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup', 'photo-guide'),
       group('more.data', 'reports', 'audit-report'),
