@@ -67,6 +67,29 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     case '/stores': return json({ stores: mock.stores });
     case '/online-loans': return json({ loans: mock.loans });
     case '/order-item-detail': return json({ records: mock.orderItemDetail(q.get('startDate') || '2026-03-01', q.get('endDate') || today, q.get('storeId') || undefined) });
+    // Staffing, the apps' reports and the weather (GrowthCards.tsx, owner 30 Oct 2026).
+    case '/insights/staffing': {
+      const days = [];
+      for (let i = 13; i >= 0; i--) {
+        const d = new Date(Date.parse(`${today}T00:00:00Z`) - i * 86400000).toISOString().slice(0, 10);
+        days.push({ date: d, onShift: 3, staffHours: 24, wages: 1500, byHour: Array.from({ length: 24 }, (_, h) => (h >= 15 && h <= 22 ? (h >= 18 ? 3 : 2) : 0)) });
+      }
+      return json({ days, since: days[0].date, staff: 3 });
+    }
+    case '/app-reports': return json({ reports: [
+      { platform: 'zomato', storeId: 'all', periodStart: '2026-10-20', periodEnd: '2026-10-26', rating: 4.1, ratingCount: 612, orders: 118, sales: 41200, menuOpens: 1890, menuToOrderPct: 6.2, impressions: 15400, prepMinutes: 14, rejectedOrders: 2, delayedOrdersPct: 4, complaints: 1, adSpend: 1500, note: 'Rating dipped from 4.2 after two late orders.', savedAt: '', savedBy: 'Owner Demo' },
+      { platform: 'zomato', storeId: 'all', periodStart: '2026-10-13', periodEnd: '2026-10-19', rating: 4.2, ratingCount: 598, orders: 109, sales: 38800, menuOpens: 1700, menuToOrderPct: 6.4, impressions: 14100, prepMinutes: 16, rejectedOrders: 4, delayedOrdersPct: 6, complaints: 2, adSpend: 1500, note: '', savedAt: '', savedBy: 'Owner Demo' },
+      { platform: 'swiggy', storeId: 'all', periodStart: '2026-10-20', periodEnd: '2026-10-26', rating: 4.3, ratingCount: 210, orders: 34, sales: 11800, menuOpens: 720, menuToOrderPct: 4.7, impressions: -1, prepMinutes: 12, rejectedOrders: 0, delayedOrdersPct: -1, complaints: 0, adSpend: -1, note: '', savedAt: '', savedBy: 'Owner Demo' },
+    ] });
+    case '/insights/weather': {
+      const days = [];
+      for (let i = -92; i <= 7; i++) {
+        const d = new Date(Date.parse(`${today}T00:00:00Z`) + i * 86400000).toISOString().slice(0, 10);
+        const wet = i % 9 === 0 || i === 2 || i === 3;
+        days.push({ date: d, rainMm: wet ? 14 : 0, rainChance: i >= 0 ? (wet ? 80 : 10) : null, maxC: 31 });
+      }
+      return json({ days });
+    }
     case '/production-ledger': return json({ entries: mock.productionLedger(q.get('from') || today, q.get('to') || today) });
     case '/insights/overview': {
       // Trends: the last 90 days of the chosen store (or all) from the made-up sales.

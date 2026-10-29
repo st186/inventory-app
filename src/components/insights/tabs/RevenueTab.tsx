@@ -1,7 +1,7 @@
 // Insights > Revenue: sales and how they came in. Header figure → sales by channel per day →
 // the channel list (commission and ads open their breakdown) → the order patterns (orders a day,
 // by hour, service type, order value, discounts, payment modes, cancellations, order sizes).
-import { memo, useMemo } from 'react';
+import { lazy, memo, Suspense, useMemo } from 'react';
 import { Megaphone, Percent, Store } from 'lucide-react';
 import { CHANNEL_COLORS, CompareBars, ShareBars } from '../../ui/chart-theme';
 import { ListGroup, ListRow } from '../../ui/list-row';
@@ -11,13 +11,16 @@ import { formatNumberIN } from '../../ui/money';
 import { type AnalyticsData, isInWindow } from '../useAnalyticsData';
 import { CHART_COLORS, ChartCard, ChartEmpty, FigureRow, TrendChart, deltaOf, inr, legendFor, pct, shortPrevLabel, periodText, type SeriesSpec } from './shared';
 
+const AppReportsCard = lazy(() => import('../GrowthCards').then((m) => ({ default: m.AppReportsCard })));
+const StaffingCard = lazy(() => import('../GrowthCards').then((m) => ({ default: m.StaffingCard })));
+
 export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) {
   const { t, lang } = useT();
   const {
     getPeriodLabel, metrics, previousPeriodMetrics, channelMixChartData, commissionAdSpendChartData, storeOnlineSales, periodRange, setSelectedExpenseCategory,
     ordersPerDayData, ordersPerDayChartData, offlineOrdersMedian, onlineOrdersMedian, ordersByHourData, ordersByHourChartData, peakHour, serviceTypeData,
     previousServiceTypeData, avgOrderValueData, avgOrderValueChartData, discountPctData, discountPctChartData, paymentModeBreakdownData, cancellationTrendData,
-    cancellationChartData, orderValueHistogramData,
+    cancellationChartData, orderValueHistogramData, context, effectiveStoreId, itemPerfDateRange, orderItemDetail, canManageInsights,
   } = d;
   const prevLabel = shortPrevLabel(d, lang);
   const channel = useMemo(() => {
@@ -121,6 +124,11 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
         </ChartCard>
       </div>
 
+      {/* The apps' own numbers, read from their partner-report screenshots (owner, 30 Oct 2026). */}
+      <Suspense fallback={null}>
+        <AppReportsCard accessToken={context.user?.accessToken || ''} storeId={effectiveStoreId || null} canManage={canManageInsights} />
+      </Suspense>
+
       <ChartCard
         title="Orders a day"
         caption={`Dashed lines: counter median ${offlineOrdersMedian}, online median ${onlineOrdersMedian}`}
@@ -145,6 +153,13 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
           />
         )}
       </ChartCard>
+
+      {/* People on shift against orders, and wages against sales (owner and operations only: salaries). */}
+      {canManageInsights && (
+        <Suspense fallback={null}>
+          <StaffingCard accessToken={context.user?.accessToken || ''} storeId={effectiveStoreId || null} range={itemPerfDateRange} orders={orderItemDetail as any} />
+        </Suspense>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
         <ChartCard
