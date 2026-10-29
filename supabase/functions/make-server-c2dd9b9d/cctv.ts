@@ -17,7 +17,7 @@ import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtCamera } from './insights.ts';
 import { PPE_ITEMS, decide, inHours, istClock, minutesUntilHours, missingText, type PpeItem } from './cameraRules.ts';
 
-const BUCKET = 'workplace-photos'; // the workplace photo bucket, under cctv/
+const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
 const KEEP_DAYS = 30;
 const PPE_GAP_MIN = 15;
 const INTRUDER_GAP_MIN = 10;
@@ -37,6 +37,22 @@ type Alert = {
 
 let client: any = null;
 const storage = () => (client ||= createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)).storage;
+// The bucket is made (private) the first time an alert needs it, like the other photo buckets.
+let bucketReady: Promise<void> | null = null;
+function ensureBucket(): Promise<void> {
+  if (!bucketReady) {
+    bucketReady = (async () => {
+      const { data, error } = await storage().getBucket(BUCKET);
+      if (data && !error) {
+        if (data.public) await storage().updateBucket(BUCKET, { public: false });
+        return;
+      }
+      const { error: createError } = await storage().createBucket(BUCKET, { public: false, fileSizeLimit: 2 * 1024 * 1024, allowedMimeTypes: ['image/jpeg'] });
+      if (createError && !/already exists/i.test(createError.message || '')) throw createError;
+    })().catch((e) => { bucketReady = null; throw e; });
+  }
+  return bucketReady;
+}
 const newId = (bytes = 9) => [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
 async function sha256(text: string) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -169,9 +185,11 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       let alert: Alert | null = null;
       if (d.alert) {
         const id = newId();
-        const path = `cctv/${cam.id}/${now.slice(0, 10)}/${id}.jpg`;
+        const path = `${cam.id}/${now.slice(0, 10)}/${id}.jpg`;
         const bytes = Uint8Array.from(atob(image), (ch) => ch.charCodeAt(0));
-        const { error } = await storage().from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
+        const { error } = await ensureBucket().then(() => storage().from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false }))
+          .catch((e: any) => ({ error: e }));
+        if (error) console.error('[cctv] photo not stored:', String(error?.message || error).slice(0, 120));
         alert = { id, cameraId: cam.id, kind: d.alert, at: now, missing: d.missing, peopleCount: look.peopleCount, note: look.note, photoPath: error ? null : path, onShift: staff };
         await deps.kv.set(`cctv-alert:${id}`, alert);
         const fresh = (await deps.kv.get<Camera>(`cctv-camera:${cam.id}`)) || cam;
