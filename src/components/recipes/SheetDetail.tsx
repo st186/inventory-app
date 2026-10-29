@@ -153,7 +153,7 @@ export function SheetDetail({ sheetId, refreshKey, onBack, onStart, onOpenDraft,
       </main>
 
       {data && (data.access.canEnter || (onReview && data.access.canReview)) && (
-        <div className="sticky bottom-0 z-(--z-sticky) border-t border-border bg-surface">
+        <div className="sticky bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom))] z-(--z-sticky) border-t border-border bg-surface md:bottom-0">
           <div className="mx-auto flex w-full max-w-[720px] gap-2.5 px-4 py-3 lg:px-8">
             {onReview && data.access.canReview && (
               <Button variant="secondary" size="lg" leadingIcon={<BarChart3 />} className={data.access.canEnter ? undefined : 'flex-1'} onClick={onReview}>{t('recipes.sheet.review')}</Button>

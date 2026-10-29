@@ -477,7 +477,7 @@ export function BatchForm({ draftId, team, history, trialNo, today, onBack, onDo
         )}
       </main>
 
-      <div className="sticky bottom-0 z-(--z-sticky) border-t border-border bg-surface">
+      <div className="sticky bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom))] z-(--z-sticky) border-t border-border bg-surface md:bottom-0">
         <div className="mx-auto flex w-full max-w-[720px] items-center gap-2.5 px-4 py-3 lg:px-8">
           <div className="hidden min-w-0 flex-1 sm:block">
             <StatusChip tone={draft.state === 'failed' ? 'danger' : 'neutral'}>{t(`recipes.draft.${draft.state}` as I18nKey)}</StatusChip>

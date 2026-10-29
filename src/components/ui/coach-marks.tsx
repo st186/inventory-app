@@ -60,6 +60,13 @@ export function firstVisible(selector: string): Element | null {
   return null;
 }
 
+/** Is something else on top of the part (a sticky bar at the bottom of a form, say)? */
+function covered(el: Element): boolean {
+  const r = el.getBoundingClientRect();
+  const top = document.elementsFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 20)).find((e) => !e.closest("[data-coach]"));
+  return !!top && !el.contains(top) && !top.contains(el);
+}
+
 function boxOf(el: Element): Box {
   const r = el.getBoundingClientRect();
   return { x: r.left - PAD, y: r.top - PAD, w: r.width + PAD * 2, h: r.height + PAD * 2 };
@@ -184,7 +191,7 @@ function CoachMarks({ open, steps, onClose, labels, noBack = false }: {
     const el = step.target?.();
     if (el) {
       const r = el.getBoundingClientRect();
-      if (r.top < 72 || r.bottom > window.innerHeight - 88) el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+      if (r.top < 72 || r.bottom > window.innerHeight - 88 || covered(el)) el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
     }
     measure();
     const settle = setTimeout(measure, 420);
