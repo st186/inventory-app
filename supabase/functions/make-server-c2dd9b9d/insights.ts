@@ -1322,7 +1322,7 @@ const hygieneSchema = {
 // A camera still (cctv.ts): who is in view and, for each person, whether the kitchen PPE is on.
 // "unclear" whenever the item can't be seen (turned away, out of frame, too small) - only a clear
 // "no" raises an alert.
-const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people.';
+const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people. Also, for each person: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet), what they are doing right now (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking), and whether a phone is in their hand or at their ear.';
 const yesNo = { type: 'string', enum: ['yes', 'no', 'unclear'] };
 const cameraSchema = {
   type: 'object',
@@ -1332,8 +1332,13 @@ const cameraSchema = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { where: { type: 'string', description: 'Where in the frame, a few words' }, cap: yesNo, gloves: yesNo, apron: yesNo },
-        required: ['where', 'cap', 'gloves', 'apron'],
+        properties: {
+          where: { type: 'string', description: 'Where in the frame, a few words' }, cap: yesNo, gloves: yesNo, apron: yesNo,
+          top: { type: 'string', enum: ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'] },
+          activity: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] },
+          phone: { type: 'string', enum: ['in_hand', 'at_ear', 'none', 'unclear'] },
+        },
+        required: ['where', 'cap', 'gloves', 'apron', 'top', 'activity', 'phone'],
         additionalProperties: false,
       },
     },
@@ -1342,7 +1347,11 @@ const cameraSchema = {
   required: ['peopleCount', 'people', 'note'],
   additionalProperties: false,
 };
-export type CameraLook = { peopleCount: number; people: { where: string; cap: string; gloves: string; apron: string }[]; note: string };
+export type CameraLook = {
+  peopleCount: number;
+  people: { where: string; cap: string; gloves: string; apron: string; top: string; activity: string; phone: string }[];
+  note: string;
+};
 
 export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType: string; place: string }): Promise<CameraLook> {
   const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
@@ -1351,7 +1360,7 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
     system: CAMERA_SYSTEM,
     effort: 'low',
     noThinking: true,
-    maxTokens: 800,
+    maxTokens: 1200,
     format: { type: 'json_schema', schema: cameraSchema },
     messages: [{
       role: 'user',
@@ -1367,6 +1376,7 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
   const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
   const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => ({
     where: String(p?.where || '').slice(0, 60), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
+    top: String(p?.top || 'other').slice(0, 20), activity: String(p?.activity || 'other').slice(0, 20), phone: String(p?.phone || 'unclear').slice(0, 20),
   }));
   return { peopleCount: Math.max(people.length, Math.min(30, Math.round(parsed.peopleCount))), people, note: String(parsed.note || '').slice(0, 200) };
 }

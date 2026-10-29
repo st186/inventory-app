@@ -43,12 +43,41 @@ const alerts = [
   { id: 'a2', cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', kind: 'intruder', at: '2026-10-28T19:40:00Z', text: '1 in view after hours', note: '', peopleCount: 1, onShift: [], seen: [], unknownFaces: 1, photoUrl: null, mark: 'false' },
 ];
 
+// Kitchen activity (server cctv.ts /cctv/activity and /cctv/whois).
+const person = (slot: string, name: string | null, minutes: Record<string, number>, phoneMinutes: number, phoneTimes: number, ppePercent: number, first: string, last: string) => {
+  const seenMinutes = Object.values(minutes).reduce((a, b) => a + b, 0);
+  return { slot, name, minutes, seenMinutes, foldingMinutes: minutes.folding || 0, phoneMinutes, phoneTimes, idleMinutes: minutes.idle || 0, ppePercent, first, last };
+};
+const activity = {
+  from: '2026-10-30', to: '2026-10-30',
+  labels: { folding: 'Folding momos', machine: 'At the machine / dough', filling: 'Making filling', cooking: 'Steaming / frying', packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other' },
+  cameras: [{
+    camera: { id: 'cam-kitchen1', name: 'Kitchen camera', everyMin: 5, place: 'Main Production House' },
+    people: [
+      person('teal', 'Vijay Das', { folding: 95, machine: 120, cooking: 40, cleaning: 15, phone: 20, idle: 25 }, 30, 4, 82, '09:10', '16:40'),
+      person('red', null, { folding: 210, packing: 45, idle: 15, phone: 10 }, 10, 2, 95, '10:05', '16:30'),
+    ],
+    kitchen: { foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 92 },
+    perDay: [],
+  }],
+};
+const whois = {
+  date: '2026-10-30', staff: ['Aniket Prasad', 'Nabendu', 'Rider 1', 'Rohan Rajbanshi', 'Rudra Mahato', 'Saniya Parvin', 'Vijay Das'],
+  cameras: [{ cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', date: '2026-10-30', slots: [
+    { slot: 'teal', name: 'Vijay Das', first: '09:10', last: '16:40', photoUrl: '/bunny-logo.png' },
+    { slot: 'red', name: null, first: '10:05', last: '16:30', photoUrl: '/bunny-logo.png' },
+  ] }],
+};
+
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
 export function installPerfPreviewMock() {
   const real = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/cctv/activity')) return json(activity);
+    if (url.includes('/cctv/whois') && init?.method === 'POST') return json({ names: {} });
+    if (url.includes('/cctv/whois')) return json(whois);
     if (url.includes('/cctv/cameras') && !init?.method) return json({ cameras, canManage: true });
     if (url.includes('/cctv/alerts') && /\/mark$/.test(url)) return json({ alert: {} });
     if (url.includes('/cctv/alerts')) return json({ alerts });

@@ -1,7 +1,9 @@
 // More > Cameras (owner, 29 Oct 2026): what each camera saw that needs a look - someone without
 // cap, gloves or apron in working hours, someone in view after them - with the photo, to mark
 // correct, false alarm or one of us (server cctv.ts). The owner sets each camera's hours, how often
-// it checks and what it checks; the camera PC (tools/cctv) needs the camera's key.
+// it checks and what it checks; the camera PC (tools/cctv) needs the camera's key. Kitchen
+// activity (KitchenActivity.tsx): "Who is who" for the owner, operations and the incharge; the
+// numbers for the owner only.
 import { useCallback, useEffect, useState } from 'react';
 import { Camera as CameraIcon, CheckCircle2, Copy, KeyRound, Pencil, Plus, ShieldAlert, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -17,8 +19,10 @@ import { Input } from '../ui/input';
 import { ListGroup, ListRow } from '../ui/list-row';
 import { ResponsiveModal } from '../ui/responsive-modal';
 import { NativeSelect } from '../ui/select';
+import { SegmentedControl } from '../ui/segmented-control';
 import { StatusChip } from '../ui/status-chip';
 import * as api from './camerasApi';
+import { KitchenActivity, WhoIsWho } from './KitchenActivity';
 
 const ITEMS: api.PpeItem[] = ['cap', 'gloves', 'apron'];
 const when = (iso: string, lang: string) =>
@@ -31,6 +35,7 @@ export function CamerasScreen() {
   const [error, setError] = useState(false);
   const [edit, setEdit] = useState<api.Camera | 'new' | null>(null);
   const [key, setKey] = useState<string | null>(null);
+  const [tab, setTab] = useState<'alerts' | 'activity'>('alerts');
   const load = useCallback(() => {
     setError(false);
     Promise.all([api.getCameras(), api.getAlerts()]).then(([c, a]) => { setCams(c); setAlerts(a); }).catch(() => setError(true));
@@ -51,6 +56,12 @@ export function CamerasScreen() {
 
   return (
     <Page>
+      <WhoIsWho />
+      {cams.canManage && (
+        <SegmentedControl aria-label={t('cam.cameras')} value={tab} onValueChange={setTab}
+          options={[{ value: 'alerts', label: t('cam.alerts') }, { value: 'activity', label: 'Kitchen activity' }]} />
+      )}
+      {tab === 'activity' && cams.canManage ? <KitchenActivity /> : (<>
       <ListGroup
         title={t('cam.cameras')}
         action={cams.canManage ? <Button size="sm" variant="secondary" leadingIcon={<Plus />} onClick={() => setEdit('new')}>{t('cam.add')}</Button> : undefined}
@@ -96,6 +107,8 @@ export function CamerasScreen() {
           </article>
         ))}
       </section>
+
+      </>)}
 
       {edit && <CameraSheet camera={edit === 'new' ? null : edit} onClose={() => setEdit(null)} onSaved={(k) => { setEdit(null); if (k) setKey(k); load(); }} />}
       <ResponsiveModal open={!!key} onOpenChange={(o) => !o && setKey(null)} title="Camera key">

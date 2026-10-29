@@ -14,10 +14,19 @@
 //   cctv-camera:{id}            name, place, what to check, working hours, how often, key (hashed)
 //   cctv-alert:{id}             kind ppe | intruder, when, what was missing, photo path, the mark
 //   cctv-check:{cameraId}:{at}  every checked still: people, missing items, alert or not (30 days)
+//   cctv-activity:{cameraId}:{date}         kitchen activity (activityRules.ts): minutes per person
+//                                           by what they were doing, phone use, PPE share (120 days)
+//   cctv-activity-photos:{cameraId}:{date}  one still per person of the day, to put names to the
+//                                           colours they wore (7 days)
+//   cctv-names:{cameraId}:{date}            colour of the day -> name, tapped by the owner, the
+//                                           operations manager or the place's incharge
+// Kitchen activity (owner, 29 Oct 2026): with `activity` on, every scheduled still also counts what
+// each person is doing; only the owner sees the numbers.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtCamera } from './insights.ts';
 import { PPE_ITEMS, cleanFaces, decide, inHours, istClock, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
+import { ACTIVITY_LABEL, addStill, summarise, type ActivityDay } from './activityRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
 const KEEP_DAYS = 30;
@@ -25,12 +34,22 @@ const PPE_GAP_MIN = 15;
 const INTRUDER_GAP_MIN = 10;
 const MOTION_LOOK_GAP_MS = 2 * 60000; // after hours, at most one AI look every 2 minutes
 const MAX_IMAGE_CHARS = 2_000_000; // ~1.5 MB of JPEG as base64
+const ACTIVITY_KEEP_DAYS = 120;
+const ACTIVITY_PHOTO_DAYS = 7;
+const istDate = (ms: number) => new Date(ms + 330 * 60000).toISOString().slice(0, 10);
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+// Pieces folded by hand (kurkure is made from these, so it isn't counted again).
+const FOLDED = ['chickenMomos', 'chickenCheeseMomos', 'vegMomos', 'cheeseCornMomos', 'paneerMomos'];
 
 type Camera = {
   id: string; name: string; placeKind: 'production' | 'store'; placeId: string; checks: PpeItem[];
   from: string; to: string; everyMin: number; active: boolean; keyHash: string; keyHint: string;
   // false: no watching after working hours (owner, 29 Oct 2026: the store PC is only on from 3 PM).
   afterHours?: boolean;
+  // Kitchen activity counted from every scheduled still; PPE alerts then at most every ppeGapMin.
+  activity?: boolean;
+  ppeGapMin?: number;
   createdAt: string; createdBy: string; lastSeenAt?: string; lastScheduledAt?: string; lastMotionLookAt?: string;
   lastAlert?: { ppe?: string; intruder?: string };
 };
@@ -123,8 +142,58 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     const paths = old.map((a) => a.photoPath).filter(Boolean) as string[];
     if (paths.length) await storage().from(BUCKET).remove(paths).catch(() => undefined);
     for (const a of old) await deps.kv.del(`cctv-alert:${a.id}`);
-    const checks = await deps.kv.getByPrefix<any>(`cctv-check:${cameraId}:`);
+    const checks = await deps.getAllByPrefix(`cctv-check:${cameraId}:`);
     for (const x of checks) if (x?.at && x.at < cutoff) await deps.kv.del(`cctv-check:${cameraId}:${x.at}`);
+  }
+
+  // One still's sightings into the day's activity, and the first still of each person that day
+  // (to put a name to the colour they wore).
+  async function recordActivity(cam: Camera, nowMs: number, people: any[], image: string) {
+    const date = istDate(nowMs);
+    const key = `cctv-activity:${cam.id}:${date}`;
+    const before = await deps.kv.get<ActivityDay>(key);
+    const day = addStill(before, { date, cameraId: cam.id, clock: istClock(nowMs), everyMin: cam.everyMin, people, checks: cam.checks });
+    await deps.kv.set(key, day);
+    const pKey = `cctv-activity-photos:${cam.id}:${date}`;
+    const photos: Record<string, string> = (await deps.kv.get<Record<string, string>>(pKey)) || {};
+    const fresh = Object.keys(day.slots).filter((s) => !photos[s]);
+    if (fresh.length) {
+      const path = `activity/${cam.id}/${date}/${newId(6)}.jpg`;
+      const bytes = Uint8Array.from(atob(image), (ch) => ch.charCodeAt(0));
+      const { error } = await ensureBucket().then(() => storage().from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false })).catch((e: any) => ({ error: e }));
+      if (!error) {
+        for (const s of fresh) photos[s] = path;
+        await deps.kv.set(pKey, photos);
+      }
+    }
+    if (!before) cleanupActivity(cam.id, date).catch(() => undefined); // once a day
+  }
+  async function cleanupActivity(cameraId: string, today: string) {
+    const photoCut = addDays(today, -ACTIVITY_PHOTO_DAYS);
+    const dayCut = addDays(today, -ACTIVITY_KEEP_DAYS);
+    for (const row of await deps.getAllByPrefix(`cctv-activity-photos:${cameraId}:`)) {
+      // Rows come back as values; the date is in the paths.
+      const paths = Object.values(row || {}).filter((v): v is string => typeof v === 'string');
+      const date = paths[0]?.split('/')[2];
+      if (date && date < photoCut) {
+        await storage().from(BUCKET).remove([...new Set(paths)]).catch(() => undefined);
+        await deps.kv.del(`cctv-activity-photos:${cameraId}:${date}`);
+      }
+    }
+    for (const d of await deps.getAllByPrefix(`cctv-activity:${cameraId}:`)) {
+      if (d?.date && d.date < dayCut) await deps.kv.del(`cctv-activity:${cameraId}:${d.date}`);
+    }
+  }
+  // Pieces folded at a place over some days, from the production entries (not rejected ones).
+  async function piecesFolded(placeId: string, dates: Set<string>) {
+    const rows = await deps.getAllByPrefix('production:');
+    let n = 0;
+    for (const p of rows) {
+      if (!p || p.approvalStatus === 'rejected' || !dates.has(String(p.date || '').slice(0, 10))) continue;
+      if (p.productionHouseId !== placeId && p.storeId !== placeId) continue;
+      for (const k of FOLDED) n += Number(p[k]?.final) || 0;
+    }
+    return n;
   }
 
   // ---- The camera PC (no login: the camera's own key) ----
@@ -190,12 +259,13 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const place = await placeName(cam);
       const look = await aiLookAtCamera(deps.kv as any, { base64: image, mediaType: 'image/jpeg', place: `${cam.name}, ${place}` });
       const lastAlertAt = kind === 'motion' ? cam.lastAlert?.intruder : cam.lastAlert?.ppe;
-      const d = decide({ kind, look, checks: cam.checks, nowMs, lastAlertAt, gapMin: kind === 'motion' ? INTRUDER_GAP_MIN : PPE_GAP_MIN });
+      const d = decide({ kind, look, checks: cam.checks, nowMs, lastAlertAt, gapMin: kind === 'motion' ? INTRUDER_GAP_MIN : (cam.ppeGapMin || PPE_GAP_MIN) });
       const staff = d.alert || (kind === 'motion' && look.peopleCount > 0) ? await onShift(cam) : [];
       // Someone checked in here after hours is staff working late; so is a recognised colleague.
       if (d.alert === 'intruder' && (staff.length || onlyKnownStaff(faces, look.peopleCount))) d.alert = null;
       const seen = faces?.names || [];
       await deps.kv.set(`cctv-check:${cam.id}:${now}`, { at: now, kind, peopleCount: look.peopleCount, missing: d.missing, alert: d.alert, note: look.note, onShift: staff, seen, unknownFaces: faces?.unknown || 0 });
+      if (kind === 'scheduled' && cam.activity) await recordActivity(cam, nowMs, look.people, image).catch((e) => console.error('[cctv] activity not counted:', String(e?.message || e).slice(0, 120)));
 
       let alert: Alert | null = null;
       if (d.alert) {
@@ -234,7 +304,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const alerts = (await deps.kv.getByPrefix<Alert>('cctv-alert:')).filter((a) => a?.at >= weekAgo);
       const out = [];
       for (const cam of list) {
-        const checks = (await deps.kv.getByPrefix<any>(`cctv-check:${cam.id}:`)).filter((x) => x?.at >= weekAgo);
+        const checks = (await deps.getAllByPrefix(`cctv-check:${cam.id}:`)).filter((x) => x?.at >= weekAgo);
         const mine = alerts.filter((a) => a.cameraId === cam.id);
         out.push({
           ...publicCamera(cam), place: await placeName(cam),
@@ -347,6 +417,92 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const next = { ...a, mark: body.mark, markedBy: r.actor!.name, markedAt: new Date().toISOString() };
       await deps.kv.set(`cctv-alert:${a.id}`, next);
       return c.json({ alert: next });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // ---- Kitchen activity ----
+
+  // GET /cctv/activity?from=&to= - the owner only: per person and for the kitchen, over the days.
+  app.get(`${P}/cctv/activity`, async (c: any) => {
+    const r = await actorOf(deps, c);
+    if (r.error) return r.error;
+    if (!r.actor!.isOwner) return c.json({ error: 'Only the owner sees kitchen activity' }, 403);
+    try {
+      const today = istDate(Date.now());
+      const to = DATE.test(c.req.query('to') || '') ? c.req.query('to') : today;
+      const from = DATE.test(c.req.query('from') || '') ? c.req.query('from') : to;
+      if (from > to || addDays(from, 31) < to) return c.json({ error: 'Pick up to 31 days' }, 400);
+      const dates: string[] = [];
+      for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
+      const out = [];
+      for (const cam of (await cameras()).filter((x) => x.activity)) {
+        const days = (await Promise.all(dates.map((d) => deps.kv.get<ActivityDay>(`cctv-activity:${cam.id}:${d}`)))).filter(Boolean) as ActivityDay[];
+        const names: Record<string, Record<string, string>> = {};
+        for (const d of dates) {
+          const n = await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${d}`);
+          if (n) names[d] = n;
+        }
+        const pieces = await piecesFolded(cam.placeId, new Set(days.map((d) => d.date)));
+        out.push({
+          camera: { id: cam.id, name: cam.name, everyMin: cam.everyMin, place: await placeName(cam) },
+          ...summarise(days, names, pieces),
+          perDay: await Promise.all(days.map(async (d) => ({ date: d.date, ...summarise([d], names, await piecesFolded(cam.placeId, new Set([d.date]))).kitchen }))),
+        });
+      }
+      return c.json({ from, to, cameras: out, labels: ACTIVITY_LABEL });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // Who may put names to the day's colours: the owner, operations managers, the place's incharge.
+  const names_ok = (a: Actor, cam: Camera) => a.isOwner || a.isOps || seesPlace(a, cam);
+
+  // GET /cctv/whois?date= - the day's people by colour, with a photo, to name.
+  app.get(`${P}/cctv/whois`, async (c: any) => {
+    const r = await actorOf(deps, c);
+    if (r.error) return r.error;
+    try {
+      const date = DATE.test(c.req.query('date') || '') ? c.req.query('date') : istDate(Date.now());
+      const staff = (await deps.getAllByPrefix('unified-employee:'))
+        .filter((e: any) => e?.employeeId && !['inactive', 'archived'].includes(e.status) && e.role !== 'cluster_head' && e.designation !== 'site_auditor')
+        .map((e: any) => String(e.name || e.employeeId)).sort();
+      const out = [];
+      for (const cam of (await cameras()).filter((x) => x.activity && names_ok(r.actor!, x))) {
+        const day = await deps.kv.get<ActivityDay>(`cctv-activity:${cam.id}:${date}`);
+        if (!day) continue;
+        const names = (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`)) || {};
+        const photos = (await deps.kv.get<Record<string, string>>(`cctv-activity-photos:${cam.id}:${date}`)) || {};
+        const paths = [...new Set(Object.values(photos))];
+        const urls = new Map<string, string>();
+        if (paths.length) {
+          const { data } = await storage().from(BUCKET).createSignedUrls(paths, 3600);
+          for (const x of data || []) if (x?.path && x.signedUrl) urls.set(x.path, x.signedUrl);
+        }
+        out.push({
+          cameraId: cam.id, cameraName: cam.name, date,
+          slots: Object.entries(day.slots)
+            .filter(([, s]) => s.samples >= 2) // seen once: likely someone passing through
+            .map(([slot, s]) => ({ slot, name: names[slot] || null, first: s.first, last: s.last, photoUrl: photos[slot] ? urls.get(photos[slot]) || null : null })),
+        });
+      }
+      return c.json({ date, cameras: out, staff });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // POST /cctv/whois {cameraId, date, slot, name} - name a colour for the day (name null clears it).
+  app.post(`${P}/cctv/whois`, async (c: any) => {
+    const r = await actorOf(deps, c);
+    if (r.error) return r.error;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const cam = await deps.kv.get<Camera>(`cctv-camera:${clip(body.cameraId, 40)}`);
+      if (!cam || !names_ok(r.actor!, cam)) return c.json({ error: 'Not allowed' }, 403);
+      if (!DATE.test(body.date || '') || !clip(body.slot, 20)) return c.json({ error: 'Pick a day and a person' }, 400);
+      const key = `cctv-names:${cam.id}:${body.date}`;
+      const names = (await deps.kv.get<Record<string, string>>(key)) || {};
+      const name = clip(body.name, 60);
+      if (name) names[clip(body.slot, 20)] = name; else delete names[clip(body.slot, 20)];
+      await deps.kv.set(key, names);
+      return c.json({ names });
     } catch (err) { return fail(c, err); }
   });
 }
