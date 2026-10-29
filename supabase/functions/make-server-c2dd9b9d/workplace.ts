@@ -102,6 +102,9 @@ const MAX_PHOTO_BYTES = 1.5 * 1024 * 1024; // the app sends ~200-400 KB JPEGs (1
 const MAX_THUMB_BYTES = 200 * 1024; // ~320 px thumbnail made by the app alongside the photo
 const MAX_DATA_URL_CHARS = Math.ceil((MAX_PHOTO_BYTES * 4) / 3) + 64;
 const EARLY_UPLOAD_MINUTES = 30; // a photo hours before the window proves nothing about 3-4 PM
+// A last call this long before a window closes, to whoever still has photos to send - the stand-in
+// for someone on leave too (owner, 29 Oct 2026: one push at 3 PM wasn't enough).
+const LAST_CALL_MINUTES = 15;
 const MAX_RETAKES = 10; // per item per day, so a stuck camera button can't fill the storage
 const MAX_PHOTOS = 6; // per check: a few walls or shelves, not an album
 const MAX_SAMPLES = 6; // sample photos per check (one per named shot)
@@ -1371,7 +1374,8 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
 
   // Every 15 minutes (pg_cron, see the workplace_reminders_cron migration): keeps today's rows
   // current (so a day with no photos still counts in KPIs), pushes each person when their window
-  // opens, tells the incharge and the owner once a day per person when photos were missed, and
+  // opens and again 15 minutes before it closes if photos are still to come, tells the incharge
+  // and the owner once a day per person when photos were missed, and
   // scores photos the background check never finished.
   app.post(`${P}/cron/workplace-reminders`, async (c: any) => {
     if (!cronAllowed(c)) return c.json({ error: 'Unauthorized' }, 401);
@@ -1384,7 +1388,10 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       const byPerson = new Map<string, Assigned[]>();
       for (const a of all) byPerson.set(a.assigneeId, [...(byPerson.get(a.assigneeId) || []), stripAssignee(a)]);
       const [clusterHeads, sentRaw] = await Promise.all([deps.getAllClusterHeads(), kv.get<any>(sentKey(today))]);
-      const sent = { date: today, due: { ...(sentRaw?.due || {}) } as Record<string, string[]>, missed: { ...(sentRaw?.missed || {}) } as Record<string, boolean> };
+      const sent = {
+        date: today, due: { ...(sentRaw?.due || {}) } as Record<string, string[]>, last: { ...(sentRaw?.last || {}) } as Record<string, string[]>,
+        missed: { ...(sentRaw?.missed || {}) } as Record<string, boolean>,
+      };
       let sentChanged = false; let duePushes = 0; let missedPushes = 0;
       const rows = await mgetRows<CheckRow>(kv, [...byPerson.keys()].map((id) => checkKey(today, id)));
       const rowOf = new Map(rows.map((r) => [r.employeeId, r]));
@@ -1400,17 +1407,34 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
         const uploaded = row?.items || {};
 
         // Window just opened: one push per window, listing what's still to photograph.
+        const openedNow = new Set<string>();
         const windows = new Map<string, Assigned[]>();
         for (const a of list) if (nowMin >= toMin(a.start) && nowMin < toMin(a.end) && !uploaded[a.id]) windows.set(`${a.start}-${a.end}`, [...(windows.get(`${a.start}-${a.end}`) || []), a]);
         for (const [win, pending] of windows) {
           if ((sent.due[employeeId] || []).includes(win)) continue;
           sent.due[employeeId] = [...(sent.due[employeeId] || []), win];
           sentChanged = true;
+          openedNow.add(win);
           const end = pending[0].end;
           const names = pending.slice(0, 5).map((a) => a.name).join(', ') + (pending.length > 5 ? ` +${pending.length - 5}` : '');
           const covering = [...new Set(pending.map((a) => a.coveringForName).filter(Boolean))];
           if (await safeNotify(deps, person?.authUserId, 'workplace_due', `Workplace photos due by ${fmt12(end)}`,
             `${pending.length} photo${pending.length === 1 ? '' : 's'}: ${names}.${covering.length ? ` Covering for ${covering.join(', ')} (on leave).` : ''} · ${bnBy(end)} ছবি দিন`, undefined, today)) duePushes++;
+        }
+
+        // 15 minutes before the window closes, photos still to come: one last call per window (not
+        // in the same run as the opening push, for a window that short).
+        const closing = new Map<string, Assigned[]>();
+        for (const a of list) if (nowMin >= toMin(a.end) - LAST_CALL_MINUTES && nowMin < toMin(a.end) && !uploaded[a.id]) closing.set(`${a.start}-${a.end}`, [...(closing.get(`${a.start}-${a.end}`) || []), a]);
+        for (const [win, pending] of closing) {
+          if (openedNow.has(win) || (sent.last[employeeId] || []).includes(win)) continue;
+          sent.last[employeeId] = [...(sent.last[employeeId] || []), win];
+          sentChanged = true;
+          const end = pending[0].end;
+          const names = pending.slice(0, 5).map((a) => a.name).join(', ') + (pending.length > 5 ? ` +${pending.length - 5}` : '');
+          const covering = [...new Set(pending.map((a) => a.coveringForName).filter(Boolean))];
+          if (await safeNotify(deps, person?.authUserId, 'workplace_due', `Last call: workplace photos due by ${fmt12(end)}`,
+            `${pending.length} still to send: ${names}.${covering.length ? ` Covering for ${covering.join(', ')} (on leave).` : ''} · ${bnBy(end)} ছবি দিন, সময় প্রায় শেষ`, undefined, today)) duePushes++;
         }
 
         // Window closed without a photo: once a day per person, to the incharge(s) and the owner.
