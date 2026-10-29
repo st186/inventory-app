@@ -64,7 +64,8 @@ function line(ctx: Ctx, x1: number, y1: number, x2: number, y2: number, color = 
 }
 function box(ctx: Ctx, x: number, y: number, w: number, h: number, o: { stroke?: string; fill?: string; width?: number; radius?: number }) {
   ctx.beginPath();
-  if (o.radius) (ctx as any).roundRect(x, y, w, h, o.radius);
+  // roundRect needs Safari 16; older iPhones get square corners.
+  if (o.radius && typeof (ctx as any).roundRect === 'function') (ctx as any).roundRect(x, y, w, h, o.radius);
   else ctx.rect(x, y, w, h);
   if (o.fill) { ctx.fillStyle = o.fill; ctx.fill(); }
   if (o.stroke) { ctx.strokeStyle = o.stroke; ctx.lineWidth = o.width || 1; ctx.stroke(); }
@@ -122,7 +123,8 @@ export async function drawPayslip(slip: Payslip): Promise<HTMLCanvasElement> {
 
   // Employee details: 4 rows of 2
   const e = slip.employee;
-  const paidOn = slip.payments.length ? `${dayText(slip.payments[slip.payments.length - 1].date)}${slip.payments.at(-1)?.paidFrom ? ` · ${PAID_FROM[slip.payments.at(-1)!.paidFrom!] || slip.payments.at(-1)!.paidFrom}` : ''}` : 'Not paid yet';
+  const lastPay = slip.payments[slip.payments.length - 1];
+  const paidOn = lastPay ? `${dayText(lastPay.date)}${lastPay.paidFrom ? ` · ${PAID_FROM[lastPay.paidFrom] || lastPay.paidFrom}` : ''}` : 'Not paid yet';
   const cells: [string, string, string][] = [
     ['Employee name', 'কর্মীর নাম', e.name],
     ['Employee ID', 'কর্মী আইডি', e.employeeId],

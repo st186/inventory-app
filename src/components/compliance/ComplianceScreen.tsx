@@ -204,8 +204,16 @@ function ItemSheet({ item, placeName, onClose, onChanged, onEdit }: {
     try { await api.removeItem(item.id); onChanged(); onClose(); }
     catch (err) { toast.error(err instanceof Error ? err.message : 'Could not remove it'); setBusy(null); }
   };
+  // The tab opens on the tap itself (Safari blocks one opened after the link comes back).
   const viewPhoto = async (path: string) => {
-    try { window.open(await billLink(path), '_blank', 'noopener'); } catch (err) { toast.error(err instanceof Error ? err.message : 'Could not open the photo'); }
+    const tab = window.open('', '_blank');
+    try {
+      const url = await billLink(path);
+      if (tab) tab.location.href = url; else window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      tab?.close();
+      toast.error(err instanceof Error ? err.message : 'Could not open the photo');
+    }
   };
 
   return (

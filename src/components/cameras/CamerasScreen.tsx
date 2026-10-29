@@ -102,7 +102,14 @@ export function CamerasScreen() {
         <div className="flex flex-col gap-4">
           <Callout tone="warning" title="Shown once">Put it in the camera PC's settings file (camera_watch.ini, key =). Anyone with it can send pictures as this camera.</Callout>
           <code className="break-all rounded-md bg-surface-2 p-3 text-body-sm">{key}</code>
-          <Button leadingIcon={<Copy />} onClick={() => { navigator.clipboard?.writeText(key || ''); toast.success('Copied'); }}>Copy key</Button>
+          <Button
+            leadingIcon={<Copy />}
+            onClick={async () => {
+              try { await navigator.clipboard.writeText(key || ''); toast.success('Copied'); } catch { toast.error('Could not copy - select the key and copy it'); }
+            }}
+          >
+            Copy key
+          </Button>
         </div>
       </ResponsiveModal>
     </Page>

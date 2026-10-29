@@ -94,6 +94,7 @@ export function Sidebar({
       <button
         type="button"
         onClick={onAccount}
+        data-tour="account"
         className="flex shrink-0 items-center gap-3 border-t border-border px-4 py-3 text-left outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <InitialsAvatar name={userName} size={40} />

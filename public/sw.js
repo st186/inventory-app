@@ -18,8 +18,8 @@ self.addEventListener('push', (event) => {
   let notificationData = {
     title: 'Bhandar-IMS',
     body: 'You have a new notification',
-    icon: '/icon-192x192.png', // You can add your app icon here
-    badge: '/badge-72x72.png',
+    icon: '/icon-192.png',
+    badge: '/favicon-32.png',
     tag: 'bhandar-notification',
     requireInteraction: false,
   };
@@ -62,6 +62,9 @@ self.addEventListener('push', (event) => {
       tag: notificationData.tag,
       requireInteraction: notificationData.requireInteraction,
       data: notificationData.data,
+      ...(notificationData.image ? { image: notificationData.image } : {}),
+      ...(notificationData.silent !== undefined ? { silent: notificationData.silent } : {}),
+      ...(notificationData.renotify !== undefined ? { renotify: notificationData.renotify } : {}),
     })
   );
 });

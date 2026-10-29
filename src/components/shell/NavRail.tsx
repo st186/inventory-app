@@ -46,6 +46,7 @@ export function NavRail({ tabs, activeTab, badges, onSelect, userName, onAccount
       <button
         type="button"
         onClick={onAccount}
+        data-tour="account"
         aria-label={t('account.yours')}
         className="flex size-11 items-center justify-center rounded-full outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring"
       >
