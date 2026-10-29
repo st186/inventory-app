@@ -33,12 +33,25 @@ const people = [
   { employeeId: 'BM010', name: 'Nabendu', designation: 'store_ops', kind: 'manager', managerName: 'Rohan Rajbanshi', mine: reports[0], manager: null },
 ];
 
+// Cameras (server cctv.ts): one kitchen camera, two alerts (photo: the app logo stands in).
+const cameras = [
+  { id: 'cam-kitchen1', name: 'Kitchen camera', placeKind: 'production', placeId: 'PH-1', place: 'Main Production House', checks: ['cap', 'gloves', 'apron'], from: '07:00', to: '21:00', everyMin: 30, active: true, afterHours: true, keyHint: 'ab12', online: true, lastSeenAt: '2026-10-29T13:05:25Z', week: { checks: 8, alerts: 2, falseAlarms: 0, unmarked: 2 }, lastCheck: null },
+  { id: 'cam-store-door', name: 'Entrance door', placeKind: 'store', placeId: 'S-1', place: 'Bunny Momos 1', checks: [], from: '09:00', to: '23:30', everyMin: 30, active: false, afterHours: false, keyHint: 'cd34', online: false, week: { checks: 0, alerts: 0, falseAlarms: 0, unmarked: 0 }, lastCheck: null },
+];
+const alerts = [
+  { id: 'a1', cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', kind: 'ppe', at: '2026-10-29T13:05:25Z', text: '2 people without aprons', note: 'Two kitchen staff in hairnets at the momo station.', peopleCount: 2, onShift: ['Vijay Das'], seen: [], unknownFaces: 0, photoUrl: '/bunny-logo.png' },
+  { id: 'a2', cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', kind: 'intruder', at: '2026-10-28T19:40:00Z', text: '1 in view after hours', note: '', peopleCount: 1, onShift: [], seen: [], unknownFaces: 1, photoUrl: null, mark: 'false' },
+];
+
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
 export function installPerfPreviewMock() {
   const real = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/cctv/cameras') && !init?.method) return json({ cameras, canManage: true });
+    if (url.includes('/cctv/alerts') && /\/mark$/.test(url)) return json({ alert: {} });
+    if (url.includes('/cctv/alerts')) return json({ alerts });
     if (url.includes('/payslip/inbox')) return json({ items: [{ month: '2026-10', payslipReady: true, downloaded: false, reports }] });
     if (/\/payslip\/[\d-]+\/seen/.test(url)) return json({ state: {} });
     if (url.includes('/payslip/months')) return json({ months: [{ month: '2026-10', paid: 10460, ready: true }, { month: '2026-09', paid: 9000, ready: true }] });
