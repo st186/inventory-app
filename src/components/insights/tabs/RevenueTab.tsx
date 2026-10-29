@@ -3,7 +3,7 @@
 // by hour, service type, order value, discounts, payment modes, cancellations, order sizes).
 import { memo, useMemo } from 'react';
 import { Megaphone, Percent, Store } from 'lucide-react';
-import { CHANNEL_COLORS, ShareBars } from '../../ui/chart-theme';
+import { CHANNEL_COLORS, CompareBars, ShareBars } from '../../ui/chart-theme';
 import { ListGroup, ListRow } from '../../ui/list-row';
 import { StatTile } from '../../ui/stat-tile';
 import { useT } from '../../../utils/i18n';
@@ -16,7 +16,7 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
   const {
     getPeriodLabel, metrics, previousPeriodMetrics, channelMixChartData, commissionAdSpendChartData, storeOnlineSales, periodRange, setSelectedExpenseCategory,
     ordersPerDayData, ordersPerDayChartData, offlineOrdersMedian, onlineOrdersMedian, ordersByHourData, ordersByHourChartData, peakHour, serviceTypeData,
-    serviceTypeChartData, avgOrderValueData, avgOrderValueChartData, discountPctData, discountPctChartData, paymentModeBreakdownData, cancellationTrendData,
+    previousServiceTypeData, avgOrderValueData, avgOrderValueChartData, discountPctData, discountPctChartData, paymentModeBreakdownData, cancellationTrendData,
     cancellationChartData, orderValueHistogramData,
   } = d;
   const prevLabel = shortPrevLabel(d, lang);
@@ -48,12 +48,9 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
     { key: 'prev_offline', name: 'Counter (last period)', color: CHART_COLORS.primary, dashed: true },
     { key: 'prev_online', name: 'Online (last period)', color: CHART_COLORS.quaternary, dashed: true },
   ];
-  const serviceSeries: SeriesSpec[] = [
-    { key: 'DineIn', name: 'Dine-in', color: CHART_COLORS.secondary, kind: 'bar', stack: 's' },
-    { key: 'TakeAway', name: 'Takeaway', color: CHART_COLORS.tertiary, kind: 'bar', stack: 's' },
-    { key: 'HomeDelivery', name: 'Delivery', color: CHART_COLORS.quaternary, kind: 'bar', stack: 's' },
-    { key: 'prev_DineIn', name: 'Dine-in (last period)', color: CHART_COLORS.secondary, dashed: true },
-  ];
+  // Average orders a day of one service type over the days that had orders.
+  const perDay = (trend: { DineIn: number; TakeAway: number; HomeDelivery: number }[], k: 'DineIn' | 'TakeAway' | 'HomeDelivery') =>
+    (trend.length ? trend.reduce((s, d) => s + (d[k] || 0), 0) / trend.length : 0);
   const aovSeries: SeriesSpec[] = [
     { key: 'offlineAOV', name: 'Counter', color: CHANNEL_COLORS.counter },
     { key: 'onlineAOV', name: 'Online (Zomato + Swiggy)', color: CHART_COLORS.quaternary },
@@ -161,13 +158,21 @@ export const RevenueTab = memo(function RevenueTab({ d }: { d: AnalyticsData }) 
           )}
         </ChartCard>
 
-        <ChartCard title="Dine-in, takeaway and delivery" caption="Orders a day" legend={legendFor(serviceSeries)}>
+        <ChartCard title="Dine-in, takeaway and delivery" caption="Orders a day: this period (bar) and last period (thin grey bar)">
           {serviceTypeData.trend.length === 0 ? <ChartEmpty title={noOrders} /> : (
             <>
-              <TrendChart data={serviceTypeChartData} series={serviceSeries} format="number" height={200} ariaLabel="Orders a day by service type" />
+              <CompareBars
+                format={(n) => n.toLocaleString('en-IN', { maximumFractionDigits: 1 })}
+                items={([['DineIn', 'Dine-in', CHART_COLORS.secondary], ['TakeAway', 'Takeaway', CHART_COLORS.tertiary], ['HomeDelivery', 'Delivery', CHART_COLORS.quaternary]] as const).map(([k, label, color]) => ({
+                  label, color,
+                  now: perDay(serviceTypeData.trend, k),
+                  last: previousServiceTypeData.trend.length ? perDay(previousServiceTypeData.trend, k) : null,
+                }))}
+              />
+              {serviceTotal > 0 && <p className="border-t border-border pt-3 text-label font-semibold text-text-2">Share of sales</p>}
               {serviceTotal > 0 && (
                 <ShareBars
-                  className="border-t border-border pt-3"
+                  className=""
                   items={[
                     { label: 'Dine-in', value: serviceTypeData.revenueByType.DineIn, color: CHART_COLORS.secondary, valueText: inr(serviceTypeData.revenueByType.DineIn) },
                     { label: 'Takeaway', value: serviceTypeData.revenueByType.TakeAway, color: CHART_COLORS.tertiary, valueText: inr(serviceTypeData.revenueByType.TakeAway) },
