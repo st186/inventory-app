@@ -334,7 +334,11 @@ export const guideRoutes: Route[] = [
   { method: 'GET', re: /\/workplace\/guide$/, reply: () => GUIDE },
   { method: 'GET', re: /\/app-version$/, reply: () => ({ latestVersion: null, features: [] }) },
   { method: 'GET', re: /\/opening-checklist\/today$/, reply: () => ({ date: today, mine: PERSONA === 'store-incharge' ? [opening()] : [], ...(LEADS ? { overview: [opening()] } : {}) }) },
-  { method: 'GET', re: /\/shift\/cover-today$/, reply: () => ({ setUp: false, date: today, cover: false, reasons: [] }) },
+  {
+    method: 'GET', re: /\/shift\/cover-today$/, reply: () => (PERSONA === 'operations'
+      ? { setUp: true, date: today, cover: true, reasons: ['Counter Crew on leave'], storeId: 'STORE-1', storeName: STORE.name, start: '17:00', end: '22:00', productionEnd: '16:30', punch: null }
+      : { setUp: false, date: today, cover: false, reasons: [] }),
+  },
   { method: 'GET', re: /\/shift\/cover-team$/, reply: () => ({ covers: [] }) },
   {
     method: 'GET', re: /\/shopping-lists$/, reply: () => ({

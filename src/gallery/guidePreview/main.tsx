@@ -114,6 +114,14 @@ function GuideShell() {
     if (personaId === 'production-incharge') out.getMyChecks = async () => clone(HOUSE_MY_CHECKS);
     if (personaId === 'kitchen-crew') out.getMyChecks = async () => ({ date: today, earlyMinutes: 30, items: [] });
     if (personaId === 'store-crew') out.getMyChecks = async () => clone(STORE_MY_CHECKS);
+    // Operations' own shift: the production house, 8 AM to 7 PM (Aniket's settings).
+    if (personaId === 'operations') {
+      const shift = raw.getShiftToday as (...a: unknown[]) => Promise<Record<string, unknown>>;
+      out.getShiftToday = async (...a: unknown[]) => {
+        const r = await shift(...a);
+        return { ...r, workplace: 'production', punch: null, settings: { shiftStart: '08:00', shiftEnd: '19:00', graceMin: 10, weeklyOff: [] }, pins: [{ kind: 'production', id: 'PH-1', name: 'Production house', lat: 0, lng: 0 }] };
+      };
+    }
     // The rider's Home is the real rides screen, on the rider preview's made-up rides.
     if (personaId === 'rider') out.renderRiderTrips = realHomeData.renderRiderTrips;
     return out as unknown as HomeData;

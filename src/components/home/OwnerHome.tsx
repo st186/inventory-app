@@ -11,6 +11,7 @@ import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/Re
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
 import { alertMeta, alertTitle, useWorkplaceAlerts } from '../workplace/useWorkplaceAlerts';
 import { StoreCoverCard, StoreCoverNotice } from '../kpi/StoreCover';
+import { ShiftClockCard } from '../kpi/ShiftClockCard';
 import { OpeningChecklistCard, OpeningOverviewSheet, nowHHMM, useOpeningToday } from '../opening/OpeningChecklist';
 import { RunningLowCard } from '../supplies/RunningLow';
 import { ShoppingCard } from '../supplies/Shopping';
@@ -255,6 +256,9 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* The team first (owner, 28 Oct 2026): who's in today before the money. */}
         <div className="flex flex-col gap-3 lg:col-span-12">
+          {/* Operations works a shift (owner, 29 Oct 2026: the day starts at the production house -
+              this card was only under My KPIs, so the store check-in was the only one on Home). */}
+          {variant === 'ops' && <ShiftClockCard isLead framed={false} />}
           {/* Store cover: the operations incharge's own evening at the store, and who covers today. */}
           <StoreCoverCard />
           <StoreCoverNotice />
