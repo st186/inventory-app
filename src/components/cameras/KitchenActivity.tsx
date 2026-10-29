@@ -3,7 +3,8 @@
 //    operations manager or the place's incharge to put a name to each (once a day);
 //  - KitchenActivity (owner only): per person, minutes folding, at other kitchen work, cleaning, on
 //    the phone and idle, how often on the phone, PPE share; for the kitchen, folding hours and
-//    pieces made per folding hour. Work sampling: each still stands for the minutes since the last.
+//    pieces made per folding hour. Work sampling: the camera takes bursts of 20 frames 15 seconds
+//    apart, then waits 30 minutes; each frame stands for its share of the cycle.
 import { useCallback, useEffect, useState } from 'react';
 import { Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -108,7 +109,10 @@ export function KitchenActivity() {
                 <StatTile label="On the phone" value={<span className="num">{hm(c.kitchen.phoneMinutes)}</span>} caption="all people" />
               </div>
               <p className="text-body-sm text-text-2">
-                From {c.kitchen.stills} stills, one every {c.camera.everyMin} minutes: each sighting counts {c.camera.everyMin} minutes, so these are estimates, good for trends. Unnamed people show by the colour of their top - name them in "Who is who".
+                {c.camera.burst && c.kitchen.bursts
+                  ? <>From {c.kitchen.bursts} burst{c.kitchen.bursts === 1 ? '' : 's'} of {c.camera.burst.frames} frames, {c.camera.burst.gapSec} seconds apart, then a {c.camera.everyMin}-minute wait: each frame stands for about {Math.round(((c.camera.everyMin + (c.camera.burst.frames * c.camera.burst.gapSec) / 60) / c.camera.burst.frames) * 10) / 10} minutes</>
+                  : <>From {c.kitchen.stills} stills, one every {c.camera.everyMin} minutes: each sighting counts {c.camera.everyMin} minutes</>}
+                , so these are estimates, good for trends. Unnamed people show by the colour of their top - name them in "Who is who".
               </p>
               <div className="flex flex-col gap-3">
                 {c.people.map((p, i) => {

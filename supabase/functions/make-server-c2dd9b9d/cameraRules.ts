@@ -41,6 +41,21 @@ export function nextStillSeconds(o: { now: string; from: string; to: string; act
   return Math.max(0, Math.round(o.everyMin * 60 - o.sinceLastS));
 }
 
+/** Kitchen-activity cameras look in bursts (owner, 29 Oct 2026): 20 frames 15 seconds apart. */
+export const BURST = { frames: 20, gapSec: 15 };
+
+/** Minutes each burst frame stands for: the burst plus the wait after it, shared by its frames. */
+export const minutesPerFrame = (everyMin: number, burst = BURST) => (everyMin + (burst.frames * burst.gapSec) / 60) / burst.frames;
+
+/**
+ * Whether a burst that has just come in was taken in working hours: it counts when it started
+ * inside them (one that runs a few minutes past closing still counts).
+ */
+export function burstInHours(nowMs: number, from: string, to: string, burst = BURST): boolean {
+  const startedMs = nowMs - (burst.frames * burst.gapSec + 60) * 1000;
+  return inHours(istClock(nowMs), from, to) || inHours(istClock(startedMs), from, to);
+}
+
 /** People seen clearly without each item (only a clear "no" counts; "unclear" never alerts). */
 export function missingPpe(look: Look, checks: PpeItem[]): Partial<Record<PpeItem, number>> {
   const out: Partial<Record<PpeItem, number>> = {};

@@ -1381,6 +1381,93 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
   return { peopleCount: Math.max(people.length, Math.min(30, Math.round(parsed.peopleCount))), people, note: String(parsed.note || '').slice(0, 200) };
 }
 
+// A burst from a kitchen-activity camera (cctv.ts, owner 29 Oct 2026 "for better detection"):
+// 20 frames 15 seconds apart, looked at together so each person is followed through the minutes
+// and what they do is judged from the movement across frames, not one frozen moment.
+const BURST_SYSTEM = `You watch a short burst of CCTV frames from a momo kitchen in India: the same camera, frames in order, a fixed number of seconds apart.
+- List each distinct person seen in any frame once, following them from frame to frame by their clothes and where they are. Not people in posters, screens or reflections.
+- top: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet).
+- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking; away = not in this frame).
+- phoneFrames: the frame numbers (1 = first) where a phone is in their hand or at their ear.
+- cap (head covering: cap, hairnet or bandana), gloves (on both visible hands), apron: judged across the frames. "no" only when the item is clearly missing in most frames where the person is clearly visible; "yes" when clearly worn; otherwise "unclear".
+- bestFrame: the frame number where this person is seen most clearly.
+- evidenceFrame: the frame number that best shows someone without a cap, gloves or apron; if nobody is missing anything, the clearest frame.
+- peopleCount: the most people in any one frame.`;
+const burstSchema = {
+  type: 'object',
+  properties: {
+    peopleCount: { type: 'integer', description: 'The most people in any one frame' },
+    people: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          where: { type: 'string', description: 'Where they mostly are in the frame, a few words' },
+          top: cameraSchema.properties.people.items.properties.top,
+          cap: yesNo, gloves: yesNo, apron: yesNo,
+          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
+          phoneFrames: { type: 'array', items: { type: 'integer' } },
+          bestFrame: { type: 'integer' },
+        },
+        required: ['where', 'top', 'cap', 'gloves', 'apron', 'activities', 'phoneFrames', 'bestFrame'],
+        additionalProperties: false,
+      },
+    },
+    evidenceFrame: { type: 'integer' },
+    note: { type: 'string', description: 'One short sentence on what the burst shows' },
+  },
+  required: ['peopleCount', 'people', 'evidenceFrame', 'note'],
+  additionalProperties: false,
+};
+export type BurstLook = {
+  peopleCount: number;
+  people: { where: string; top: string; cap: string; gloves: string; apron: string; activities: string[]; phoneFrames: number[]; bestFrame: number }[];
+  evidenceFrame: number;
+  note: string;
+};
+
+export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string }): Promise<BurstLook> {
+  const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
+  const n = burst.frames.length;
+  const content: any[] = [];
+  burst.frames.forEach((data, i) => {
+    content.push({ type: 'text', text: `Frame ${i + 1}` });
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
+  });
+  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}. ${n} frames, ${burst.gapSec} seconds apart: give each person exactly ${n} activities.` });
+  const res = await callClaude(deps, {
+    purpose: 'camera',
+    system: BURST_SYSTEM,
+    effort: 'low',
+    noThinking: true,
+    maxTokens: 4000,
+    format: { type: 'json_schema', schema: burstSchema },
+    messages: [{ role: 'user', content }],
+  });
+  let parsed: any = null;
+  try { parsed = JSON.parse(textOf(res)); } catch { /* handled below */ }
+  if (!parsed || typeof parsed.peopleCount !== 'number') throw new AiError('The camera check returned nothing.', 502);
+  const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
+  const frameNo = (v: any, fallback: number) => (Number.isInteger(v) && v >= 1 && v <= n ? v : fallback);
+  const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => {
+    const acts = (Array.isArray(p?.activities) ? p.activities : []).slice(0, n).map((a: any) => String(a || 'away').slice(0, 20));
+    while (acts.length < n) acts.push('away');
+    const firstSeen = acts.findIndex((a: string) => a !== 'away') + 1 || 1;
+    return {
+      where: String(p?.where || '').slice(0, 60), top: String(p?.top || 'other').slice(0, 20), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
+      activities: acts,
+      phoneFrames: [...new Set((Array.isArray(p?.phoneFrames) ? p.phoneFrames : []).filter((f: any) => Number.isInteger(f) && f >= 1 && f <= n))] as number[],
+      bestFrame: frameNo(p?.bestFrame, firstSeen),
+    };
+  });
+  return {
+    peopleCount: Math.max(people.length ? 1 : 0, Math.min(30, Math.round(parsed.peopleCount))),
+    people,
+    evidenceFrame: frameNo(parsed.evidenceFrame, people[0]?.bestFrame || 1),
+    note: String(parsed.note || '').slice(0, 200),
+  };
+}
+
 export async function aiScorePhoto(
   kv: Kv,
   photo: { base64: string; mediaType: string; itemName: string; hint?: string },
