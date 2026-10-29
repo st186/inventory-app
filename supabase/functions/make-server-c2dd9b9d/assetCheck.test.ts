@@ -7,19 +7,26 @@ let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
 
 test('the check is open from the 25th of Jan / Apr / Jul / Oct to the 5th of the next month', () => {
-  assert.equal(checkPeriodOf('2026-10-24'), null);
-  assert.equal(checkPeriodOf('2026-10-25'), '2026-10');
-  assert.equal(checkPeriodOf('2026-10-31'), '2026-10');
-  assert.equal(checkPeriodOf('2026-11-05'), '2026-10');
-  assert.equal(checkPeriodOf('2026-11-06'), null);
+  assert.equal(checkPeriodOf('2027-04-24'), null);
+  assert.equal(checkPeriodOf('2027-04-25'), '2027-04');
+  assert.equal(checkPeriodOf('2027-04-30'), '2027-04');
+  assert.equal(checkPeriodOf('2027-05-05'), '2027-04');
+  assert.equal(checkPeriodOf('2027-05-06'), null);
   assert.equal(checkPeriodOf('2027-02-03'), '2027-01');
-  assert.equal(checkPeriodOf('2026-12-31'), null);
+  assert.equal(checkPeriodOf('2027-12-31'), null);
+});
+
+test('the first check is January 2027, not October 2026 (owner: "start in jan")', () => {
+  assert.equal(checkPeriodOf('2026-10-31'), null);
+  assert.equal(checkPeriodOf('2026-11-03'), null);
+  assert.equal(checkPeriodOf('2027-01-25'), '2027-01');
 });
 
 test('the next check', () => {
-  assert.equal(nextCheckPeriod('2026-10-30'), '2026-10'); // open now
+  assert.equal(nextCheckPeriod('2026-10-30'), '2027-01');
   assert.equal(nextCheckPeriod('2026-11-10'), '2027-01');
   assert.equal(nextCheckPeriod('2027-01-10'), '2027-01'); // later this month
+  assert.equal(nextCheckPeriod('2027-01-28'), '2027-01'); // open now
   assert.equal(nextCheckPeriod('2027-03-30'), '2027-04');
 });
 

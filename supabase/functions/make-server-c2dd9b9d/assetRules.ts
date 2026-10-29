@@ -370,6 +370,8 @@ export function planReconcile(input: {
 // month to the 5th of the next. A surprise auditor also gets 5 of the place's items to find.
 
 export const CHECK_MONTHS = [1, 4, 7, 10];
+// The first check is January 2027 (owner, 30 Oct 2026: "start in jan" - not with October's count).
+export const CHECKS_FROM = '2027-01';
 export const CHECK_PHOTO_ABOVE = 2000;
 export const CHECK_OPENS_DAY = 25;
 export const CHECK_CLOSES_DAY = 5;
@@ -379,16 +381,16 @@ const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
 /** The check ('YYYY-MM' of its month) a date can be done for, or null outside the window. */
 export function checkPeriodOf(date: string): string | null {
   const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7)), d = Number(date.slice(8, 10));
-  if (CHECK_MONTHS.includes(m) && d >= CHECK_OPENS_DAY) return ym(y, m);
   const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y;
-  if (CHECK_MONTHS.includes(pm) && d <= CHECK_CLOSES_DAY) return ym(py, pm);
-  return null;
+  const p = CHECK_MONTHS.includes(m) && d >= CHECK_OPENS_DAY ? ym(y, m) : CHECK_MONTHS.includes(pm) && d <= CHECK_CLOSES_DAY ? ym(py, pm) : null;
+  return p && p >= CHECKS_FROM ? p : null;
 }
 
 /** The check that is open on a date, or the next one ('YYYY-MM'). */
 export function nextCheckPeriod(date: string): string {
   const open = checkPeriodOf(date);
   if (open) return open;
+  if (date.slice(0, 7) < CHECKS_FROM) return CHECKS_FROM;
   let y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7));
   for (let i = 0; i < 13; i++) {
     if (CHECK_MONTHS.includes(m) && (i > 0 || Number(date.slice(8, 10)) < CHECK_OPENS_DAY)) return ym(y, m);

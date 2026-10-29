@@ -20,7 +20,7 @@ import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
 import { paytmAnchorBefore, paytmMovement, paytmSourcesForStore, payoutHitsPaytm, recalDayEndBalance, recalibrationOn } from './paytmRules.ts';
 import { registerAssetsRoutes } from './assets.ts';
-import { CHECK_MONTHS } from './assetRules.ts';
+import { CHECKS_FROM, CHECK_MONTHS } from './assetRules.ts';
 import { registerWorkplaceRoutes, markCheckOk } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
@@ -15266,7 +15266,7 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
     // Every 3 months the equipment check goes with the momo count (owner, 30 Oct 2026): each store
     // and production house incharge, same five reminders, until their place's check is saved.
     const equipment: any[] = [];
-    if (CHECK_MONTHS.includes(Number(last.slice(5, 7)))) {
+    if (CHECK_MONTHS.includes(Number(last.slice(5, 7))) && last.slice(0, 7) >= CHECKS_FROM) {
       const houses = (await getAllByPrefixWithRetry('production_house_')).filter((h: any) => h?.id && h.status !== 'inactive');
       const places = [...stores.map((st: any) => ({ kind: 'store', id: String(st.id), name: st.name, designation: 'store_incharge' })), ...houses.map((h: any) => ({ kind: 'production_house', id: String(h.id), name: h.name || 'Production house', designation: 'production_incharge' }))];
       for (const pl of places) {
