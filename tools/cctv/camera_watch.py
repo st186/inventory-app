@@ -23,6 +23,11 @@ from datetime import datetime
 
 import cv2
 
+try:  # face recognition (faces.py): optional - stills go without names until it is set up
+    import faces as face_book
+except Exception:  # noqa: BLE001
+    face_book = None
+
 HOME = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "BunnyCamera")
 CONFIG = os.path.join(HOME, "camera_watch.ini")
 LOG = os.path.join(HOME, "camera_watch.log")
@@ -88,12 +93,12 @@ def call(s, path, body=None):
 
 
 def grab_still(url):
-    """One fresh full-size frame as base64 JPEG (or None)."""
+    """One fresh full-size frame: (base64 JPEG, the frame) or (None, None)."""
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
             log("camera not reachable (check the Wi-Fi band, the address and the camera account)")
-            return None
+            return None, None
         frame = None
         for _ in range(12):  # skip the first frames so the picture is current and complete
             ok, f = cap.read()
@@ -101,21 +106,33 @@ def grab_still(url):
                 frame = f
         if frame is None:
             log("camera sent no picture")
-            return None
+            return None, None
         h, w = frame.shape[:2]
-        if w > 1280:
-            frame = cv2.resize(frame, (1280, int(h * 1280 / w)))
-        ok, jpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        return base64.b64encode(jpg.tobytes()).decode() if ok else None
+        small = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
+        ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        return (base64.b64encode(jpg.tobytes()).decode(), frame) if ok else (None, None)
     finally:
         cap.release()
 
 
 def send_still(s, kind):
-    image = grab_still(s["still_url"])
+    image, frame = grab_still(s["still_url"])
     if not image:
         return None
-    res = call(s, "/cctv/frame", {"kind": kind, "image": image})
+    body = {"kind": kind, "image": image}
+    # Names of the staff recognised in the full-size frame (the face numbers never leave this PC).
+    if face_book is not None:
+        try:
+            seen = face_book.identify(frame)
+            if seen is not None:
+                body["faces"] = seen
+                if seen["names"] or seen["unknown"]:
+                    known = ", ".join(seen["names"]) or "none known"
+                    extra = f" + {seen['unknown']} unknown" if seen["unknown"] else ""
+                    log(f"faces: {known}{extra}")
+        except Exception as e:  # noqa: BLE001
+            log(f"face check failed: {type(e).__name__}")
+    res = call(s, "/cctv/frame", body)
     if res:
         if res.get("skipped"):
             log(f"{kind} still skipped: {res['skipped']}")

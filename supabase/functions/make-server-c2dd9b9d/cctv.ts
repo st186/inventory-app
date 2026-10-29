@@ -4,10 +4,11 @@
 // aiLookAtCamera) counts people and judges each item yes / no / unclear; only a clear "no" raises a
 // PPE alert. Alerts go to the place's incharge and the owner with the photo; whoever opens one
 // marks it correct, false alarm or (after hours) one of us, so we can see how well it works.
-// No face recognition (owner: "if i can detect vijay and other workers without face recognition
-// its fine"): the app's shift check-ins say who is at the place - movement after hours while
-// someone is checked in there is them working late, not an intruder, and a PPE alert names who is
-// on shift. Registered from kpi.ts. The rules are in cameraRules.ts.
+// Who is there: the app's shift check-ins (movement after hours while someone is checked in there
+// is them working late, not an intruder) and face recognition on the camera PC only
+// (tools/cctv/faces.py - the face numbers never leave it; it sends the names it recognised). After
+// hours, people who are all recognised colleagues aren't an intruder either; alerts say who was
+// seen and who is on shift. Registered from kpi.ts. The rules are in cameraRules.ts.
 //
 //   cctv-camera:{id}            name, place, what to check, working hours, how often, key (hashed)
 //   cctv-alert:{id}             kind ppe | intruder, when, what was missing, photo path, the mark
@@ -15,7 +16,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtCamera } from './insights.ts';
-import { PPE_ITEMS, decide, inHours, istClock, minutesUntilHours, missingText, type PpeItem } from './cameraRules.ts';
+import { PPE_ITEMS, cleanFaces, decide, inHours, istClock, minutesUntilHours, missingText, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
 const KEEP_DAYS = 30;
@@ -32,7 +33,7 @@ type Camera = {
 };
 type Alert = {
   id: string; cameraId: string; kind: 'ppe' | 'intruder'; at: string; missing: Partial<Record<PpeItem, number>>; peopleCount: number;
-  note: string; photoPath: string | null; onShift?: string[]; mark?: 'correct' | 'false' | 'staff'; markedBy?: string; markedAt?: string;
+  note: string; photoPath: string | null; onShift?: string[]; seen?: string[]; unknownFaces?: number; mark?: 'correct' | 'false' | 'staff'; markedBy?: string; markedAt?: string;
 };
 
 let client: any = null;
@@ -155,6 +156,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     try {
       const body = await c.req.json().catch(() => ({}));
       const kind = body.kind === 'motion' ? 'motion' : 'scheduled';
+      const faces = cleanFaces(body.faces);
       const image = String(body.image || '');
       if (!image || image.length > MAX_IMAGE_CHARS || !/^[A-Za-z0-9+/=]+$/.test(image.slice(0, 200))) return c.json({ error: 'Send one JPEG as base64' }, 400);
       const nowMs = Date.now();
@@ -178,9 +180,10 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const lastAlertAt = kind === 'motion' ? cam.lastAlert?.intruder : cam.lastAlert?.ppe;
       const d = decide({ kind, look, checks: cam.checks, nowMs, lastAlertAt, gapMin: kind === 'motion' ? INTRUDER_GAP_MIN : PPE_GAP_MIN });
       const staff = d.alert || (kind === 'motion' && look.peopleCount > 0) ? await onShift(cam) : [];
-      // Someone checked in here after hours is staff working late.
-      if (d.alert === 'intruder' && staff.length) d.alert = null;
-      await deps.kv.set(`cctv-check:${cam.id}:${now}`, { at: now, kind, peopleCount: look.peopleCount, missing: d.missing, alert: d.alert, note: look.note, onShift: staff });
+      // Someone checked in here after hours is staff working late; so is a recognised colleague.
+      if (d.alert === 'intruder' && (staff.length || onlyKnownStaff(faces, look.peopleCount))) d.alert = null;
+      const seen = faces?.names || [];
+      await deps.kv.set(`cctv-check:${cam.id}:${now}`, { at: now, kind, peopleCount: look.peopleCount, missing: d.missing, alert: d.alert, note: look.note, onShift: staff, seen, unknownFaces: faces?.unknown || 0 });
 
       let alert: Alert | null = null;
       if (d.alert) {
@@ -190,15 +193,15 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         const { error } = await ensureBucket().then(() => storage().from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false }))
           .catch((e: any) => ({ error: e }));
         if (error) console.error('[cctv] photo not stored:', String(error?.message || error).slice(0, 120));
-        alert = { id, cameraId: cam.id, kind: d.alert, at: now, missing: d.missing, peopleCount: look.peopleCount, note: look.note, photoPath: error ? null : path, onShift: staff };
+        alert = { id, cameraId: cam.id, kind: d.alert, at: now, missing: d.missing, peopleCount: look.peopleCount, note: look.note, photoPath: error ? null : path, onShift: staff, seen, unknownFaces: faces?.unknown || 0 };
         await deps.kv.set(`cctv-alert:${id}`, alert);
         const fresh = (await deps.kv.get<Camera>(`cctv-camera:${cam.id}`)) || cam;
         await deps.kv.set(`cctv-camera:${cam.id}`, { ...fresh, lastAlert: { ...(fresh.lastAlert || {}), [d.alert]: now } });
         const at = new Date(nowMs + 330 * 60000).toISOString().slice(11, 16);
         const title = d.alert === 'intruder' ? `Someone at ${place} after hours` : `PPE missing at ${place}`;
         const message = d.alert === 'intruder'
-          ? `${look.peopleCount} ${look.peopleCount === 1 ? 'person' : 'people'} seen by ${cam.name} at ${at} (working hours ${cam.from}-${cam.to}). Open Cameras to see the photo. · কাজের সময়ের বাইরে কেউ ঢুকেছে`
-          : `${missingText(d.missing)} at ${at} (${cam.name}).${staff.length ? ` On shift: ${staff.join(', ')}.` : ''} Open Cameras to see the photo. · টুপি / গ্লাভস / অ্যাপ্রন নেই`;
+          ? `${look.peopleCount} ${look.peopleCount === 1 ? 'person' : 'people'} seen by ${cam.name} at ${at} (working hours ${cam.from}-${cam.to})${faces?.unknown ? `, ${faces.unknown} face${faces.unknown === 1 ? '' : 's'} not recognised` : ''}${seen.length ? `; recognised: ${seen.join(', ')}` : ''}. Open Cameras to see the photo. · কাজের সময়ের বাইরে কেউ ঢুকেছে`
+          : `${missingText(d.missing)} at ${at} (${cam.name}).${seen.length ? ` Seen: ${seen.join(', ')}.` : ''}${staff.length ? ` On shift: ${staff.join(', ')}.` : ''} Open Cameras to see the photo. · টুপি / গ্লাভস / অ্যাপ্রন নেই`;
         for (const r of await recipients(cam)) {
           await deps.notifyUser?.(r.authUserId, d.alert === 'intruder' ? 'cctv_intruder' : 'cctv_ppe', title, message, id, now.slice(0, 10)).catch(() => undefined);
         }

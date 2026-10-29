@@ -57,5 +57,19 @@ export function missingText(missing: Partial<Record<PpeItem, number>>): string {
   }).join(', ');
 }
 
+/** Faces the camera PC recognised in a still (faces.py; the face numbers stay on the PC). */
+export type Faces = { names: string[]; unknown: number };
+
+export function cleanFaces(raw: any): Faces | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const names = (Array.isArray(raw.names) ? raw.names : []).map((n: any) => String(n || '').trim().slice(0, 60)).filter(Boolean).slice(0, 10);
+  const unknown = Math.max(0, Math.min(30, Math.round(Number(raw.unknown) || 0)));
+  return { names: [...new Set(names)] as string[], unknown };
+}
+
+/** After hours: everyone in view is a recognised colleague (every face known, no more people than names). */
+export const onlyKnownStaff = (faces: Faces | null, peopleCount: number) =>
+  !!faces && faces.names.length > 0 && faces.unknown === 0 && peopleCount <= faces.names.length;
+
 /** "HH:MM" India time of an instant. */
 export const istClock = (ms: number) => new Date(ms + 330 * 60000).toISOString().slice(11, 16);

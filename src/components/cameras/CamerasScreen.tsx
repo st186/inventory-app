@@ -78,6 +78,7 @@ export function CamerasScreen() {
               <span className="flex min-w-0 flex-col">
                 <span className="text-body-md font-semibold text-text">{a.kind === 'intruder' ? t('cam.afterHours') : t('cam.ppeMissing')}</span>
                 <span className="text-body-sm text-text-2">{a.text} · {a.cameraName} · {when(a.at, lang)}</span>
+                {(!!a.seen?.length || !!a.unknownFaces) && <span className="text-body-sm text-text-2">{t('cam.seen', { names: [...(a.seen || []), ...(a.unknownFaces ? [t('cam.unknownFaces', { n: a.unknownFaces })] : [])].join(', ') })}</span>}
                 {!!a.onShift?.length && <span className="text-body-sm text-text-2">{t('cam.onShift', { names: a.onShift.join(', ') })}</span>}
               </span>
               <StatusChip tone={a.kind === 'intruder' ? 'danger' : 'warning'} size="sm">{a.kind === 'intruder' ? t('cam.urgent') : 'PPE'}</StatusChip>

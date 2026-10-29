@@ -12,7 +12,7 @@ export type Camera = {
 };
 export type Alert = {
   id: string; cameraId: string; cameraName: string; kind: 'ppe' | 'intruder'; at: string; text: string; note: string;
-  peopleCount: number; onShift?: string[]; photoUrl: string | null; mark?: 'correct' | 'false' | 'staff'; markedBy?: string;
+  peopleCount: number; onShift?: string[]; seen?: string[]; unknownFaces?: number; photoUrl: string | null; mark?: 'correct' | 'false' | 'staff'; markedBy?: string;
 };
 export type CameraDraft = { name: string; placeKind: 'production' | 'store'; placeId: string; checks: PpeItem[]; from: string; to: string; everyMin: number; active?: boolean };
 

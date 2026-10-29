@@ -1,7 +1,7 @@
 // Tests for cameraRules.ts. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/cameraRules.test.ts
 import assert from 'node:assert/strict';
-import { decide, inHours, istClock, minutesUntilHours, missingPpe, missingText } from './cameraRules.ts';
+import { cleanFaces, decide, inHours, istClock, minutesUntilHours, missingPpe, missingText, onlyKnownStaff } from './cameraRules.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -41,6 +41,16 @@ test('movement outside working hours: anyone in view is an intruder alert; nobod
   assert.equal(decide({ kind: 'motion', look: { peopleCount: 1, people: [person('no', 'no', 'no')] }, checks: [], nowMs: now, gapMin: 10 }).alert, 'intruder');
   assert.equal(decide({ kind: 'motion', look: { peopleCount: 0, people: [] }, checks: [], nowMs: now, gapMin: 10 }).alert, null);
   assert.equal(decide({ kind: 'motion', look: { peopleCount: 2, people: [] }, checks: [], nowMs: now, lastAlertAt: '2026-10-30T19:55:00Z', gapMin: 10 }).alert, null);
+});
+
+test('recognised faces: only known colleagues after hours is not an intruder', () => {
+  assert.deepEqual(cleanFaces({ names: ['Vijay Das', 'Vijay Das', ''], unknown: 0 }), { names: ['Vijay Das'], unknown: 0 });
+  assert.equal(cleanFaces(null), null);
+  assert.equal(onlyKnownStaff({ names: ['Vijay Das'], unknown: 0 }, 1), true);
+  assert.equal(onlyKnownStaff({ names: ['Vijay Das'], unknown: 1 }, 2), false); // a stranger with him
+  assert.equal(onlyKnownStaff({ names: ['Vijay Das'], unknown: 0 }, 2), false); // someone whose face wasn't seen
+  assert.equal(onlyKnownStaff({ names: [], unknown: 0 }, 1), false); // back to the camera: can't tell
+  assert.equal(onlyKnownStaff(null, 1), false);
 });
 
 console.log(`cameraRules: ${passed} tests passed`);
