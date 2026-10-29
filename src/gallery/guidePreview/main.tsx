@@ -5,7 +5,7 @@
 //     &lang=bn          App language                  &shift=on   the shift already started
 //     &click=a|b        tap buttons / rows whose text contains a, then b
 //     &state=submitted  today's day close (notStarted | submitted | approved | rejected)
-import { installGuideMock, renamed, today } from './mock';
+import { HOUSE_MY_CHECKS, addDays, installGuideMock, renamed, today } from './mock';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { InventoryContextType } from '../../App';
@@ -15,6 +15,8 @@ import { buildNav } from '../../components/shell/navConfig';
 import type { NotificationsSource } from '../../components/Notifications';
 import { HomeDataProvider, type HomeData } from '../../components/home/homeData';
 import { EventsApiProvider } from '../../components/events';
+import { RiderApiProvider } from '../../components/riders/riderApi';
+import { mockRiderApi, type TripStage } from '../ridersPreview/mock';
 import { eventsApi } from '../../utils/eventsApi';
 import { setAppLanguage, setAppLanguageOwner, type AppLanguage } from '../../utils/appLanguage';
 import { Toaster } from '../../components/ui/sonner';
@@ -29,12 +31,32 @@ import '../../styles/fonts.css';
 import '../../index.css';
 
 installGuideMock();
+// The guide's screenshot script switches the app language in place, so each screen can be taken in
+// English and Bengali without redoing the taps that opened it.
+(window as unknown as { __guideLang: (l: AppLanguage) => void }).__guideLang = (l) => setAppLanguage(l);
 
 const params = new URLSearchParams(window.location.search);
-const PERSONAS: Record<string, { base: string; name: string }> = {
-  'store-incharge': { base: 'store-incharge-manager', name: 'Store Incharge' },
+// Each guide's login: a preview persona (ShellPreview) with the real team's role and designation.
+type Setup = { base: string; name: string; user?: Partial<NonNullable<InventoryContextType['user']>>; unsentTomorrow?: boolean };
+const PERSONAS: Record<string, Setup> = {
+  // Shows tomorrow's request as not sent yet: it goes the night before.
+  'store-incharge': { base: 'store-incharge-manager', name: 'Store Incharge', unsentTomorrow: true },
+  'production-incharge': { base: 'production-incharge-manager', name: 'Production Incharge', user: { assignedStoreIds: ['STORE-1', 'STORE-2'], assignedProductionHouseIds: ['PH-1'] } },
+  operations: { base: 'ops-manager', name: 'Ops Manager', user: { designation: 'operations_incharge', assignedStoreIds: ['STORE-1', 'STORE-2'], assignedProductionHouseIds: ['PH-1'] } },
+  'store-crew': { base: 'store-crew', name: 'Counter Crew' },
+  'kitchen-crew': { base: 'kitchen-crew', name: 'Kitchen Crew' },
+  rider: { base: 'rider', name: 'Rider' },
+  owner: { base: 'owner', name: 'Owner' },
 };
 const personaId = params.get('persona') || 'store-incharge';
+const setup = PERSONAS[personaId] || PERSONAS['store-incharge'];
+
+// The stock requests every screen shares (the fetch answers use the same list).
+const REQUESTS = seedRequests('');
+if (setup.unsentTomorrow) {
+  const tomorrow = addDays(today, 1);
+  for (let i = REQUESTS.length - 1; i >= 0; i--) if (REQUESTS[i].storeId === 'STORE-1' && REQUESTS[i].requestDate === tomorrow) REQUESTS.splice(i, 1);
+}
 const lang = (['bn', 'hi'].includes(params.get('lang') || '') ? params.get('lang') : 'en') as AppLanguage;
 const state = (params.get('state') || 'notStarted') as Parameters<typeof salesFor>[0];
 
@@ -53,8 +75,8 @@ function contextFor(user: NonNullable<InventoryContextType['user']>): InventoryC
   for (const key of Object.keys(money)) data[key] = typeof money[key] === 'function' ? money[key] : clone(money[key]);
   Object.assign(data, {
     stores: STORES, productionHouses: HOUSES, inventoryItems, productionData: clone(productionData),
-    productionRequests: clone(seedRequests('')), managedStoreIds: ['STORE-1'], managedProductionHouseIds: [],
-    isManager: true, user,
+    productionRequests: clone(REQUESTS), managedStoreIds: user.storeId?.startsWith('STORE') ? [user.storeId] : ['STORE-1', 'STORE-2'],
+    managedProductionHouseIds: ['PH-1'], isManager: user.role !== 'employee', user,
   });
   return new Proxy(data, { get: (target, key: string) => (key in target ? target[key] : noop) }) as unknown as InventoryContextType;
 }
@@ -72,9 +94,8 @@ const notifications: NotificationsSource = {
 };
 
 function GuideShell() {
-  const setup = PERSONAS[personaId] || PERSONAS['store-incharge'];
   const base = PREVIEW_PERSONAS.find((p) => p.id === setup.base)!;
-  const user = React.useMemo(() => ({ ...base.user, name: setup.name }), [base, setup]);
+  const user = React.useMemo(() => ({ ...base.user, ...setup.user, name: setup.name }), [base]);
   const sample = React.useMemo(() => buildHomeSample(today), []);
   const nav = React.useMemo(() => buildNav(user, { today, storeCount: STORES.length }), [user]);
   const context = React.useMemo(() => contextFor(user), [user]);
@@ -84,9 +105,20 @@ function GuideShell() {
     for (const [k, f] of Object.entries(raw)) {
       out[k] = typeof f === 'function' ? (...a: unknown[]) => { const r = (f as (...x: unknown[]) => unknown)(...a); return r instanceof Promise ? r.then(clone) : r; } : f;
     }
+    // Home's photo card: the production house's list for its incharge, nothing for the kitchen crew.
+    if (personaId === 'production-incharge') out.getMyChecks = async () => clone(HOUSE_MY_CHECKS);
+    if (personaId === 'kitchen-crew') out.getMyChecks = async () => ({ date: today, earlyMinutes: 30, items: [] });
     return out as unknown as HomeData;
-  }, [setup, sample]);
+  }, [sample]);
   const events = React.useMemo(() => ({ ...eventsApi, mine: async () => ({ today, events: [] }) }) as unknown as typeof eventsApi, []);
+  // Rides: the rider preview's made-up riders and trips (?trip= picks the rider's current ride).
+  const riderApi = React.useMemo(() => {
+    const rider = personaId === 'rider';
+    const raw = mockRiderApi({ stage: (params.get('trip') || (rider ? 'on_the_way' : 'none')) as TripStage, loc: rider ? 'active' : null, ring: false, android: false, staff: !rider, unavailable: false, empty: false }) as unknown as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, f] of Object.entries(raw)) out[k] = typeof f === 'function' ? (...a: unknown[]) => { const r = (f as (...x: unknown[]) => unknown)(...a); return r instanceof Promise ? r.then(clone) : r; } : f;
+    return out as unknown as ReturnType<typeof mockRiderApi>;
+  }, []);
   const [ready, setReady] = React.useState(false);
   React.useLayoutEffect(() => {
     setAppLanguageOwner(`guide-preview-${personaId}`, user);
@@ -97,24 +129,26 @@ function GuideShell() {
   if (!ready) return null;
   return (
     <EventsApiProvider value={events}>
-      <HomeDataProvider value={homeData}>
-        <AppShell
-          nav={nav}
-          user={user}
-          context={context}
-          stores={STORES}
-          employees={clone(sample.employees) as api.Employee[]}
-          selectedStoreId={null}
-          onStoreChange={() => undefined}
-          refreshStores={async () => undefined}
-          badges={{}}
-          notificationsSource={notifications}
-          askBunnyStoreId="STORE-1"
-          passwordDaysLeft={null}
-          onChangePassword={() => undefined}
-          onLogout={() => undefined}
-        />
-      </HomeDataProvider>
+      <RiderApiProvider value={riderApi}>
+        <HomeDataProvider value={homeData}>
+          <AppShell
+            nav={nav}
+            user={user}
+            context={context}
+            stores={STORES}
+            employees={clone(sample.employees) as api.Employee[]}
+            selectedStoreId={null}
+            onStoreChange={() => undefined}
+            refreshStores={async () => undefined}
+            badges={{}}
+            notificationsSource={notifications}
+            askBunnyStoreId="STORE-1"
+            passwordDaysLeft={null}
+            onChangePassword={() => undefined}
+            onLogout={() => undefined}
+          />
+        </HomeDataProvider>
+      </RiderApiProvider>
     </EventsApiProvider>
   );
 }
