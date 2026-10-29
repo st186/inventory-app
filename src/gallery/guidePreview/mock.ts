@@ -135,7 +135,25 @@ const BOUGHT = {
   progress: { total: 7, got: 7, missing: 0, left: 0, toLog: 7 }, canShop: false,
 };
 // Practice: the shopper's and operations' taps on a list (got it, not found, bill, done, priced).
-const LISTS = () => [SHOPPING, BOUGHT] as { id: string; status: string; lines: Record<string, any>[]; progress: Record<string, number>; bills?: unknown[]; boughtAt?: string; vendorOrders?: Record<string, unknown> }[];
+const NEW_LISTS: Record<string, any>[] = [];
+const LISTS = () => [...NEW_LISTS, SHOPPING, BOUGHT] as { id: string; status: string; lines: Record<string, any>[]; progress: Record<string, number>; bills?: unknown[]; boughtAt?: string; vendorOrders?: Record<string, unknown> }[];
+// Operations' new list for tomorrow (practice): saved as a draft or sent to the shopper.
+function listSave(b: Record<string, any>, id?: string) {
+  const old = id ? NEW_LISTS.find((l) => l.id === id) : null;
+  const shopper = Object.values(PEOPLE).find((p) => p.id === b.assigneeId) || PEOPLE['production-incharge'];
+  const lines = (b.lines || []).map((l: Record<string, any>, i: number) => ({
+    ...l, id: l.id || `n${Date.now()}-${i}`, vendorName: VENDORS.find((v) => v.id === l.vendorId)?.name,
+    placeName: l.placeKind === 'production' ? HOUSE.name : STORE.name, got: null,
+  }));
+  const now = new Date().toISOString();
+  const list = Object.assign(old || { id: `L-${Date.now()}`, createdById: ME.id, createdByName: ME.name, createdAt: now, vendorOrders: {}, canEdit: true, canShop: false }, {
+    date: b.date || old?.date, assigneeId: shopper.id, assigneeName: shopper.name, note: b.note ?? old?.note ?? '', lines: b.lines ? lines : old?.lines || [],
+    status: b.send ? 'sent' : old?.status || 'draft', ...(b.send ? { sentAt: now, notifyAt: now } : {}),
+  });
+  list.progress = { total: list.lines.length, got: 0, missing: 0, left: list.lines.length, toLog: 0 };
+  if (!old) NEW_LISTS.unshift(list);
+  return { list };
+}
 function listChange(id: string, what: string, b: Record<string, any>) {
   const list = LISTS().find((l) => l.id === id);
   if (!list) return { list: null };
@@ -391,10 +409,13 @@ export const guideRoutes: Route[] = [
   { method: 'GET', re: /\/shift\/cover-team$/, reply: () => ({ covers: [] }) },
   {
     method: 'GET', re: /\/shopping-lists$/, reply: () => ({
-      lists: LEADS ? [SHOPPING, BOUGHT] : PERSONA === 'production-incharge' ? [SHOPPING] : [], canManage: LEADS, today,
+      lists: LEADS ? LISTS() : PERSONA === 'production-incharge' ? [SHOPPING] : [], canManage: LEADS, today,
       ...(LEADS ? { people: [{ id: PEOPLE['production-incharge'].id, name: PEOPLE['production-incharge'].name, designation: 'production_incharge' }], places: [STORE, HOUSE] } : {}),
     }),
   },
+  { method: 'POST', re: /\/shopping-lists\/check$/, reply: () => ({ issues: [] }) },
+  { method: 'POST', re: /\/shopping-lists$/, reply: (_m, b) => listSave(b || {}) },
+  { method: 'PUT', re: /\/shopping-lists\/([^/]+)$/, reply: (m, b) => listSave(b || {}, decodeURIComponent(m[1])) },
   { method: 'POST', re: /\/shopping-lists\/([^/]+)\/(got|bill|done|logged|vendor-sent)$/, reply: (m, b) => listChange(decodeURIComponent(m[1]), m[2], b || {}) },
   { method: 'GET', re: /\/supply-vendors$/, reply: () => ({ vendors: VENDORS, specs: [] }) },
   { method: 'GET', re: /\/supply-alerts$/, reply: () => ({ alerts: ALERTS, canManage: LEADS, myPlace: AT_HOUSE ? HOUSE : AT_STORE ? STORE : null, ...(LEADS ? { places: [STORE, HOUSE] } : {}) }) },
