@@ -82,6 +82,7 @@ export const LEGACY_ALIASES: Record<string, Candidates> = {
   audits: () => ['audits'],
   opening: () => ['opening'],
   contacts: () => ['contacts'],
+  shopping: () => ['shopping'],
 };
 
 export function resolveLegacyTarget(target: LegacyTarget | null | undefined, nav: Pick<NavModel, 'destinations'>): Route {

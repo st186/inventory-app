@@ -44,7 +44,7 @@ const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour
 const istDateOf = (iso: string) => new Date(Date.parse(iso) + 330 * 60000).toISOString().slice(0, 10);
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
-const STATUS: Record<api.ShoppingList['status'], { label: string; tone: StatusTone }> = {
+export const STATUS: Record<api.ShoppingList['status'], { label: string; tone: StatusTone }> = {
   draft: { label: 'Draft', tone: 'neutral' }, sent: { label: 'Sent', tone: 'info' }, shopping: { label: 'Shopping', tone: 'warning' },
   bought: { label: 'Set prices', tone: 'warning' }, logged: { label: 'In the expenses', tone: 'success' }, cancelled: { label: 'Cancelled', tone: 'neutral' },
 };
@@ -245,7 +245,7 @@ function ShopLine({ line, lang, disabled, busy, onGot, onMissing, onClear }: {
   );
 }
 
-function BillThumb({ path }: { path: string }) {
+export function BillThumb({ path }: { path: string }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => { billLink(path).then(setUrl).catch(() => undefined); }, [path]);
   if (!url) return <span className="size-16 rounded-md border border-border bg-surface-2" aria-hidden="true" />;

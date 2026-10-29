@@ -25,7 +25,7 @@ export interface ShoppingLine {
   vendorId?: string | null; vendorName?: string;
   // Packs (packet, bottle, jar, bag, box, carton, tin) say the size of each: 2 packets × 1 L.
   packSize?: number | null; packUnit?: string | null;
-  got?: { qty: number; at: string } | null; missing?: boolean;
+  got?: { qty: number; at: string } | null; missing?: boolean; missingAt?: string;
   logged?: { kind: EntryKind; id: string; at: string } | null; skipped?: boolean;
 }
 export interface ShoppingList {
@@ -76,7 +76,8 @@ export const raiseAlert = (b: { item: string; itemBn?: string; entryType?: Entry
 export const closeAlert = (id: string, outcome: 'done' | 'dropped', note?: string) =>
   call<{ alert: SupplyAlert }>(`/supply-alerts/${encodeURIComponent(id)}/close`, post({ outcome, note }));
 
-export const listShopping = () => call<Lists>('/shopping-lists');
+export const listShopping = (days?: number) => call<Lists>(`/shopping-lists${days ? `?days=${days}` : ''}`);
+export const listSeen = (id: string) => call<{ reachedAt: string | null; seenAt: string | null }>(at(id, 'seen'));
 export const createList = (b: { date: string; assigneeId: string; note?: string; lines: LineDraft[]; send: boolean }) => call<{ list: ShoppingList }>('/shopping-lists', post(b)).then(one);
 export const updateList = (id: string, b: { date?: string; assigneeId?: string; note?: string; lines?: LineDraft[]; send?: boolean }) =>
   call<{ list: ShoppingList }>(`/shopping-lists/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(b) }).then(one);

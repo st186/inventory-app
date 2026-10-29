@@ -23,7 +23,7 @@ export type ShoppingLine = {
   vendorId?: string | null; vendorName?: string;
   // Packs (packet, bottle, jar, bag, box, carton, tin) say the size of each: 2 packets x 1 L.
   packSize?: number | null; packUnit?: string | null;
-  got?: { qty: number; at: string } | null; missing?: boolean;
+  got?: { qty: number; at: string } | null; missing?: boolean; missingAt?: string;
   logged?: { kind: EntryKind; id: string; at: string } | null; skipped?: boolean;
 };
 

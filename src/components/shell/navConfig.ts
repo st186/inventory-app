@@ -121,6 +121,7 @@ export type ScreenSpec =
   | { screen: 'SiteAudits' }
   | { screen: 'OpeningChecklist' }
   | { screen: 'Contacts' }
+  | { screen: 'ShoppingLists' }
   | { screen: 'AuditDashboard'; view: 'analytics' | 'inventory' | 'sales' | 'production' | 'payroll' };
 
 /** Counts shown on a tab (only where the data is already loaded by App.tsx). */
@@ -386,6 +387,8 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   if (kind === 'owner' || kind === 'ops') add('opening', 'more.opening', 'audit', { screen: 'OpeningChecklist' }, null, 'opening');
   // Emergency contacts (owner, 29 Oct 2026): everyone can find and call a number; the owner, ops and incharges keep it up to date.
   add('contacts', 'more.contacts', 'contacts', { screen: 'Contacts' }, null, 'contacts');
+  // Shopping lists: each list's timeline - sent, reached the shopper, vendors, shopping, prices (owner, 29 Oct 2026).
+  if (kind === 'owner' || kind === 'ops') add('shopping', 'more.shopping', 'expenses', { screen: 'ShoppingLists' }, null, 'shopping');
 
   // --- Tabs and the More / Me lists (design review b4) -----------------------------------------
   const has = (path: string) => !!destinations[path];
@@ -412,7 +415,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'events', 'complaints', 'audits', 'opening'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening'),
       group('more.assets', 'equipment', 'investments'),
       group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
@@ -428,7 +431,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'my-kpis'),
+      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'my-kpis'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup'),
       group('more.data', 'reports', 'audit-report'),

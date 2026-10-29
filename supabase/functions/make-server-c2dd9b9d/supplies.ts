@@ -396,13 +396,15 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
   };
   const view = (a: Actor, l: ShoppingList) => ({ ...l, progress: listProgress(l), canEdit: isLead(a), canShop: canShop(a, l) });
 
-  // The owner and ops: lists from the last week and any still open. The shopper: theirs once sent.
+  // The owner and ops: lists from the last week (?days= up to 90, for Shopping lists under More)
+  // and any still open. The shopper: theirs once sent.
   app.get(`${P}/shopping-lists`, async (c: any) => {
     const { actor, error } = await actorOf(deps, c); if (error) return error;
     try {
       const lead = isLead(actor!);
       const today = istDate(Date.now());
-      const weekAgo = istDate(Date.now() - 7 * 86400000);
+      const days = Math.min(90, Math.max(7, Number(c.req.query('days')) || 7));
+      const weekAgo = istDate(Date.now() - days * 86400000);
       const open = (l: ShoppingList) => l.status === 'draft' || l.status === 'sent' || l.status === 'shopping' || l.status === 'bought';
       const lists = (await allLists())
         .filter((l) => l.status !== 'cancelled')
@@ -475,6 +477,23 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
     } catch (err) { return fail(c, err); }
   });
 
+  // When the shopper first opened the list (the shopping-list notification they read), for the
+  // owner's timeline under More > Shopping lists.
+  app.get(`${P}/shopping-lists/:id/seen`, async (c: any) => {
+    const { actor, error } = await actorOf(deps, c); if (error) return error;
+    if (!isLead(actor!)) return c.json({ error: 'Only the owner or an operations manager can see this' }, 403);
+    try {
+      const list = await deps.kv.get<ShoppingList>(listKey(c.req.param('id')));
+      if (!list) return c.json({ error: 'That list was not found' }, 404);
+      const person = await deps.kv.get<any>(`unified-employee:${list.assigneeId}`);
+      if (!person?.authUserId) return c.json({ seenAt: null, reachedAt: null });
+      const mine = ((await deps.getAllByPrefix(`notification:${person.authUserId}:`)) || [])
+        .filter((n: any) => n?.relatedId === list.id && n.type === 'shopping_list');
+      const first = (xs: (string | undefined)[]) => xs.filter((x): x is string => !!x).sort()[0] || null;
+      return c.json({ reachedAt: first(mine.map((n: any) => n.createdAt)), seenAt: first(mine.map((n: any) => n.readAt)) });
+    } catch (err) { return fail(c, err); }
+  });
+
   // The writer sent a vendor its part on WhatsApp (from their phone): when, and what it said.
   app.post(`${P}/shopping-lists/:id/vendor-sent`, async (c: any) => {
     const { actor, error } = await actorOf(deps, c); if (error) return error;
@@ -521,6 +540,7 @@ export function registerSuppliesRoutes(app: any, deps: KpiDeps) {
       if (!line) return c.json({ error: 'That line is not on the list' }, 404);
       const qty = num(body?.qty);
       line.missing = body?.missing === true && !qty;
+      line.missingAt = line.missing ? new Date().toISOString() : undefined;
       line.got = qty ? { qty, at: new Date().toISOString() } : null;
       const next: ShoppingList = { ...list, status: 'shopping', updatedAt: new Date().toISOString() };
       await deps.kv.set(listKey(list.id), next);
