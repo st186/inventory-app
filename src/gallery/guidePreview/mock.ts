@@ -9,6 +9,7 @@ import { routes as stockRoutes } from '../stockPreview/mockServer';
 import '../teamPreviewMocks';
 import { addDays, getTodayIST } from '../../utils/timezone';
 import { istIso } from '../homeSample';
+import { orderSig } from '../../components/supplies/Vendors';
 
 export const today = getTodayIST();
 
@@ -111,8 +112,19 @@ const SHOPPING = {
     line('s7', 'Gas cylinder', 1, 'pcs', null, { category: 'fuel', alertIds: ['al4'] }),
   ],
   sentAt: at('21:45', yesterday), notifyAt: at('07:00'), notifiedAt: at('07:00'),
-  vendorOrders: Object.fromEntries(['v1', 'v2', 'v3', 'v4'].map((v, i) => [v, { at: at(`21:${50 + i}`, yesterday), byName: PEOPLE.operations.name, sig: v }])),
+  vendorOrders: {} as Record<string, { at: string; byName: string; sig: string }>,
   progress: { total: 7, got: 2, missing: 0, left: 5, toLog: 0 }, canEdit: LEADS, canShop: PERSONA === 'production-incharge',
+};
+// Each vendor's WhatsApp went at night, with what is on the list now.
+['v1', 'v2', 'v3', 'v4'].forEach((v, i) => {
+  SHOPPING.vendorOrders[v] = { at: at(`21:${50 + i}`, yesterday), byName: PEOPLE.operations.name, sig: orderSig(SHOPPING.lines.filter((l) => l.vendorId === v) as never) };
+});
+// Yesterday's list, bought and waiting for its prices (operations' morning job).
+const BOUGHT = {
+  ...SHOPPING, id: 'L-0', date: yesterday, createdAt: at('21:20', addDays(today, -2)), sentAt: at('21:30', addDays(today, -2)), status: 'bought', note: '',
+  lines: SHOPPING.lines.map((l) => ({ ...l, id: `b-${l.id}`, got: { qty: l.qty, at: at('08:20', yesterday) } })),
+  boughtAt: at('08:40', yesterday), bills: [{ path: 'bills/demo-1.jpg', at: at('08:41', yesterday) }],
+  progress: { total: 7, got: 7, missing: 0, left: 0, toLog: 7 }, canShop: false,
 };
 const VENDORS = [
   { id: 'v1', name: 'Chicken vendor', kind: 'meat', phone: '9800000011', items: ['Chicken (boneless)', 'Chicken (with bone)'] },
@@ -181,6 +193,26 @@ const KPI_SETS: Record<string, { role: string; workplace: string; shift: [string
     row('productionSupply', 'Production supply: full and on time', 60, 20, '14 of 23 requests shipped in full by 3 PM.', 'Pack the stores\' momos first, by 3 PM.'),
   ] },
 };
+// Team › KPIs: the store incharge and the counter crew with their own shifts and KPI lists.
+if (kpiGroupOf()?.getTeamKpis) {
+  const teamKpis = kpiGroupOf()!.getTeamKpis;
+  const asSet = (id: string) => {
+    const set = KPI_SETS[id];
+    return { shift: { shiftStart: set.shift[0], shiftEnd: set.shift[1], weeklyOff: [] as number[], weights: Object.fromEntries(set.kpis.map((k) => [k.id, k.weight])) }, kpis: { month: today.slice(0, 7), from: `${today.slice(0, 7)}-01`, to: addDays(today, -1), scheduledDays: 24, kpis: set.kpis, total: set.total, coverage: 0.95, notes: [], flags: {} } };
+  };
+  kpiGroupOf()!.getTeamKpis = async (...a: unknown[]) => {
+    const r = (await teamKpis(...a)) as { people: { employeeId: string; settings: Record<string, unknown>; kpis: unknown }[] };
+    for (const p of r.people) {
+      const id = p.employeeId === 'DEMO-21' ? 'store-incharge' : p.employeeId === 'DEMO-41' ? 'store-crew' : null;
+      if (!id) continue;
+      const s = asSet(id);
+      p.settings = { ...p.settings, ...s.shift };
+      p.kpis = s.kpis;
+    }
+    return r;
+  };
+}
+function kpiGroupOf() { return (teamMock as Record<string, Record<string, (...a: unknown[]) => unknown>>).kpi; }
 const kpiSet = KPI_SETS[PERSONA];
 const kpiGroup = (teamMock as Record<string, Record<string, (...a: unknown[]) => unknown>>).kpi;
 if (kpiGroup && kpiSet) {
@@ -227,10 +259,30 @@ export const HOUSE_MY_CHECKS = {
     };
   }),
 };
+// The store's photo list for the counter crew (3-4 PM): two done, the steamer half done.
+const STORE_CHECKS: [string, string, string, string, { label: string; labelBn: string }[], number][] = [
+  ['fryer', 'Fryer', 'ফ্রায়ার', 'Oil filtered, outside and stand wiped', [], 1],
+  ['steamer', 'Steamer', 'স্টিমার', 'Trays and water area clean', s(['Top', 'ওপর থেকে'], ['Inside', 'ভেতরে']), 1],
+  ['crates', 'Momo crates', 'মোমোর ক্রেট', 'Washed, dry, stacked', [], 1],
+  ['back', 'Garbage / back area', 'ময়লা রাখার পিছনের জায়গা', 'Bins covered, floor swept', [], 2],
+];
+export const STORE_MY_CHECKS = {
+  date: today, earlyMinutes: 30, employeeId: PEOPLE['store-crew'].id,
+  items: STORE_CHECKS.map(([id, name, nameBn, hint, shots, minPhotos], i) => {
+    const need = Math.max(shots.length, minPhotos);
+    const taken = i === 0 ? 1 : i === 1 ? 1 : 0;
+    const photos = Array.from({ length: taken }, (_, k) => ({ ...shotPhoto(`${id}-p${k + 1}`, 0), uploadedAt: at(`15:${String(10 + i * 6 + k).padStart(2, '0')}`) }));
+    return {
+      id, name, nameBn, hint, start: '15:00', end: '16:00', ...(minPhotos > 1 ? { minPhotos } : {}), ...(shots.length ? { shots } : {}), samples: [],
+      locationKind: 'store', locationId: 'STORE-1', locationName: STORE.name, status: taken >= need ? 'done' : 'due',
+      hasPhoto: taken > 0, photos, ...(taken ? { uploadedAt: photos[taken - 1].uploadedAt, aiStatus: 'scored', aiScore: 8, aiVerdict: 'clean' } : {}),
+    };
+  }),
+};
 const workplaceGroup = (teamMock as Record<string, Record<string, (...a: unknown[]) => unknown>>).workplace;
-if (workplaceGroup && AT_HOUSE) {
-  const names = new Map(HOUSE_CHECKS.map(([id, name]) => [id, name]));
-  workplaceGroup.getMyChecks = async () => JSON.parse(JSON.stringify(PERSONA === 'production-incharge' ? HOUSE_MY_CHECKS : { date: today, earlyMinutes: 30, items: [] }));
+if (workplaceGroup && (AT_HOUSE || PERSONA === 'store-crew')) {
+  const names = new Map([...HOUSE_CHECKS, ...STORE_CHECKS].map(([id, name]) => [id, name]));
+  workplaceGroup.getMyChecks = async () => JSON.parse(JSON.stringify(PERSONA === 'production-incharge' ? HOUSE_MY_CHECKS : PERSONA === 'store-crew' ? STORE_MY_CHECKS : { date: today, earlyMinutes: 30, items: [] }));
   workplaceGroup.loadPhotoUrl = async (path: unknown) => {
     const id = [...names.keys()].find((k) => String(path).includes(k));
     const label = id ? names.get(id)! : 'Photo';
@@ -286,12 +338,25 @@ export const guideRoutes: Route[] = [
   { method: 'GET', re: /\/shift\/cover-team$/, reply: () => ({ covers: [] }) },
   {
     method: 'GET', re: /\/shopping-lists$/, reply: () => ({
-      lists: LEADS || PERSONA === 'production-incharge' ? [SHOPPING] : [], canManage: LEADS, today,
+      lists: LEADS ? [SHOPPING, BOUGHT] : PERSONA === 'production-incharge' ? [SHOPPING] : [], canManage: LEADS, today,
       ...(LEADS ? { people: [{ id: PEOPLE['production-incharge'].id, name: PEOPLE['production-incharge'].name, designation: 'production_incharge' }], places: [STORE, HOUSE] } : {}),
     }),
   },
   { method: 'GET', re: /\/supply-vendors$/, reply: () => ({ vendors: VENDORS, specs: [] }) },
   { method: 'GET', re: /\/supply-alerts$/, reply: () => ({ alerts: ALERTS, canManage: LEADS, myPlace: AT_HOUSE ? HOUSE : AT_STORE ? STORE : null, ...(LEADS ? { places: [STORE, HOUSE] } : {}) }) },
+  {
+    // The photo checklist each place uses (Setup), with who does it.
+    method: 'GET', re: /\/workplace\/template$/, reply: (_m, _b, url) => {
+      const house = url.searchParams.get('kind') === 'production';
+      const place = house ? HOUSE_PLACE : STORE_PLACE;
+      const assigneeId = house ? PEOPLE['production-incharge'].id : PEOPLE['store-crew'].id;
+      return {
+        isDefault: false,
+        template: { items: place.items.map((x) => ({ id: x.id, name: x.name, nameBn: x.nameBn, hint: x.hint, assigneeId, start: x.start, end: x.end, days: [0, 1, 2, 3, 4, 5, 6], ...(x.shots.length ? { shots: x.shots } : {}), ...(x.need > Math.max(1, x.shots.length) ? { minPhotos: x.need } : {}), samples: [] })) },
+        people: [PEOPLE['production-incharge'], PEOPLE['store-crew'], PEOPLE['kitchen-crew'], INCHARGE].map((p) => ({ ...p, designation: null, here: true })),
+      };
+    },
+  },
   { method: 'GET', re: /\/events\/mine$/, reply: () => ({ today, events: [] }) },
   { method: 'GET', re: /\/kpi\/extra-hours$/, reply: () => ({ days: [] }) },
   { method: 'GET', re: /\/workplace\/alerts$/, reply: () => ({ alerts: [] }) },

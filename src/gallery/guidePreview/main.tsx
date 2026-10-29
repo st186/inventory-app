@@ -5,7 +5,7 @@
 //     &lang=bn          App language                  &shift=on   the shift already started
 //     &click=a|b        tap buttons / rows whose text contains a, then b
 //     &state=submitted  today's day close (notStarted | submitted | approved | rejected)
-import { HOUSE_MY_CHECKS, addDays, installGuideMock, renamed, today } from './mock';
+import { HOUSE_MY_CHECKS, STORE_MY_CHECKS, addDays, installGuideMock, renamed, today } from './mock';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { InventoryContextType } from '../../App';
@@ -13,10 +13,12 @@ import type * as api from '../../utils/api';
 import { AppShell } from '../../components/shell/AppShell';
 import { buildNav } from '../../components/shell/navConfig';
 import type { NotificationsSource } from '../../components/Notifications';
-import { HomeDataProvider, type HomeData } from '../../components/home/homeData';
+import { HomeDataProvider, realHomeData, type HomeData } from '../../components/home/homeData';
 import { EventsApiProvider } from '../../components/events';
 import { RiderApiProvider } from '../../components/riders/riderApi';
 import { mockRiderApi, type TripStage } from '../ridersPreview/mock';
+import { RecipesApiProvider } from '../../utils/recipesApi';
+import { createMockRecipesApi } from '../../components/recipes/preview/mockApi';
 import { eventsApi } from '../../utils/eventsApi';
 import { setAppLanguage, setAppLanguageOwner, type AppLanguage } from '../../utils/appLanguage';
 import { Toaster } from '../../components/ui/sonner';
@@ -50,6 +52,9 @@ const PERSONAS: Record<string, Setup> = {
 };
 const personaId = params.get('persona') || 'store-incharge';
 const setup = PERSONAS[personaId] || PERSONAS['store-incharge'];
+// Recipes: the recipes preview's in-memory server, as this role.
+const RECIPES = createMockRecipesApi();
+RECIPES.setRole(personaId === 'kitchen-crew' ? 'crew' : personaId === 'production-incharge' ? 'head' : personaId === 'owner' ? 'owner' : 'ops');
 
 // The stock requests every screen shares (the fetch answers use the same list).
 const REQUESTS = seedRequests('');
@@ -105,9 +110,12 @@ function GuideShell() {
     for (const [k, f] of Object.entries(raw)) {
       out[k] = typeof f === 'function' ? (...a: unknown[]) => { const r = (f as (...x: unknown[]) => unknown)(...a); return r instanceof Promise ? r.then(clone) : r; } : f;
     }
-    // Home's photo card: the production house's list for its incharge, nothing for the kitchen crew.
+    // Home's photo card: each place's own list (none for the kitchen crew).
     if (personaId === 'production-incharge') out.getMyChecks = async () => clone(HOUSE_MY_CHECKS);
     if (personaId === 'kitchen-crew') out.getMyChecks = async () => ({ date: today, earlyMinutes: 30, items: [] });
+    if (personaId === 'store-crew') out.getMyChecks = async () => clone(STORE_MY_CHECKS);
+    // The rider's Home is the real rides screen, on the rider preview's made-up rides.
+    if (personaId === 'rider') out.renderRiderTrips = realHomeData.renderRiderTrips;
     return out as unknown as HomeData;
   }, [sample]);
   const events = React.useMemo(() => ({ ...eventsApi, mine: async () => ({ today, events: [] }) }) as unknown as typeof eventsApi, []);
@@ -130,24 +138,26 @@ function GuideShell() {
   return (
     <EventsApiProvider value={events}>
       <RiderApiProvider value={riderApi}>
-        <HomeDataProvider value={homeData}>
-          <AppShell
-            nav={nav}
-            user={user}
-            context={context}
-            stores={STORES}
-            employees={clone(sample.employees) as api.Employee[]}
-            selectedStoreId={null}
-            onStoreChange={() => undefined}
-            refreshStores={async () => undefined}
-            badges={{}}
-            notificationsSource={notifications}
-            askBunnyStoreId="STORE-1"
-            passwordDaysLeft={null}
-            onChangePassword={() => undefined}
-            onLogout={() => undefined}
-          />
-        </HomeDataProvider>
+        <RecipesApiProvider api={RECIPES.api}>
+          <HomeDataProvider value={homeData}>
+            <AppShell
+              nav={nav}
+              user={user}
+              context={context}
+              stores={STORES}
+              employees={clone(sample.employees) as api.Employee[]}
+              selectedStoreId={null}
+              onStoreChange={() => undefined}
+              refreshStores={async () => undefined}
+              badges={{}}
+              notificationsSource={notifications}
+              askBunnyStoreId="STORE-1"
+              passwordDaysLeft={null}
+              onChangePassword={() => undefined}
+              onLogout={() => undefined}
+            />
+          </HomeDataProvider>
+        </RecipesApiProvider>
       </RiderApiProvider>
     </EventsApiProvider>
   );
