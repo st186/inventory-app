@@ -14,7 +14,11 @@ export const TIMESHEET_DUE_DAYS = 1; // a day's timesheet is on time if sent by 
 export const CASH_TOLERANCE_INR = 100; // cash over/short within ₹100 counts as matching
 export const SHIP_BY_MIN = 15 * 60; // stock requests should ship by 3 PM (same cut-off as the SLA screen)
 export const DAY_CLOSE_BY_MIN = 25 * 60; // a day's sales and expenses are on time if saved by 1 AM after it (the store shuts at 10:30 PM)
-export const REQUEST_BY_MIN = 8 * 60; // a stock request is on time if sent by 8 AM on the day it is for (production starts at 8)
+export const REQUEST_BY_MIN = 8 * 60; // until 31 Oct 2026: a stock request was on time if sent by 8 AM on the day it is for
+// From 1 Nov 2026 a stock request is on time if sent by midnight before the day it is for (owner, 29 Oct 2026:
+// "stock request for next day should be sent by midnight").
+export const REQUEST_MIDNIGHT_FROM = '2026-11-01';
+export const requestDueMs = (requestDate: string) => istMidnightMs(requestDate) + (requestDate >= REQUEST_MIDNIGHT_FROM ? 0 : REQUEST_BY_MIN * 60000);
 export const STOCK_OUT_PENALTY = 15; // points off per item that ran out at the store
 export const PHOTO_FLAG_PENALTY = 5; // points off the photo-check KPI per "needs cleaning" photo
 // Place kept clean (incharges, owner 28 Oct 2026): every photo at their store or kitchen, whoever took it.
@@ -563,7 +567,7 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'expenseAccuracy': return 'Enter each expense right the first time: the right category, and an amount that says exactly what was bought - packs with the size of each (Butter 4 packets × 500 g, not 8 pcs), vegetables by weight. An entry the app flags that turns out wrong counts against you; one marked correct does not.';
     case 'productionApproved': return 'Check each day\'s production entry and approve it before it approves itself after 24 hours.';
     case 'placeClean': return `Walk the whole ${place} every day: garbage out, bins covered, nothing piled up. Every photo that needs cleaning costs ${PLACE_FLAG_PENALTY} points, a garbage dump or filth ${PLACE_SEVERE_PENALTY}.`;
-    case 'requestOnTime': return `Send the stock request by ${fmt12(REQUEST_BY_MIN)} on the day it is for, so production can plan.`;
+    case 'requestOnTime': return 'Send the next day\'s stock request by midnight, so production can plan the morning.';
     case 'cratesClean': return 'Wash, dry and stack every crate and container with the lids on, and photograph them each morning (a photo for each stack). No photo scores nothing that day; one that needs cleaning, half.';
   }
 }
@@ -1075,10 +1079,10 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
       const d = String(r?.requestDate || '').slice(0, 10);
       if (!d || d < from || d > to || !r.createdAt || Number.isNaN(Date.parse(r.createdAt))) continue;
       n++;
-      if (Date.parse(r.createdAt) <= istMidnightMs(d) + REQUEST_BY_MIN * 60000) ok++;
+      if (Date.parse(r.createdAt) <= requestDueMs(d)) ok++;
     }
     if (!n) set('requestOnTime', null, 'No stock requests sent in this period.');
-    else set('requestOnTime', pct(ok, n), `${ok} of ${plural(n, 'stock request')} sent by ${fmt12(REQUEST_BY_MIN)} on the day they were for.`);
+    else set('requestOnTime', pct(ok, n), `${ok} of ${plural(n, 'stock request')} sent on time (by midnight before the day they were for; ${fmt12(REQUEST_BY_MIN)} on the day until 31 Oct).`);
   }
 
   // The incharge's place: every photo taken there this month, whoever took it.

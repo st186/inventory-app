@@ -10,7 +10,7 @@ import { confirm } from '../ui/confirm';
 import { getSupabaseClient } from '../../utils/supabase/client';
 import { getAssignedProductionHouseIds, getAssignedStoreIds, getDefaultStoreId } from '../../utils/entityAccess';
 import { bagSize, roundUpToBags, isPhase1Live } from '../../utils/batches';
-import { getTodayIST } from '../../utils/timezone';
+import { addDays, getTodayIST } from '../../utils/timezone';
 import { suggestRequest, type ForecastDay, type MomoKey } from '../../utils/forecast';
 import { t } from '../../utils/i18n';
 import { getAppLanguage } from '../../utils/appLanguage';
@@ -71,10 +71,8 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   // Form state for new request - DYNAMIC for all finished products
   const [momoQuantities, setMomoQuantities] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
-  // Always default to today (no time restriction)
-  const getDefaultRequestDate = () => {
-    return getLocalDateString();
-  };
+  // Tomorrow: each day's request is sent the night before, by midnight (owner, 29 Oct 2026).
+  const getDefaultRequestDate = () => addDays(getTodayIST(), 1);
   const [requestDate, setRequestDate] = useState(getDefaultRequestDate());
   const [lastReminderDate, setLastReminderDate] = useState<string | null>(null);
 

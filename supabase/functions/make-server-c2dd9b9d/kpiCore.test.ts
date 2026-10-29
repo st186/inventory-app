@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   addDays, atWorkplace, checkApprovedAmount, clampAiAmount, cleanSettingsInput, computeMonthKpis, haversineM, istDate,
   coverReasonsOn, extraMinutesOf, istMidnightMs, lateStartIssues, minutesOfDay, monthDays, nearestPin, resolveSettings, roleGroupOf, shiftWindow, suspicionFlags,
-  variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, isCratesCheck, type MonthInput, type PunchRecord,
+  variablePayFormula, weightedTotal, workplaceKindOf, workplacePins, isCratesCheck, requestDueMs, type MonthInput, type PunchRecord,
 } from './kpiCore.ts';
 
 let passed = 0;
@@ -541,6 +541,19 @@ test('variable pay formula and AI limits', () => {
   assert.equal(checkApprovedAmount(3500, 3000).ok, false);
   assert.equal(checkApprovedAmount(-1, 3000).ok, false);
   assert.deepEqual(checkApprovedAmount(1499.6, 3000), { ok: true, value: 1500 });
+});
+
+test('stock request due by midnight before its day, from 1 Nov 2026', () => {
+  assert.equal(requestDueMs('2026-11-05'), Date.parse('2026-11-05T00:00:00+05:30')); // midnight starting 5 Nov
+  assert.equal(requestDueMs('2026-10-30'), Date.parse('2026-10-30T08:00:00+05:30')); // 8 AM on the day until 31 Oct
+  const settings = resolveSettings({ kpis: ['requestOnTime'] }, 'BM008', 'store', 'store_incharge');
+  const storeRequests = [
+    { requestDate: '2026-11-05', createdAt: '2026-11-04T23:40:00+05:30' }, // the night before: on time
+    { requestDate: '2026-11-06', createdAt: '2026-11-06T00:20:00+05:30' }, // after midnight: late
+  ];
+  const r = computeMonthKpis(crewMonth({ month: '2026-11', today: '2026-11-30', group: 'store_incharge', settings, storeRequests }));
+  const k = r.kpis.find((x) => x.id === 'requestOnTime')!;
+  assert.equal(k.score, 50);
 });
 
 console.log(`kpiCore: ${passed} tests passed`);

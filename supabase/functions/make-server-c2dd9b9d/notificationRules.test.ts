@@ -11,6 +11,8 @@ const ist = (hhmm: string) => Date.parse(`2026-10-28T${hhmm}:00+05:30`);
 
 test('categories', () => {
   assert.equal(notificationCategory('repair_alert'), 'urgent');
+  assert.equal(notificationCategory('stock_request_reminder'), 'urgent'); // tomorrow's request due by midnight
+  assert.equal(notificationCategory('stock_request_missed'), 'action'); // the owner, in the morning
   assert.equal(notificationCategory('workplace_alarm'), 'urgent');
   assert.equal(notificationCategory('complaint_explain'), 'urgent');
   assert.equal(notificationCategory('escalation'), 'urgent'); // the owner's "not seen yet" is never held for the digest

@@ -39,6 +39,7 @@ import { RunningLowCard } from '../supplies/RunningLow';
 import { ShoppingCard } from '../supplies/Shopping';
 import { istDate, piecesMadeOn, salesForDay, spentOnDay } from './homeFigures';
 import { DeliveryChecksCard } from './DeliveryChecks';
+import { addDays } from '../../utils/timezone';
 
 const OPEN_REQUEST = ['pending', 'accepted', 'in-preparation'];
 const ON_THE_WAY = ['shipped', 'partially-shipped'];
@@ -152,11 +153,20 @@ function InchargeHome() {
       });
     }
     if (!isProduction && store) {
-      const sentToday = mine.some((r) => r.requestDate === today);
+      // Each day's request goes the night before, by midnight (owner, 29 Oct 2026). A day that began
+      // with no request shows as late until noon, so it can still be sent.
+      const tomorrow = addDays(today, 1);
+      if (now < 720 && !mine.some((r) => r.requestDate === today)) {
+        list.push({
+          key: 'stock-request-today', icon: ClipboardPlus, title: t('home.task.stockRequestToday'), due: 0,
+          meta: t('home.task.stockRequestMissed'), status: 'late', onOpen: () => open('stock/requests'),
+        });
+      }
+      const sentTomorrow = mine.some((r) => r.requestDate === tomorrow);
       list.push({
-        key: 'stock-request', icon: ClipboardPlus, title: t('home.task.stockRequest'), due: 540,
-        meta: sentToday ? t('home.task.stockRequestSent') : t('home.task.stockRequestBy'),
-        status: sentToday ? 'done' : now > 540 ? 'late' : 'due',
+        key: 'stock-request', icon: ClipboardPlus, title: t('home.task.stockRequest'), due: 1439,
+        meta: sentTomorrow ? t('home.task.stockRequestSent') : t('home.task.stockRequestBy'),
+        status: sentTomorrow ? 'done' : 'due',
         onOpen: () => open('stock/requests'),
       });
       const onWay = mine.filter((r) => ON_THE_WAY.includes(r.status)).sort((a, b) => (a.shippedAt || '').localeCompare(b.shippedAt || ''));

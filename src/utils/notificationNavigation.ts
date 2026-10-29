@@ -50,6 +50,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   stock_request_partial: { view: 'analytics', tab: 'production-requests' },
   stock_request_cancelled: { view: 'analytics', tab: 'production-requests' },
   stock_request_reminder: { view: 'analytics', tab: 'production-requests' },
+  stock_request_missed: { view: 'analytics', tab: 'production-requests' },
   stock_request_delayed: { view: 'analytics' },
   stock_recalibration: { view: 'analytics' },
   calendar_suggestions: { view: 'analytics', tab: 'trends' },

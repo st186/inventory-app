@@ -1,5 +1,6 @@
-// The store incharge's status card: which day the request is for, the 9 AM deadline, and where
-// the request is - Sent -> Packed -> On the way -> Received, with the time of each step.
+// The store incharge's status card: which day the request is for, its deadline (midnight before
+// that day - owner, 29 Oct 2026), and where the request is - Sent -> Packed -> On the way ->
+// Received, with the time of each step.
 import * as React from 'react';
 import { CalendarDays, Check, ChevronDown } from 'lucide-react';
 import { cn } from '../ui/utils';
@@ -9,15 +10,9 @@ import type { ProductionRequest } from '../../utils/api';
 import { addDays, getTodayIST } from '../../utils/timezone';
 import { RequestStatusChip, dayLabel, requestStage, timeLabel } from './stockShared';
 
-/** IST minutes since midnight right now. */
-function istMinutesNow(): number {
-  const d = new Date(Date.now() + 5.5 * 3600 * 1000);
-  return d.getUTCHours() * 60 + d.getUTCMinutes();
-}
-
-/** No request yet and the 9 AM deadline for that day has passed. */
+/** No request yet and the deadline - midnight before that day - has passed. */
 export function isRequestLate(requestDate: string, today = getTodayIST()): boolean {
-  return requestDate < today || (requestDate === today && istMinutesNow() >= 9 * 60);
+  return requestDate <= today;
 }
 
 const STEPS: { key: I18nKey; at: (r: ProductionRequest) => string | undefined }[] = [
@@ -111,7 +106,8 @@ export function RequestStatusCard({
       : t('stock.req.dateTitle', { date: dayLabel(lang, requestDate) });
   const caption = request
     ? t('stock.req.sentAtBy', { time: timeLabel(request.createdAt), name: request.requestedByName || request.requestedBy })
-    : requestDate === today ? t('stock.req.sendBy') : t('stock.req.sendByDay', { day: dayLabel(lang, requestDate) });
+    : requestDate <= today ? t('stock.req.dueWas')
+      : requestDate === addDays(today, 1) ? t('stock.req.sendBy') : t('stock.req.sendByDay', { day: dayLabel(lang, addDays(requestDate, -1)) });
   const late = !request && isRequestLate(requestDate, today);
 
   return (

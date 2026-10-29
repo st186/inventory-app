@@ -14977,126 +14977,54 @@ app.post('/make-server-c2dd9b9d/push/send-multiple', async (c) => {
 });
 
 // ============================================
-// STOCK REQUEST REMINDER NOTIFICATIONS (3PM Daily)
+// STOCK REQUEST BY MIDNIGHT (owner, 29 Oct 2026: "stock request for next day should be sent by
+// midnight ... notify as critical for rohan to send stock request")
 // ============================================
-// This endpoint checks for Store Incharges who haven't submitted
-// stock requests for today and sends them a reminder notification.
-// Can be called manually or via cron job at 3pm daily.
+// pg_cron, IST: ?slot=first at 9:30 PM and ?slot=last at 11:15 PM - a store with no request for
+// tomorrow: its store incharge gets an urgent push (never held for quiet hours; the owner is told if
+// it is not opened in 30 minutes). ?slot=missed at 12:05 AM - still none for the day that has just
+// begun: the owner and operations managers are told (an action, kept for the morning). Once per
+// store, day and slot. (The old 3 PM version read the wrong records and never reached anyone.)
 app.post('/make-server-c2dd9b9d/send-stock-request-reminders', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
   try {
-    console.log('=== STOCK REQUEST REMINDER CHECK (3PM) ===');
-    console.log('Timestamp:', new Date().toISOString());
-    
-    // Get today's date in YYYY-MM-DD format
-    const today = new Date().toISOString().split('T')[0];
-    console.log('Checking for stock requests on:', today);
-    
-    // Get all stock requests for today
-    const todaysRequests = await kv.getByPrefix('stock-request:');
-    const todayRequestStoreIds = todaysRequests
-      .filter((req: any) => req.requestDate === today)
-      .map((req: any) => req.storeId);
-    
-    console.log('Stores with requests today:', todayRequestStoreIds.length);
-    
-    // Get all stores
-    const stores = await kv.getByPrefix('store:');
-    console.log('Total stores:', stores.length);
-    
-    // Get all employees
-    const employees = await kv.getByPrefix('unified-employee:');
-    
-    // Find all Store Incharges
-    const storeIncharges = employees.filter((emp: any) => emp.designation === 'store_incharge');
-    console.log('Total store incharges:', storeIncharges.length);
-    
-    // Find Store Incharges who haven't submitted requests today
-    const reminderTargets: any[] = [];
-    
-    for (const employee of storeIncharges) {
-      const storeId = employee.storeId;
-      
-      // Skip if no store assigned
-      if (!storeId) continue;
-      
-      // Skip if this store already has a request today
-      if (todayRequestStoreIds.includes(storeId)) {
-        console.log(`Store ${storeId} already has request - skipping`);
-        continue;
+    const slot = c.req.query('slot') === 'last' ? 'last' : c.req.query('slot') === 'missed' ? 'missed' : 'first';
+    const today = getTodayIST();
+    const forDate = slot === "missed" ? today : new Date(Date.parse(`${today}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+    const { data, error } = await supabase.from('kv_store_c2dd9b9d').select('value')
+      .like('key', 'production_request_%').eq('value->>requestDate', forDate);
+    if (error) throw new Error(error.message);
+    const sentFor = new Set((data || []).map((r: any) => r.value).filter((r: any) => r && !['cancelled', 'rejected'].includes(r.status)).map((r: any) => r.storeId));
+    const stores = (await kv.getByPrefix('store:')).filter((st: any) => st?.id && st.productionHouseId && st.status !== 'inactive' && st.status !== 'closed');
+    const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+    const dayName = new Date(`${forDate}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const results: any[] = [];
+    for (const store of stores) {
+      if (sentFor.has(store.id)) continue;
+      const onceKey = `stock-request-reminder:${store.id}:${forDate}:${slot}`;
+      if (await kv.get(onceKey)) continue;
+      let to: any[];
+      let type: string, title: string, message: string;
+      if (slot === 'missed') {
+        to = staff.filter((u: any) => u.role === 'cluster_head' || (u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation)));
+        type = 'stock_request_missed';
+        title = `No stock request from ${store.name}`;
+        message = `The request for ${dayName} was not sent by midnight. Production has nothing to plan from.`;
+      } else {
+        to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+        type = 'stock_request_reminder';
+        title = slot === 'last' ? `45 minutes left: stock request for ${dayName}` : `Send tomorrow's stock request by midnight`;
+        message = slot === 'last'
+          ? `${store.name} has not sent the request for ${dayName}. Open Stock > Requests, tap Fill in for me, check and send.`
+          : `${store.name}: the request for ${dayName} is due by midnight tonight. Open Stock > Requests, tap Fill in for me, check and send.`;
       }
-      
-      // Find the store details
-      const store = stores.find((s: any) => s.id === storeId);
-      
-      // Skip if store doesn't have a production house mapped
-      if (!store || !store.productionHouseId) {
-        console.log(`Store ${storeId} has no production house - skipping`);
-        continue;
-      }
-      
-      // Employees carry their login as authUserId - there is no `userId` field, so these
-      // reminders used to go nowhere. notifyUser maps it to the employee's push devices.
-      if (!employee.authUserId) {
-        console.log(`Store incharge ${employee.id} has no login - skipping`);
-        continue;
-      }
-
-      // This incharge needs a reminder
-      reminderTargets.push({
-        employeeId: employee.id,
-        authUserId: employee.authUserId,
-        name: employee.name,
-        storeName: store.name,
-        storeId: storeId,
-      });
+      for (const u of to) await notifyUser(u.authUserId, type, title, message, undefined, forDate).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+      results.push({ store: store.name, to: to.map((u: any) => u.name) });
     }
-    
-    console.log('Sending reminders to:', reminderTargets.length, 'store incharges');
-    
-    // Send notifications to all targets
-    let sent = 0;
-    let failed = 0;
-    
-    for (const target of reminderTargets) {
-      try {
-        const success = await notifyUser(
-          target.authUserId,
-          'stock_request_reminder',
-          '⏰ Stock Request Reminder',
-          `Hi ${target.name}, you haven't submitted a stock request for ${target.storeName} today. Please submit your request to ensure timely stock delivery.`,
-          undefined,
-          today
-        );
-        
-        if (success) {
-          sent++;
-          console.log(`✓ Sent reminder to ${target.name} (${target.storeName})`);
-        } else {
-          failed++;
-          console.log(`✗ Failed to send reminder to ${target.name} (no subscription)`);
-        }
-      } catch (error) {
-        failed++;
-        console.error(`Error sending reminder to ${target.name}:`, error);
-      }
-    }
-    
-    console.log(`=== REMINDER SUMMARY: ${sent} sent, ${failed} failed ===`);
-    
-    return c.json({
-      success: true,
-      message: `Stock request reminders processed`,
-      summary: {
-        totalStoreIncharges: storeIncharges.length,
-        storesWithRequests: todayRequestStoreIds.length,
-        remindersSent: sent,
-        remindersFailed: failed,
-        targets: reminderTargets.map(t => ({
-          name: t.name,
-          store: t.storeName,
-        })),
-      },
-    });
+    console.log(`Stock request reminders (${slot}, ${forDate}):`, JSON.stringify(results));
+    return c.json({ success: true, slot, forDate, reminded: results });
   } catch (error: any) {
     console.error('Error sending stock request reminders:', error);
     return c.json({ error: error.message }, 500);
