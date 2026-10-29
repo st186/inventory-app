@@ -134,6 +134,22 @@ export function requestTotalPieces(req: any, keys: string[]): number {
   return keys.reduce((sum, k) => sum + requestedQty(req, k), 0);
 }
 
+/** What a request asks for besides momos: the sauces and soup ticked, kitchen supplies, utilities. */
+export function requestExtras(req: any): { sauces: string[]; supplies: { name: string; qty: number; unit: string }[] } {
+  const sauces = Object.keys(req?.sauces || {}).filter((s) => req.sauces[s]);
+  const supplies = [
+    ...Object.entries(req?.kitchenUtilities || {}).map(([name, v]: [string, any]) => ({ name, qty: Number(v?.quantity) || 0, unit: String(v?.unit || '') })),
+    ...Object.entries(req?.utilities || {}).map(([name, v]) => ({ name, qty: Number(v) || 0, unit: '' })),
+  ].filter((x) => x.qty > 0);
+  return { sauces, supplies };
+}
+
+/** "Soup Premix, Chilli Chicken Sauce, Oil 2 litre" - empty when only momos were asked for. */
+export function requestExtrasText(req: any): string {
+  const { sauces, supplies } = requestExtras(req);
+  return [...sauces, ...supplies.map((x) => `${x.name} ${formatCount(x.qty)}${x.unit ? ` ${x.unit}` : ''}`)].join(', ');
+}
+
 // ---------------------------------------------------------------------------------------------
 // Layout pieces
 
