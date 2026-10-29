@@ -78,7 +78,7 @@ try {
   Say 'Latest lines of the log'
   $log = Join-Path $data 'camera_watch.log'
   if (Test-Path $log) { Get-Content $log -Tail 10 } else { Write-Host 'No log yet.' }
-  Write-Host "`nDone. Keep this PC on day and night. Log: $log" -ForegroundColor Green
+  Write-Host "`nDone. It starts by itself whenever this PC is switched on. Log: $log" -ForegroundColor Green
 } catch {
   Write-Host "`nStopped: $($_.Exception.Message)" -ForegroundColor Red
 }

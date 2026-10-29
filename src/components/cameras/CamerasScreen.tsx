@@ -61,7 +61,7 @@ export function CamerasScreen() {
             key={c.id}
             icon={CameraIcon}
             title={c.name}
-            subtitle={[c.place, t('cam.hours', { from: c.from, to: c.to }), t('cam.every', { n: c.everyMin }), c.lastSeenAt ? t('cam.lastSeen', { when: when(c.lastSeenAt, lang) }) : t('cam.neverSeen')].join(' · ')}
+            subtitle={[c.place, t('cam.hours', { from: c.from, to: c.to }), c.checks.length ? t('cam.every', { n: c.everyMin }) : null, c.afterHours === false ? t('cam.noNight') : null, c.lastSeenAt ? t('cam.lastSeen', { when: when(c.lastSeenAt, lang) }) : t('cam.neverSeen')].filter(Boolean).join(' · ')}
             chip={!c.active ? <StatusChip tone="neutral" size="sm">{t('cam.paused')}</StatusChip> : c.online ? <StatusChip tone="success" size="sm">{t('cam.online')}</StatusChip> : <StatusChip tone="warning" size="sm">{t('cam.offline')}</StatusChip>}
             onClick={cams.canManage ? () => setEdit(c) : undefined}
           />
@@ -121,8 +121,8 @@ function CameraSheet({ camera, onClose, onSaved }: { camera: api.Camera | null; 
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [d, setD] = useState<api.CameraDraft>(() => camera
-    ? { name: camera.name, placeKind: camera.placeKind, placeId: camera.placeId, checks: camera.checks, from: camera.from, to: camera.to, everyMin: camera.everyMin, active: camera.active }
-    : { name: '', placeKind: 'production', placeId: houses[0]?.id || '', checks: [...ITEMS], from: '07:00', to: '21:00', everyMin: 30, active: true });
+    ? { name: camera.name, placeKind: camera.placeKind, placeId: camera.placeId, checks: camera.checks, from: camera.from, to: camera.to, everyMin: camera.everyMin, active: camera.active, afterHours: camera.afterHours !== false }
+    : { name: '', placeKind: 'production', placeId: houses[0]?.id || '', checks: [...ITEMS], from: '07:00', to: '21:00', everyMin: 30, active: true, afterHours: true });
   const places = [...houses.map((h) => ({ value: `production:${h.id}`, label: h.name })), ...(stores || []).map((s) => ({ value: `store:${s.id}`, label: s.name }))];
   const save = async () => {
     setBusy(true);
@@ -168,9 +168,16 @@ function CameraSheet({ camera, onClose, onSaved }: { camera: api.Camera | null; 
           <Field label="Working hours from"><Input type="time" value={d.from} onChange={(e) => setD({ ...d, from: e.target.value })} /></Field>
           <Field label="to"><Input type="time" value={d.to} onChange={(e) => setD({ ...d, to: e.target.value })} /></Field>
         </div>
-        <Field label="Check every (minutes)" helper="Outside working hours it only looks when something moves; anyone in view is an alert unless they are checked in there.">
+        <Field label="Check every (minutes)">
           <Input type="number" inputMode="numeric" min={5} max={240} value={String(d.everyMin)} onChange={(e) => setD({ ...d, everyMin: Number(e.target.value) || 30 })} />
         </Field>
+        <label className="flex min-h-11 items-start gap-3 text-body-md text-text">
+          <Checkbox className="mt-0.5" checked={d.afterHours !== false} onCheckedChange={(v) => setD({ ...d, afterHours: v === true })} />
+          <span className="flex flex-col">
+            Watch for people after working hours
+            <span className="text-body-sm text-text-2">Only when the camera PC stays on at night. Anyone in view is an alert unless they are checked in there or recognised.</span>
+          </span>
+        </label>
         {camera && (
           <>
             <label className="flex min-h-11 items-center gap-3 text-body-md text-text">

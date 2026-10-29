@@ -6,7 +6,7 @@ import { regionHeaders } from '../../utils/http';
 export type PpeItem = 'cap' | 'gloves' | 'apron';
 export type Camera = {
   id: string; name: string; placeKind: 'production' | 'store'; placeId: string; place: string; checks: PpeItem[];
-  from: string; to: string; everyMin: number; active: boolean; keyHint: string; online: boolean; lastSeenAt?: string;
+  from: string; to: string; everyMin: number; active: boolean; afterHours?: boolean; keyHint: string; online: boolean; lastSeenAt?: string;
   week: { checks: number; alerts: number; falseAlarms: number; unmarked: number };
   lastCheck: { at: string; kind: string; peopleCount: number; alert: string | null; note: string } | null;
 };
@@ -14,7 +14,7 @@ export type Alert = {
   id: string; cameraId: string; cameraName: string; kind: 'ppe' | 'intruder'; at: string; text: string; note: string;
   peopleCount: number; onShift?: string[]; seen?: string[]; unknownFaces?: number; photoUrl: string | null; mark?: 'correct' | 'false' | 'staff'; markedBy?: string;
 };
-export type CameraDraft = { name: string; placeKind: 'production' | 'store'; placeId: string; checks: PpeItem[]; from: string; to: string; everyMin: number; active?: boolean };
+export type CameraDraft = { name: string; placeKind: 'production' | 'store'; placeId: string; checks: PpeItem[]; from: string; to: string; everyMin: number; active?: boolean; afterHours?: boolean };
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;

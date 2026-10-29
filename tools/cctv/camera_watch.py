@@ -226,8 +226,13 @@ def run_camera(s):
             plan, plan_at = (res, time.time()) if res and "working" in res else (None, 0.0)
             if not res:
                 time.sleep(120)
-        else:
+        elif plan.get("watch", True):
             watch_for_movement(s, min(max(60, int(plan.get("nextStillInSec", 900))), CONFIG_EVERY_S))
+            plan = None
+        else:
+            # No watching after hours for this camera: wait for working hours (or the PC to be
+            # switched off).
+            time.sleep(min(max(60, int(plan.get("nextStillInSec", 900))), CONFIG_EVERY_S))
             plan = None
 
 

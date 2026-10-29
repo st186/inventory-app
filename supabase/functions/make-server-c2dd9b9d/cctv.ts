@@ -28,6 +28,8 @@ const MAX_IMAGE_CHARS = 2_000_000; // ~1.5 MB of JPEG as base64
 type Camera = {
   id: string; name: string; placeKind: 'production' | 'store'; placeId: string; checks: PpeItem[];
   from: string; to: string; everyMin: number; active: boolean; keyHash: string; keyHint: string;
+  // false: no watching after working hours (owner, 29 Oct 2026: the store PC is only on from 3 PM).
+  afterHours?: boolean;
   createdAt: string; createdBy: string; lastSeenAt?: string; lastScheduledAt?: string; lastMotionLookAt?: string;
   lastAlert?: { ppe?: string; intruder?: string };
 };
@@ -136,6 +138,8 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     const sinceLast = cam.lastScheduledAt ? (Date.now() - Date.parse(cam.lastScheduledAt)) / 1000 : Infinity;
     return {
       active: cam.active, from: cam.from, to: cam.to, everyMin: cam.everyMin, working,
+      // Outside working hours: watch for movement, or (watch false) wait for working hours.
+      watch: cam.afterHours !== false,
       // Seconds until the next scheduled still (working hours) or until watching for movement matters.
       nextStillInSec: nextStillSeconds({ now, from: cam.from, to: cam.to, active: cam.active, everyMin: cam.everyMin, hasChecks: cam.checks.length > 0, sinceLastS: sinceLast }),
     };
@@ -171,6 +175,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       }
       if (kind === 'motion') {
         if (p.working) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'working hours', ...p }); }
+        if (cam.afterHours === false) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'after-hours watch is off', ...p }); }
         if (cam.lastMotionLookAt && nowMs - Date.parse(cam.lastMotionLookAt) < MOTION_LOOK_GAP_MS) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'looked a moment ago', ...p }); }
         cam.lastMotionLookAt = now;
       } else {
@@ -244,7 +249,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     const everyMin = Math.round(Number(body.everyMin));
     if (!from || !to) return { error: 'Working hours as HH:MM' };
     if (!(everyMin >= 5 && everyMin <= 240)) return { error: 'Check every 5 to 240 minutes' };
-    return { checks, from, to, everyMin };
+    return { checks, from, to, everyMin, afterHours: body.afterHours !== false };
   };
 
   // POST /cctv/cameras {name, placeKind, placeId, checks, from, to, everyMin} - the owner adds one;
