@@ -7,6 +7,11 @@
 // from when to when, what was used instead; it raises a repair alarm for the incharge and the
 // owner), fewer orders, made ahead for tomorrow, short of staff, or something else. The server
 // keeps it on the day's ledger record (index.ts cleanLeftoverReport).
+// Owner, 29 Oct 2026 ("Over time couldnt be a reason there should be a lot of checklist"): the
+// kitchen's own causes come first (made more than the plan, yesterday's not used first, slow
+// folding, dough), "other" needs a full sentence, and every leftover gets a plan (used first
+// tomorrow, thrown away, freezer). The day's leftover goes to the operations managers and the
+// owner straight away (server leftoverRules.ts).
 import { AlertTriangle, Plus, X } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Callout } from '../ui/callout';
@@ -16,7 +21,7 @@ import { IconButton } from '../ui/icon-button';
 import { Input } from '../ui/input';
 import { cn } from '../ui/utils';
 import { useT, type I18nKey } from '../../utils/i18n';
-import type { LedgerDayContext, LeftoverKind, LeftoverReport } from '../../utils/api';
+import type { LedgerDayContext, LeftoverKind, LeftoverPlan, LeftoverReport, OverPreparedCause } from '../../utils/api';
 
 type Genuine = '' | 'yes' | 'no' | 'unsure';
 type BreakEntry = { minutes: string; why: string; genuine: Genuine };
@@ -33,6 +38,9 @@ export type LeftoverDraft = {
   machine: { machine: string; downFrom: string; downTo: string; stillDown: boolean; alternative: string; raiseRepair: boolean };
   notes: Partial<Record<LeftoverKind, string>>;
   missing: string[];
+  over: { causes: OverPreparedCause[]; who: string };
+  folders: string[];
+  plan: LeftoverPlan | '';
 };
 
 export const emptyLeftoverDraft = (): LeftoverDraft => ({
@@ -43,9 +51,16 @@ export const emptyLeftoverDraft = (): LeftoverDraft => ({
   machine: { machine: '', downFrom: '', downTo: '', stillDown: false, alternative: '', raiseRepair: true },
   notes: {},
   missing: [],
+  over: { causes: [], who: '' },
+  folders: [],
+  plan: '',
 });
 
 const KINDS: { kind: LeftoverKind; label: I18nKey }[] = [
+  { kind: 'over_prepared', label: 'stock.prod.why.overPrepared' },
+  { kind: 'old_not_used', label: 'stock.prod.why.oldNotUsed' },
+  { kind: 'slow_folding', label: 'stock.prod.why.slowFolding' },
+  { kind: 'dough_problem', label: 'stock.prod.why.doughProblem' },
   { kind: 'power_cut', label: 'stock.prod.why.power' },
   { kind: 'late_start', label: 'stock.prod.why.late' },
   { kind: 'long_break', label: 'stock.prod.why.longBreak' },
@@ -59,11 +74,30 @@ export const leftoverKindLabel = (kind: LeftoverKind): I18nKey => KINDS.find((k)
 // Machines most kitchens have, offered alongside the ones in the equipment register.
 const COMMON_MACHINES = ['Steamer', 'Mixer grinder', 'Dough kneader', 'Fridge / freezer', 'Induction', 'Weighing scale', 'Sealing machine'];
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const CAUSES: { cause: OverPreparedCause; label: I18nKey }[] = [
+  { cause: 'no_leftover_check', label: 'stock.prod.why.causeNoLeftover' },
+  { cause: 'no_plan_check', label: 'stock.prod.why.causeNoPlan' },
+  { cause: 'told', label: 'stock.prod.why.causeTold' },
+  { cause: 'batch_size', label: 'stock.prod.why.causeBatch' },
+];
+const PLANS: { plan: LeftoverPlan; label: I18nKey }[] = [
+  { plan: 'use_first', label: 'stock.prod.why.planUseFirst' },
+  { plan: 'discard', label: 'stock.prod.why.planDiscard' },
+  { plan: 'freezer', label: 'stock.prod.why.planFreezer' },
+];
+// Shortest note that explains anything (the server says the same, leftoverRules.ts NOTE_MIN).
+const NOTE_MIN: Partial<Record<LeftoverKind, number>> = { other: 30, old_not_used: 10, slow_folding: 10, dough_problem: 10, planned: 5, short_staff: 3 };
 
 /** The first thing missing, in the user's language, or null when the reasons are complete. */
 export function leftoverProblem(d: LeftoverDraft, t: (k: I18nKey, v?: Record<string, string | number>) => string, ctx: LedgerDayContext | null = null): string | null {
   if (!d.kinds.length) return t('stock.prod.why.errPick');
   for (const kind of d.kinds) {
+    if (kind === 'over_prepared') {
+      if (!d.over.causes.length) return t('stock.prod.why.errOver');
+      if (d.over.causes.includes('told') && d.over.who.trim().length < 2) return t('stock.prod.why.errOverWho');
+    }
+    if (kind === 'other' && (d.notes.other || '').trim().length < (NOTE_MIN.other || 0)) return t('stock.prod.why.errOther');
+    if (['old_not_used', 'slow_folding', 'dough_problem', 'planned'].includes(kind) && (d.notes[kind] || '').trim().length < (NOTE_MIN[kind] || 0)) return t('stock.prod.why.errNote', { reason: t(leftoverKindLabel(kind)) });
     if (kind === 'power_cut' && !d.power.some((p) => TIME.test(p.from) && TIME.test(p.to) && p.from < p.to)) return t('stock.prod.why.errPower');
     if (kind === 'late_start') {
       if (d.late.why.trim().length < 3) return t('stock.prod.why.errLateWhy');
@@ -84,8 +118,9 @@ export function leftoverProblem(d: LeftoverDraft, t: (k: I18nKey, v?: Record<str
       if (!d.machine.stillDown && (!TIME.test(d.machine.downTo) || d.machine.downTo <= d.machine.downFrom)) return t('stock.prod.why.errMachineBack');
       if (!d.machine.alternative.trim()) return t('stock.prod.why.errAlternative');
     }
-    if ((kind === 'other' || kind === 'short_staff') && (d.notes[kind] || '').trim().length < 3) return t('stock.prod.why.errNote', { reason: t(leftoverKindLabel(kind)) });
+    if (kind === 'short_staff' && (d.notes[kind] || '').trim().length < 3) return t('stock.prod.why.errNote', { reason: t(leftoverKindLabel(kind)) });
   }
+  if (!d.plan) return t('stock.prod.why.errPlan');
   return null;
 }
 
@@ -107,9 +142,10 @@ export function leftoverPayload(d: LeftoverDraft, ctx: LedgerDayContext | null):
       const asset = ctx?.machines.find((m) => m.name.trim().toLowerCase() === d.machine.machine.trim().toLowerCase());
       return { kind, assetId: asset?.id || null, ...d.machine, machine: d.machine.machine.trim(), alternative: d.machine.alternative.trim(), downTo: d.machine.stillDown ? null : d.machine.downTo };
     }
-    return { kind, note: (d.notes[kind] || '').trim(), ...(kind === 'short_staff' ? { people: d.missing } : {}) };
+    if (kind === 'over_prepared') return { kind, causes: d.over.causes, who: d.over.who.trim(), note: (d.notes[kind] || '').trim() };
+    return { kind, note: (d.notes[kind] || '').trim(), ...(kind === 'short_staff' ? { people: d.missing } : kind === 'slow_folding' ? { people: d.folders } : {}) };
   });
-  return { reasons } as LeftoverReport;
+  return { reasons, plan: d.plan || undefined } as LeftoverReport;
 }
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
@@ -172,7 +208,7 @@ export function LeftoverReasons({ leftoverKg, ctx, value: d, onChange, disabled 
     set(next);
   };
   const noteField = (kind: LeftoverKind, label: I18nKey) => (
-    <Field label={t(label)} optional={kind !== 'other' && kind !== 'short_staff'}>
+    <Field label={t(label)} optional={!NOTE_MIN[kind]}>
       <Input value={d.notes[kind] || ''} disabled={disabled} maxLength={300} onChange={(e) => set({ notes: { ...d.notes, [kind]: e.target.value } })} />
     </Field>
   );
@@ -187,6 +223,40 @@ export function LeftoverReasons({ leftoverKg, ctx, value: d, onChange, disabled 
       <div className="flex flex-wrap gap-2">
         {KINDS.map((k) => <Chip key={k.kind} on={d.kinds.includes(k.kind)} label={t(k.label)} disabled={disabled} onClick={() => toggle(k.kind)} />)}
       </div>
+
+      {d.kinds.includes('over_prepared') && (
+        <fieldset className="flex flex-col gap-3 rounded-md bg-surface p-3">
+          <legend className="sr-only">{t('stock.prod.why.overPrepared')}</legend>
+          <p className="text-body-sm font-semibold text-text">{t('stock.prod.why.overPrepared')}</p>
+          <span className="text-body-sm font-medium text-text">{t('stock.prod.why.overWhy')}</span>
+          <div className="flex flex-wrap gap-2">
+            {CAUSES.map((c) => (
+              <Chip key={c.cause} on={d.over.causes.includes(c.cause)} label={t(c.label)} disabled={disabled}
+                onClick={() => set({ over: { ...d.over, causes: d.over.causes.includes(c.cause) ? d.over.causes.filter((x) => x !== c.cause) : [...d.over.causes, c.cause] } })} />
+            ))}
+          </div>
+          {d.over.causes.includes('told') && (
+            <Field label={t('stock.prod.why.whoTold')}>
+              <Input value={d.over.who} disabled={disabled} maxLength={60} onChange={(e) => set({ over: { ...d.over, who: e.target.value } })} />
+            </Field>
+          )}
+          {noteField('over_prepared', 'stock.prod.why.note')}
+        </fieldset>
+      )}
+      {d.kinds.includes('old_not_used') && <div className="rounded-md bg-surface p-3">{noteField('old_not_used', 'stock.prod.why.oldWhy')}</div>}
+      {d.kinds.includes('slow_folding') && (
+        <div className="flex flex-col gap-3 rounded-md bg-surface p-3">
+          <p className="text-body-sm font-semibold text-text">{t('stock.prod.why.slowFolding')}</p>
+          {ctx && ctx.staff.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-body-sm font-medium text-text">{t('stock.prod.why.whoFolding')}</span>
+              <PeoplePicker ctx={ctx} picked={d.folders} disabled={disabled} onChange={(folders) => set({ folders })} />
+            </div>
+          )}
+          {noteField('slow_folding', 'stock.prod.why.slowWhy')}
+        </div>
+      )}
+      {d.kinds.includes('dough_problem') && <div className="rounded-md bg-surface p-3">{noteField('dough_problem', 'stock.prod.why.doughWhy')}</div>}
 
       {d.kinds.includes('power_cut') && (
         <fieldset className="flex flex-col gap-2 rounded-md bg-surface p-3">
@@ -319,6 +389,14 @@ export function LeftoverReasons({ leftoverKg, ctx, value: d, onChange, disabled 
         </div>
       )}
       {d.kinds.includes('other') && <div className="rounded-md bg-surface p-3">{noteField('other', 'stock.prod.why.otherNote')}</div>}
+
+      <fieldset className="flex flex-col gap-2 rounded-md bg-surface p-3">
+        <legend className="sr-only">{t('stock.prod.why.planTitle')}</legend>
+        <p className="text-body-sm font-semibold text-text">{t('stock.prod.why.planTitle')}</p>
+        <div className="flex flex-wrap gap-2">
+          {PLANS.map((p) => <Chip key={p.plan} on={d.plan === p.plan} label={t(p.label)} disabled={disabled} onClick={() => set({ plan: p.plan })} />)}
+        </div>
+      </fieldset>
     </div>
   );
 }
@@ -344,6 +422,9 @@ export function LeftoverReportView({ report }: { report: LeftoverReport & { left
         e.genuine ? `${t('stock.prod.why.genuine')} ${t(`stock.prod.why.${e.genuine}` as I18nKey)}` : '',
       ].filter(Boolean).join(' · ')).join('; ');
     }
+    if (r.kind === 'over_prepared') {
+      return [(r.causes || []).map((c: OverPreparedCause) => t(CAUSES.find((x) => x.cause === c)?.label || 'stock.prod.why.other')).join(', '), r.who ? `${t('stock.prod.why.whoTold')}: ${r.who}` : '', r.note].filter(Boolean).join(' · ');
+    }
     if (r.kind === 'machine') {
       return [r.machine, r.stillDown ? `${fmt(r.downFrom)} → ${t('stock.prod.why.stillDown')}` : `${fmt(r.downFrom)}–${fmt(r.downTo)}`, r.alternative, r.repairAlertId ? t('stock.prod.why.repairSent') : ''].filter(Boolean).join(' · ');
     }
@@ -356,6 +437,9 @@ export function LeftoverReportView({ report }: { report: LeftoverReport & { left
           {report.reasons.map((r) => (
             <li key={r.kind} className="text-body-sm text-text-2"><span className="font-medium text-text">{t(leftoverKindLabel(r.kind))}</span>{line(r) ? `: ${line(r)}` : ''}</li>
           ))}
+          {report.plan && (
+            <li className="text-body-sm text-text-2"><span className="font-medium text-text">{t('stock.prod.why.planTitle')}</span>: {t(PLANS.find((p) => p.plan === report.plan)?.label || 'stock.prod.why.other')}</li>
+          )}
         </ul>
       </Callout>
       {report.lateCheck?.issues?.length ? (

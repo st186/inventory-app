@@ -297,7 +297,9 @@ async function tellPeople(deps: ProductionReviewDeps, item: any, house: string, 
     || (p.designation === 'production_incharge' && (p.storeId === house || (p.assignedProductionHouseIds || []).includes(house)))
   )).forEach((p: any) => to.set(p.authUserId, p));
   const title = flags.length === 1 ? flags[0].title : 'Check a production entry';
-  const message = `Production for ${dayLabel(item.date)}: ${flags.map((f) => f.title.toLowerCase()).join(', ')}.`;
+  const message = flags.length === 1
+    ? `Production for ${dayLabel(item.date)}: ${flags[0].message}`.slice(0, 600)
+    : `Production for ${dayLabel(item.date)}: ${flags.map((f) => f.title.toLowerCase()).join(', ')}.`;
   for (const authUserId of to.keys()) {
     await deps.notifyUser(authUserId, 'production_flag', title, message, item.id, item.date).catch(() => undefined);
   }

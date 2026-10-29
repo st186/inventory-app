@@ -242,11 +242,11 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     return totals;
   }, [ledgerPools]);
 
-  const handleAddLedgerItem = async (momoKey: string, globalPoolQty: number, perTypePoolQty: number) => {
+  const handleAddLedgerItem = async (momoKey: string, globalPoolQty: number, perTypePoolQty: number, withLeftover?: api.WithLeftoverReason) => {
     if (!context.user?.accessToken || !resolvedProductionHouseId) return;
     setLedgerItemSubmitting(true);
     try {
-      await api.addProductionLedgerItem(context.user.accessToken, resolvedProductionHouseId, selectedDate, momoKey, globalPoolQty, perTypePoolQty);
+      await api.addProductionLedgerItem(context.user.accessToken, resolvedProductionHouseId, selectedDate, momoKey, globalPoolQty, perTypePoolQty, withLeftover);
       toast.success(tSaved('stock.prod.batchLogged'));
       await fetchLedger();
     } catch (error: any) {
@@ -685,7 +685,13 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
           </CollapsibleCard>
           <CollapsibleCard title={t('stock.prod.prepared')} subtitle={t('stock.prod.preparedHint')} chip={ledgerItems.length ? <StatusChip tone="neutral">{ledgerItems.length}</StatusChip> : undefined}>
             <div className="flex flex-col gap-5 p-4">
-              {canEditLedger && !ledgerClosed && <PrepareLineItemForm disabled={!canEditLedger} submitting={ledgerItemSubmitting} onAdd={handleAddLedgerItem} />}
+              {canEditLedger && !ledgerClosed && (
+                <PrepareLineItemForm
+                  disabled={!canEditLedger} submitting={ledgerItemSubmitting} onAdd={handleAddLedgerItem}
+                  leftoverKg={Object.fromEntries(Object.entries(ledgerPools || {}).map(([id, p]) => [id, (p as api.ProductionLedgerPoolState | undefined)?.opening || 0]))}
+                  plan={plan as Record<string, number> | null} perKg={dayContext?.perKg}
+                />
+              )}
               <PreparedLineItemsList items={ledgerItems} disabled={!canEditLedger || ledgerClosed} onDelete={handleDeleteLedgerItem} />
             </div>
           </CollapsibleCard>

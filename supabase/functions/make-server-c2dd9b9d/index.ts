@@ -11,6 +11,7 @@ import { recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
+import { LEFTOVER_PLANS, OVER_PREPARED_CAUSES, checkNewReason, cleanWithLeftover, leftoverLines, piecesPerKg, poolLabel, reasonsText, uncountedPools, withLeftoverLines } from './leftoverRules.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
 import { BENGALI_TITLE, BUNDLE_MINUTES, DEFAULT_PREFS, bundles, inQuietHours, notificationCategory } from './notificationRules.ts';
@@ -5930,7 +5931,7 @@ app.post('/make-server-c2dd9b9d/production-ledger-item', async (c) => {
       return c.json({ error: 'Only production incharges or operations managers can log production' }, 403);
     }
 
-    const { productionHouseId: rawHouseId, date, momoKey, globalPoolQty, perTypePoolQty } = await c.req.json();
+    const { productionHouseId: rawHouseId, date, momoKey, globalPoolQty, perTypePoolQty, withLeftover: rawWithLeftover } = await c.req.json();
     const productionHouseId = await canonicalProductionHouseId(rawHouseId);
     if (!productionHouseId || !date || !momoKey) {
       return c.json({ error: 'productionHouseId, date, and momoKey are required' }, 400);
@@ -5946,6 +5947,23 @@ app.post('/make-server-c2dd9b9d/production-ledger-item', async (c) => {
     const gramsError = ledgerGramsError([globalPoolQty, perTypePoolQty]);
     if (gramsError) return c.json({ error: gramsError }, 400);
 
+    // Stuffing or coating made while yesterday's was still there needs a reason (owner, 29 Oct
+    // 2026: "why so much stuffing was prepared even when there was stuffing left"), and goes to
+    // the operations managers and the owner straight away.
+    const poolId = momoType ? `${momoType.perTypePoolField}:${momoType.inventoryKey}` : null;
+    let withLeftover: any = null;
+    let dayItems: any[] = [];
+    if (poolId && Number(perTypePoolQty) > 0) {
+      const { houseRecords, houseItems } = await getHouseLedger(productionHouseId, date);
+      dayItems = houseItems;
+      const openingKg = computeLedgerOpening(houseRecords, date)[poolId] || 0;
+      if (openingKg >= LEFTOVER_REASON_MIN_KG) {
+        const clean = cleanWithLeftover(rawWithLeftover);
+        if (clean.error) return c.json({ error: clean.error, needsLeftoverReason: true, openingKg }, 400);
+        withLeftover = { ...clean.value, openingKg: Math.round(openingKg * 100) / 100 };
+      }
+    }
+
     const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const loggedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
     const loggedByName = authResult.user.user_metadata?.name || authResult.user.email;
@@ -5953,10 +5971,22 @@ app.post('/make-server-c2dd9b9d/production-ledger-item', async (c) => {
       id, productionHouseId, date, momoKey,
       globalPoolQty: globalPoolQty || 0,
       perTypePoolQty: perTypePoolQty || 0,
+      ...(withLeftover ? { withLeftover } : {}),
       loggedBy, loggedByName, loggedByUserId: authResult.user.id,
       loggedAt: getNowIST(),
     };
     await kv.set(`production-ledger-item:${productionHouseId}:${date}:${id}`, item);
+    if (withLeftover) {
+      const made = [...dayItems, item].filter((x: any) => x?.withLeftover).map((x: any) => {
+        const t = PRODUCTION_MOMO_TYPES.find((m) => m.key === x.momoKey)!;
+        const [h, m] = String(x.loggedAt).slice(11, 16).split(':').map(Number);
+        return { pool: `${t.perTypePoolField}:${t.inventoryKey}`, kg: Number(x.perTypePoolQty) || 0, openingKg: x.withLeftover.openingKg, at: `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'pm' : 'am'}`, by: x.loggedByName || 'Someone', withLeftover: x.withLeftover };
+      });
+      await afterResponse('Made with leftover check', () => flagLedgerDay(expenseReviewDeps,
+        { key: `production-ledger:${productionHouseId}:${date}`, id: `${productionHouseId}-${date}`, date, house: productionHouseId, loggedBy: loggedByName },
+        ['madeWithLeftover'],
+        [{ kind: 'madeWithLeftover', title: 'Stuffing made while yesterday\'s was there', message: withLeftoverLines(made).join(' ') }]));
+    }
 
     // Only refreshes anything if this date has already been closed once (e.g. logging
     // something forgotten after the fact) - a normal same-day entry has no record yet, so
@@ -6055,7 +6085,9 @@ app.delete('/make-server-c2dd9b9d/production-ledger-item/:id', async (c) => {
 // raising a repair alarm, repairs.ts), fewer orders, made ahead for tomorrow, short of staff or
 // something else. Kept on the day's ledger record as leftoverReport.
 const LEFTOVER_REASON_MIN_KG = 0.5; // the app asks for a reason from this much stuffing/coating left
-const LEFTOVER_KINDS = ['power_cut', 'late_start', 'long_break', 'machine', 'low_demand', 'planned', 'short_staff', 'other'];
+// Owner, 29 Oct 2026 ("Over time couldnt be a reason there should be a lot of checklist"): what
+// went wrong in the kitchen itself, a plan for the leftover, and "other" only with a full sentence.
+const LEFTOVER_KINDS = ['over_prepared', 'old_not_used', 'slow_folding', 'dough_problem', 'power_cut', 'late_start', 'long_break', 'machine', 'low_demand', 'planned', 'short_staff', 'other'];
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const leftoverKgOf = (pools: Record<string, any>) => Object.entries(pools || {})
   .filter(([id, p]) => /^(stuffing|coating):/.test(id) && typeof p?.closingActual === 'number')
@@ -6128,13 +6160,37 @@ function cleanLeftoverReport(raw: any, staff: any[]): { report?: any; error?: st
       if (!alternative) return { error: 'Machine breakdown: say what was used instead (or "nothing")' };
       out.push({ kind, assetId: x.assetId ? text(x.assetId, 80) : null, machine, downFrom, downTo, stillDown, alternative, raiseRepair: x.raiseRepair !== false });
     } else {
+      const problem = checkNewReason(kind, x);
+      if (problem) return { error: problem };
       const note = text(x.note);
-      if ((kind === 'other' || kind === 'short_staff') && note.length < 3) return { error: kind === 'other' ? 'Other: write the reason' : 'Short of staff: say who was missing or why' };
-      out.push({ kind, note, ...(kind === 'short_staff' ? { people: people(x.people) } : {}) });
+      if (kind === 'over_prepared') {
+        out.push({ kind, causes: [...new Set((x.causes || []).filter((cz: string) => (OVER_PREPARED_CAUSES as readonly string[]).includes(cz)))], who: text(x.who, 60), note });
+      } else {
+        out.push({ kind, note, ...(kind === 'short_staff' || kind === 'slow_folding' ? { people: people(x.people) } : {}) });
+      }
     }
   }
   if (!out.length) return { error: 'Say why stuffing was left over' };
-  return { report: { reasons: out } };
+  const plan = (LEFTOVER_PLANS as readonly string[]).includes(raw?.plan) ? raw.plan : null;
+  if (!plan) return { error: 'Say what happens to the leftover stuffing: used first tomorrow, thrown away or kept in the freezer' };
+  return { report: { reasons: out, plan } };
+}
+
+// Momos made at a house on a day, by type (the production entry), and pieces a kg of stuffing
+// made over the house's last three weeks of closed days - for the leftover flag.
+async function houseYield(productionHouseId: string, date: string, houseRecords: any[]) {
+  const from = new Date(Date.parse(`${date}T00:00:00Z`) - 21 * 86400000).toISOString().slice(0, 10);
+  const productions = (await getAllByPrefixWithRetry('production:')).filter((p: any) => p && p.approvalStatus !== 'rejected'
+    && (p.productionHouseId === productionHouseId || p.storeId === productionHouseId) && String(p.date || '').slice(0, 10) >= from);
+  const piecesOn = (d: string) => {
+    const out: Record<string, number> = {};
+    for (const p of productions.filter((x: any) => String(x.date).slice(0, 10) === d)) {
+      for (const t of PRODUCTION_MOMO_TYPES) out[t.key] = (out[t.key] || 0) + (Number(p[t.key]?.final) || 0);
+    }
+    return out;
+  };
+  const days = houseRecords.filter((r: any) => r.date >= from && r.date < date && r.closed).map((r: any) => ({ pools: r.pools || {}, pieces: piecesOn(r.date) }));
+  return { piecesToday: piecesOn(date), perKg: piecesPerKg(days) };
 }
 
 // The house's staff on a day: check-in, shift start, minutes late beyond the grace, leave.
@@ -6178,7 +6234,9 @@ app.get('/make-server-c2dd9b9d/production-ledger/:houseId/:date/day-context', as
       .filter((a: any) => a?.id && a.locationKind === 'production' && a.locationId === productionHouseId && !a.dismissed && a.condition !== 'disposed')
       .map((a: any) => ({ id: a.id, name: a.name, condition: a.condition }))
       .sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
-    return c.json({ date, staff: people.sort((a, b) => a.name.localeCompare(b.name)), machines, minKg: LEFTOVER_REASON_MIN_KG });
+    const { houseRecords } = await getHouseLedger(productionHouseId, date);
+    const { perKg } = await houseYield(productionHouseId, date, houseRecords).catch(() => ({ perKg: {} as Record<string, number> }));
+    return c.json({ date, staff: people.sort((a, b) => a.name.localeCompare(b.name)), machines, minKg: LEFTOVER_REASON_MIN_KG, perKg });
   } catch (error) {
     console.log('Error loading the production day context:', error);
     return c.json({ error: 'Could not load the day' }, 500);
@@ -6255,6 +6313,11 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
       pools[id] = { opening: opening[id], prepared: prepared[id], closingActual, wastage, wastageOverride };
     }
 
+    // Every item carried over or made today is counted (0 when none is left): a blank one carried
+    // into tomorrow as if none of it was used (29 Oct: dough, veg and cheese corn stuffing).
+    const notCounted = uncountedPools(pools, Object.fromEntries(Object.entries(pools).map(([id, p]: [string, any]) => [id, p.closingActual])));
+    if (notCounted.length) return c.json({ error: `Count every item before closing (0 if none is left): ${notCounted.map(poolLabel).join(', ')}` }, 400);
+
     // Why stuffing was left over (sent by app 1.16.9+; older apps close without it).
     const leftoverKg = Math.round(leftoverKgOf(pools) * 100) / 100;
     let leftoverReport: any = existing?.leftoverReport || null;
@@ -6296,13 +6359,19 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     await kv.set(`production-ledger:${productionHouseId}:${date}`, record);
     await cascadeRecomputeProductionLedger(productionHouseId, date);
     // A late start that doesn't match the check-ins goes to the incharges and the owner as a
-    // production check; closing again with it fixed closes the check.
-    if (rawLeftover) {
+    // production check; closing again with it fixed closes the check. So does any leftover
+    // (owner, 29 Oct 2026: "immediately flagged to operation manager and also owner with proper
+    // reasoning"): how much, from what, how many momos it could have made, and the reasons.
+    {
       const issues: string[] = leftoverReport?.lateCheck?.issues || [];
-      await afterResponse('Late start check', () => flagLedgerDay(expenseReviewDeps,
-        { key: `production-ledger:${productionHouseId}:${date}`, id: record.id, date, house: productionHouseId, loggedBy: submittedByName },
-        ['lateMismatch'],
-        issues.length ? [{ kind: 'lateMismatch', title: 'Late start doesn\'t match the check-ins', message: issues.join(' ') }] : []));
+      const findings: any[] = issues.length ? [{ kind: 'lateMismatch', title: 'Late start doesn\'t match the check-ins', message: issues.join(' ') }] : [];
+      await afterResponse('Leftover check', async () => {
+        if (leftoverKg >= LEFTOVER_REASON_MIN_KG) {
+          const { piecesToday, perKg } = await houseYield(productionHouseId, date, houseRecords);
+          findings.push({ kind: 'leftover', title: `${leftoverKg} kg stuffing left over`, message: `${leftoverLines(pools, piecesToday, perKg).join(' ')} ${reasonsText(leftoverReport)}` });
+        }
+        await flagLedgerDay(expenseReviewDeps, { key: `production-ledger:${productionHouseId}:${date}`, id: record.id, date, house: productionHouseId, loggedBy: submittedByName }, ['lateMismatch', 'leftover'], findings);
+      });
     }
 
     return c.json({ success: true, entry: record });

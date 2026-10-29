@@ -725,6 +725,7 @@ export interface ProductionLedgerItem {
   loggedByUserId?: string;
   loggedAt: string;
   updatedAt?: string;
+  withLeftover?: WithLeftoverReason & { openingKg: number };
 }
 
 export async function getProductionLedger(accessToken: string, productionHouseId: string, date: string): Promise<{ entry: ProductionLedgerEntry | null; live: ProductionLedgerLive | null; items: ProductionLedgerItem[]; hasAnyPriorRecord: boolean }> {
@@ -737,10 +738,12 @@ export async function getProductionLedgerRange(accessToken: string, productionHo
   return data.entries || [];
 }
 
-export async function addProductionLedgerItem(accessToken: string, productionHouseId: string, date: string, momoKey: string, globalPoolQty: number, perTypePoolQty: number): Promise<ProductionLedgerItem> {
+// withLeftover: why more stuffing is made while yesterday's is still there (server asks for it).
+export type WithLeftoverReason = { reason: 'not_enough' | 'not_fit' | 'for_tomorrow' | 'told' | 'other'; who?: string; note?: string };
+export async function addProductionLedgerItem(accessToken: string, productionHouseId: string, date: string, momoKey: string, globalPoolQty: number, perTypePoolQty: number, withLeftover?: WithLeftoverReason): Promise<ProductionLedgerItem> {
   const data = await fetchWithAuth(`${API_BASE}/production-ledger-item`, accessToken, {
     method: 'POST',
-    body: JSON.stringify({ productionHouseId, date, momoKey, globalPoolQty, perTypePoolQty }),
+    body: JSON.stringify({ productionHouseId, date, momoKey, globalPoolQty, perTypePoolQty, ...(withLeftover ? { withLeftover } : {}) }),
   });
   return data.item;
 }
@@ -800,7 +803,9 @@ export async function closeProductionLedgerDay(accessToken: string, productionHo
 
 // Why stuffing was left over at the day's close (server cleanLeftoverReport), and what the form
 // needs to ask it: the house's staff with today's check-in and lateness, and its machines.
-export type LeftoverKind = 'power_cut' | 'late_start' | 'long_break' | 'machine' | 'low_demand' | 'planned' | 'short_staff' | 'other';
+export type LeftoverKind = 'over_prepared' | 'old_not_used' | 'slow_folding' | 'dough_problem' | 'power_cut' | 'late_start' | 'long_break' | 'machine' | 'low_demand' | 'planned' | 'short_staff' | 'other';
+export type OverPreparedCause = 'no_plan_check' | 'no_leftover_check' | 'told' | 'batch_size';
+export type LeftoverPlan = 'use_first' | 'discard' | 'freezer';
 export interface LeftoverReason {
   kind: LeftoverKind;
   periods?: { from: string; to: string }[];
@@ -808,14 +813,18 @@ export interface LeftoverReason {
   entries?: { id: string | null; name: string; minutes: number | null; why: string; genuine: 'yes' | 'no' | 'unsure' }[]; // long break, one per person
   assetId?: string | null; machine?: string; downFrom?: string; downTo?: string | null; stillDown?: boolean; alternative?: string; raiseRepair?: boolean; repairAlertId?: string;
   note?: string;
+  causes?: OverPreparedCause[]; who?: string; // made more than the plan needed
 }
 // lateCheck: what the server found holding a late start against the check-ins (raised as a production check).
-export interface LeftoverReport { reasons: LeftoverReason[]; leftoverKg?: number; by?: string; at?: string; lateCheck?: { issues: string[]; at?: string } }
+// plan: what happens to the leftover (owner, 29 Oct 2026).
+export interface LeftoverReport { reasons: LeftoverReason[]; plan?: LeftoverPlan; leftoverKg?: number; by?: string; at?: string; lateCheck?: { issues: string[]; at?: string } }
 export interface LedgerDayContext {
   date: string;
   staff: { id: string; name: string; shiftStart: string; checkInAt: string | null; lateMin: number; onLeave: boolean }[];
   machines: { id: string; name: string; condition: string }[];
   minKg: number;
+  // Momos a kg of each type's stuffing / coating makes, from recent days (by inventory key).
+  perKg?: Record<string, number>;
 }
 
 export async function getLedgerDayContext(accessToken: string, productionHouseId: string, date: string): Promise<LedgerDayContext> {
