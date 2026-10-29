@@ -45,17 +45,49 @@ const PRODUCTION_LEDGER_GO_LIVE_DATE = '2026-08-23';
 // The 8 sauces/chutneys this kitchen actually makes - same names/order as
 // AdditionalWastageForm's KNOWN_SAUCES, each given its own tint purely so this grid reads
 // like the Final Pieces grid above (one glance per card) instead of a flat, undifferentiated
-// list of look-alike inputs.
-const SAUCE_ITEMS: { key: 'panfriedSauce' | 'chilliChickenSauce' | 'spicyKoreanSauce' | 'hotGarlicSauce' | 'tandooriSauce' | 'soupPremix' | 'greenMayoChutney' | 'spicyRedChutney'; label: string }[] = [
-  { key: 'panfriedSauce', label: 'Panfried Sauce' },
-  { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce' },
-  { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce' },
-  { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce' },
-  { key: 'tandooriSauce', label: 'Tandoori Sauce' },
-  { key: 'soupPremix', label: 'Soup Premix' },
-  { key: 'greenMayoChutney', label: 'Green Mayo Chutney' },
-  { key: 'spicyRedChutney', label: 'Spicy Red Chutney' },
+// list of look-alike inputs. Sauces and chutneys are made in litres, soup premix in kg (owner,
+// 29 Oct 2026).
+const SAUCE_ITEMS: { key: 'panfriedSauce' | 'chilliChickenSauce' | 'spicyKoreanSauce' | 'hotGarlicSauce' | 'tandooriSauce' | 'soupPremix' | 'greenMayoChutney' | 'spicyRedChutney'; label: string; unit: 'L' | 'kg' }[] = [
+  { key: 'panfriedSauce', label: 'Panfried Sauce', unit: 'L' },
+  { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce', unit: 'L' },
+  { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce', unit: 'L' },
+  { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce', unit: 'L' },
+  { key: 'tandooriSauce', label: 'Tandoori Sauce', unit: 'L' },
+  { key: 'soupPremix', label: 'Soup Premix', unit: 'kg' },
+  { key: 'greenMayoChutney', label: 'Green Mayo Chutney', unit: 'L' },
+  { key: 'spicyRedChutney', label: 'Spicy Red Chutney', unit: 'L' },
 ];
+
+/**
+ * A number box that takes decimals as they're typed. Turning every keystroke into a number lost
+ * the point ("2." became 2, so 2.260 was saved as 2260 on 28 Oct); this keeps the text while
+ * typing and passes the number on.
+ */
+function DecimalInput({ value, onChange, unit, className, ...rest }: { value: number; onChange: (n: number) => void; unit?: string } & Omit<React.ComponentProps<typeof Input>, 'value' | 'onChange'>) {
+  const [text, setText] = useState(value ? String(value) : '');
+  // A new day or a reload brings a different number: show it (but not while it matches what's typed).
+  useEffect(() => {
+    setText((cur) => ((parseFloat(cur) || 0) === (value || 0) ? cur : value ? String(value) : ''));
+  }, [value]);
+  return (
+    <span className="flex items-center gap-2">
+      <Input
+        {...rest}
+        type="text"
+        inputMode="decimal"
+        placeholder="0"
+        className={className}
+        value={text}
+        onChange={(e) => {
+          const clean = e.target.value.replace(/,/g, '.').replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
+          setText(clean);
+          onChange(parseFloat(clean) || 0);
+        }}
+      />
+      {unit && <span className="w-6 text-body-sm text-text-2">{unit}</span>}
+    </span>
+  );
+}
 
 type Props = {
   context: InventoryContextType;
@@ -657,10 +689,15 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
               <PreparedLineItemsList items={ledgerItems} disabled={!canEditLedger || ledgerClosed} onDelete={handleDeleteLedgerItem} />
             </div>
           </CollapsibleCard>
-          {canEditLedger && (
+          {(canEditLedger || isClusterHead) && (
             <CollapsibleCard title={t('stock.prod.leftover')} subtitle={t('stock.prod.leftoverHint')} chip={ledgerClosed ? <StatusChip status="task.done" /> : undefined}>
               <div className="p-4">
-                <EndOfDayCloseForm pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting} dayContext={dayContext} savedReport={ledgerEntry?.leftoverReport || null} onSubmit={handleCloseLedgerDay} />
+                <EndOfDayCloseForm
+                  pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting} dayContext={dayContext}
+                  savedReport={ledgerEntry?.leftoverReport || null} readOnly={!canEditLedger} disabled={!canEditLedger}
+                  closedBy={ledgerEntry?.closedAt ? `${ledgerEntry.closedByName ? `${ledgerEntry.closedByName}, ` : ''}${new Date(ledgerEntry.closedAt).toLocaleString(lang === 'en' ? 'en-IN' : lang, { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : null}
+                  onSubmit={handleCloseLedgerDay}
+                />
               </div>
             </CollapsibleCard>
           )}
@@ -677,12 +714,10 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
           <div className="grid grid-cols-2 gap-3 p-4">
             {(['dough', 'stuffing', 'batter', 'coating'] as const).map((field) => (
               <Field key={field} label={`${field[0].toUpperCase()}${field.slice(1)} (kg)`}>
-                <Input
-                  type="text"
-                  inputMode="decimal"
+                <DecimalInput
                   className="num"
-                  value={String(formData.wastage[field])}
-                  onChange={(e) => setFormData({ ...formData, wastage: { ...formData.wastage, [field]: parseFloat(e.target.value.replace(/[^\d.]/g, '')) || 0 } })}
+                  value={formData.wastage[field]}
+                  onChange={(n) => setFormData((f) => ({ ...f, wastage: { ...f.wastage, [field]: n } }))}
                   disabled={!canEdit}
                 />
               </Field>
@@ -699,13 +734,12 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
               density="compact"
               title={item.label}
               trailing={
-                <Input
-                  type="text"
-                  inputMode="decimal"
+                <DecimalInput
                   className="num w-24 text-right"
-                  aria-label={`${item.label} (L)`}
-                  value={String(formData.sauces[item.key])}
-                  onChange={(e) => setFormData({ ...formData, sauces: { ...formData.sauces, [item.key]: parseFloat(e.target.value.replace(/[^\d.]/g, '')) || 0 } })}
+                  aria-label={`${item.label} (${item.unit === 'L' ? 'litres' : 'kg'})`}
+                  unit={item.unit}
+                  value={formData.sauces[item.key]}
+                  onChange={(n) => setFormData((f) => ({ ...f, sauces: { ...f.sauces, [item.key]: n } }))}
                   disabled={!canEdit}
                 />
               }
