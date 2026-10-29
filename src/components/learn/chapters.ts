@@ -8,7 +8,8 @@
 // with 5 of 12 ticked, a delivery on the way, the flagged tandoori masala, tomorrow's request not
 // sent, and so on. Change one, check the other (scripts: the lesson runner in the guide sources).
 import { two, type Two } from './learn';
-import { button, field, filled, input, section, text, topSheet, tour, type Find } from './find';
+import { button, field, filled, input, section, text, topSheet, tour, type Find, type Words } from './find';
+import { translate, type I18nKey } from '../../utils/i18n';
 
 export type LessonStep = {
   id: string;
@@ -28,6 +29,9 @@ export type LessonStep = {
 export type Chapter = { id: string; title: Two; about: Two; minutes: number; practice: boolean; steps: LessonStep[] };
 
 const sheet = { sheet: true };
+// A label in English and Bengali, from the app's own words (the crew practise on Bengali screens).
+const k = (...keys: I18nKey[]): Words => keys.flatMap((key) => [translate('en', key), translate('bn', key)]);
+const q = (selector: string): Find => () => document.querySelector(selector);
 
 // Chapter 1 for every role: the tabs, the bell and the account, on the real app.
 function findYourWay(tabs: { path: string; title: Two; say: Two }[], extra: LessonStep[] = []): Chapter {
@@ -451,10 +455,101 @@ const OPERATIONS: Chapter[] = [
   },
 ];
 
+// Store crew (Saniya, Nabendu): Bengali screens, so every label is found in both languages (k).
+// Practice data: on shift since 2:52 PM, 4 store photo checks, two items out of stock.
+const STORE_CREW: Chapter[] = [
+  findYourWay([
+    { path: 'stock', title: two('Tap Stock', 'Stock চাপুন'), say: two('Log anything that runs out, and mark it back when stock arrives.', 'কিছু শেষ হলে লিখুন, মাল এলে আবার চালু করুন।') },
+    { path: 'pay', title: two('Tap Pay', 'বেতন চাপুন'), say: two('What you have earned this month, your payslips and any advance.', 'এই মাসে কত হল, পে-স্লিপ আর অ্যাডভান্স।') },
+    { path: 'me', title: two('Tap Me', 'আমি চাপুন'), say: two('Attendance and leave, KPIs, workplace photos, the photo guide, emergency numbers and Learn the app.', 'হাজিরা আর ছুটি, KPI, কাজের জায়গার ছবি, ছবির নিয়ম, জরুরি নম্বর আর অ্যাপ শিখুন।') },
+  ]),
+  {
+    id: 'shift', practice: true, minutes: 1,
+    title: two('Your shift and today\'s jobs', 'শিফট আর আজকের কাজ'),
+    about: two('Your attendance, and what to do today.', 'আপনার হাজিরা, আর আজ কী করতে হবে।'),
+    steps: [
+      { id: 'card', go: 'home', find: tour('shift'), title: two('Your shift', 'আপনার শিফট'), body: two('Tap Start shift when you reach the store; the time is your attendance. Here you started at 2:52 PM. Practice: nothing is saved.', 'দোকানে পৌঁছে Start shift চাপুন; সেই সময়টাই হাজিরা। এখানে ২:৫২-য় শুরু হয়েছে। অভ্যাস: কিছু সেভ হয় না।') },
+      { id: 'end', find: button(k('shift.end')), title: two('End shift', 'শিফট শেষ'), body: two('At closing, tap End shift before you leave. Forgetting it leaves your day open.', 'বন্ধের সময় বেরোনোর আগে শিফট শেষ চাপুন। ভুলে গেলে দিনটা খোলা থেকে যায়।') },
+      { id: 'jobs', find: q('[aria-labelledby="home-checklist"]'), optional: true, title: two('Today\'s jobs', 'আজকের কাজ'), body: two('Your jobs for today in order, each with its time. Tap one to go straight to it.', 'আজকের কাজ পরপর, সময়সহ। চাপ দিলে সোজা সেই কাজে।') },
+    ],
+  },
+  {
+    id: 'photos', practice: true, minutes: 1,
+    title: two('Workplace photos', 'কাজের জায়গার ছবি'),
+    about: two('Which photos to take, and when.', 'কোন ছবি তুলবেন, কখন।'),
+    steps: [
+      { id: 'open', go: 'me', find: button(k('more.myChecks')), act: 'tap', title: two('Tap Workplace photos', 'কাজের জায়গার ছবি চাপুন'), body: two('Me › Workplace photos: today\'s photo checks at the store.', 'আমি › কাজের জায়গার ছবি: দোকানের আজকের ছবি চেক।') },
+      { id: 'list', find: text(['Today\'s photos', 'আজকের ছবি']), title: two('Today\'s photos', 'আজকের ছবি'), body: two('Fryer, steamer, crates, the back area: each with its time.', 'ফ্রায়ার, স্টিমার, ক্রেট, পেছনের জায়গা: প্রতিটার সময়সহ।') },
+      { id: 'shots', find: text('Oil filtered'), optional: true, title: two('What to show', 'কী দেখা যাবে'), body: two('Each check says what the photo must show. A check with two photos names them, e.g. Top and Inside.', 'প্রতিটা চেকে লেখা ছবিতে কী দেখা যাবে। দুটো ছবির চেকে নাম দেওয়া, যেমন Top আর Inside।') },
+      { id: 'opens', find: text(['Opens 3 PM', '3 PM থেকে', 'Opens at', 'থেকে খুলবে']), optional: true, title: two('When it opens', 'কখন খোলে'), body: two('Take it once it opens: tap the photo\'s name and the camera opens. Bunny scores each photo out of 10. (Practice: no photo is sent.)', 'খুললেই তুলুন: ছবির নামে চাপলে ক্যামেরা খোলে। বানি প্রতিটা ছবিকে ১০-এর মধ্যে নম্বর দেয়। (অভ্যাসে ছবি যায় না।)') },
+    ],
+  },
+  {
+    id: 'out-of-stock', practice: true, minutes: 1,
+    title: two('Something ran out', 'কিছু শেষ হয়ে গেলে'),
+    about: two('Log it, and mark it back when stock comes.', 'লিখে রাখুন, মাল এলে আবার চালু করুন।'),
+    steps: [
+      { id: 'list', go: 'stock/out-of-stock', find: section(k('stock.so.outNow')), title: two('Out right now', 'এখন যা শেষ'), body: two('First switch it off in Ciferon, so Zomato and Swiggy stop taking it. Then log it here.', 'আগে Ciferon-এ বন্ধ করুন, যাতে Zomato আর Swiggy অর্ডার না নেয়। তারপর এখানে লিখুন।') },
+      { id: 'mark', find: button(k('stock.so.markOut')), act: 'tap', title: two('Log it', 'লিখে রাখুন'), body: two('Tap the button at the bottom the moment something runs out.', 'কিছু শেষ হওয়ামাত্র নিচের বোতামটা চাপুন।') },
+      { id: 'item', find: field(k('stock.so.item'), sheet), act: 'do', ready: () => !!input(k('stock.so.item'), sheet)?.value, title: two('Pick the item', 'জিনিসটা বাছুন'), body: two('Choose what ran out, e.g. Paneer momos.', 'কী শেষ হল বেছে নিন, যেমন Paneer momos।') },
+      { id: 'why', find: button(k('stock.soReason.sold_out'), sheet), act: 'tap', title: two('Why did it run out?', 'কেন শেষ হল?'), body: two('Tap Sold out. The reason tells the team what to fix.', 'বিক্রি হয়ে শেষ চাপুন। কারণ দেখে টিম বোঝে কী ঠিক করতে হবে।') },
+      { id: 'save', find: button(k('stock.so.markOutButton'), sheet), act: 'tap', title: two('Save it', 'সেভ করুন'), body: two('The incharge, operations and the owner see it straight away.', 'ইনচার্জ, অপারেশনস আর মালিক সঙ্গে সঙ্গে দেখতে পান।') },
+      { id: 'back', find: button(k('stock.so.backInStock')), title: two('Back in stock', 'আবার স্টকে'), body: two('When it arrives, tap this straight away, and switch it on in Ciferon.', 'মাল এলেই এটা চাপুন, আর Ciferon-এ চালু করুন।') },
+    ],
+  },
+  {
+    id: 'running-low', practice: true, minutes: 1,
+    title: two('Running low', 'কিছু কমে আসছে'),
+    about: two('Warn the team before something runs out.', 'শেষ হওয়ার আগে টিমকে জানান।'),
+    steps: [
+      { id: 'card', go: 'home', find: tour('low'), title: two('Running low on something?', 'কিছু কমে আসছে?'), body: two('Boxes, mayonnaise, tissue: tell the team a day or two before it runs out.', 'বাক্স, মেয়োনিজ, টিস্যু: শেষ হওয়ার এক-দুদিন আগে টিমকে জানান।') },
+      { id: 'open', find: button(k('supply.flag')), act: 'tap', title: two('Tap Tell the team', 'জানান চাপুন'), body: two('A short form opens.', 'ছোট একটা ফর্ম খুলবে।') },
+      { id: 'item', find: field(k('supply.item'), sheet), act: 'do', ready: filled(k('supply.item'), sheet), title: two('What is running low?', 'কী কমে আসছে?'), body: two('Type it, e.g. Tissue paper.', 'লিখুন, যেমন টিস্যু পেপার।') },
+      { id: 'send', find: button(k('supply.send', 'common.send'), { ...sheet, exact: true }), act: 'tap', title: two('Send it', 'পাঠিয়ে দিন'), body: two('The incharge, operations and the owner get it, and it goes on the shopping list.', 'ইনচার্জ, অপারেশনস আর মালিক পেয়ে যান, আর বাজারের লিস্টে ওঠে।') },
+    ],
+  },
+  {
+    id: 'leave', practice: true, minutes: 2,
+    title: two('Attendance and leave', 'হাজিরা আর ছুটি'),
+    about: two('Your week, and asking for leave.', 'আপনার সপ্তাহ, আর ছুটি চাওয়া।'),
+    steps: [
+      { id: 'open', go: 'me', find: button(k('more.myAttendance')), act: 'tap', title: two('Tap Attendance and leave', 'হাজিরা ও ছুটি চাপুন'), body: two('Me › Attendance and leave.', 'আমি › হাজিরা ও ছুটি।') },
+      { id: 'week', find: button(k('team.ts.sendWeek')), title: two('Your week', 'আপনার সপ্তাহ'), body: two('Each day\'s times from your shift. Send the week so the incharge can approve it; sending on time is part of your KPI.', 'শিফট থেকে প্রতিদিনের সময়। সপ্তাহ পাঠান, যাতে ইনচার্জ মঞ্জুর করতে পারেন; সময়ে পাঠানো KPI-র অংশ।') },
+      { id: 'apply', find: button(k('team.leave.apply')), act: 'tap', title: two('Ask for leave', 'ছুটি চান'), body: two('Tap Apply for leave.', 'ছুটির আবেদন চাপুন।') },
+      { id: 'from', find: field(k('team.leave.from'), sheet), act: 'do', ready: filled(k('team.leave.from'), sheet), title: two('Which day', 'কোন দিন'), body: two('Pick the day. For more than one day, pick the last day under To.', 'দিনটা বাছুন। একদিনের বেশি হলে "পর্যন্ত"-তে শেষ দিনটা বাছুন।') },
+      { id: 'why', find: field(['Reason', 'কারণ'], sheet), act: 'do', ready: filled(['Reason', 'কারণ'], sheet), title: two('Why', 'কারণ'), body: two('A few words, e.g. Sister\'s wedding.', 'দু-চার কথায়, যেমন বোনের বিয়ে।') },
+      { id: 'send', find: button(k('team.leave.submit'), sheet), act: 'tap', title: two('Send it', 'পাঠিয়ে দিন'), body: two('Your incharge approves it. Ask a few days ahead; leave left shows at the top.', 'ইনচার্জ মঞ্জুর করেন। কয়েক দিন আগে চান; কত ছুটি বাকি ওপরে দেখায়।') },
+    ],
+  },
+  {
+    id: 'pay', practice: true, minutes: 1,
+    title: two('Your pay', 'আপনার বেতন'),
+    about: two('What you have earned, and your payslips.', 'কত হল, আর পে-স্লিপ।'),
+    steps: [
+      { id: 'tab', go: 'home', find: tour('tab-pay'), act: 'tap', title: two('Tap Pay', 'বেতন চাপুন'), body: two('Your money in one place.', 'আপনার টাকার সব এক জায়গায়।') },
+      { id: 'month', find: text(k('team.my.thisMonth')), title: two('This month so far', 'এই মাসে এখন পর্যন্ত'), body: two('What you have been paid this month, and when the rest is due.', 'এই মাসে কত পেয়েছেন, আর বাকিটা কবে।') },
+      { id: 'slips', find: text(k('team.my.payslips')), title: two('Payslips', 'পে-স্লিপ'), body: two('Each month\'s pay, with any advance taken off. Tap a month for the details.', 'প্রতি মাসের বেতন, অ্যাডভান্স কেটে। মাসে চাপলে বিস্তারিত।') },
+    ],
+  },
+  {
+    id: 'kpis', practice: true, minutes: 1,
+    title: two('Your KPIs and help', 'আপনার KPI আর সাহায্য'),
+    about: two('Your score, and where help is.', 'আপনার স্কোর, আর সাহায্য কোথায়।'),
+    steps: [
+      { id: 'open', go: 'me', find: button(k('more.myKpis')), act: 'tap', title: two('Tap My KPIs', 'আমার KPI চাপুন'), body: two('Your score this month, and the extra pay it gives.', 'এই মাসের স্কোর, আর তাতে কত বাড়তি টাকা।') },
+      { id: 'score', find: text(k('team.kpi.outOf100')), title: two('Out of 100', '১০০-র মধ্যে'), body: two('Attendance, on time, a full shift, the timesheet and clean workplace photos.', 'হাজিরা, সময়ে আসা, পুরো শিফট, টাইমশিট আর পরিষ্কার কাজের জায়গার ছবি।') },
+      { id: 'wins', find: text(k('team.kpi.biggestWins')), optional: true, title: two('Biggest wins', 'সবচেয়ে বড় উন্নতি'), body: two('What would raise your score most next time.', 'পরের বার কী করলে স্কোর সবচেয়ে বাড়বে।') },
+      { id: 'contacts', go: 'me', find: button(k('more.contacts')), act: 'tap', title: two('Emergency contacts', 'জরুরি যোগাযোগ'), body: two('Police, fire, ambulance, technicians and suppliers, one tap to call.', 'পুলিশ, দমকল, অ্যাম্বুলেন্স, মিস্ত্রি আর সাপ্লায়ার, এক চাপে ফোন।') },
+      { id: 'again', go: 'me', find: button(k('more.tour')), optional: true, title: two('Practise again any time', 'যখন খুশি আবার অভ্যাস'), body: two('Me › Learn the app has every chapter.', 'আমি › অ্যাপ শিখুন-এ সব অধ্যায় আছে।') },
+    ],
+  },
+];
+
 const CHAPTERS: Record<string, Chapter[]> = {
   'store-incharge': STORE_INCHARGE,
   'production-incharge': PRODUCTION_INCHARGE,
   operations: OPERATIONS,
+  'store-crew': STORE_CREW,
 };
 
 /** This role's chapters (none yet: the one-minute tour only). */

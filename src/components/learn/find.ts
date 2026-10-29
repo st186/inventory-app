@@ -1,11 +1,16 @@
 // Finding the part of the screen a lesson step lights up, by what the person sees on it: a
 // button's words, a field's label, a line of text, a section's heading, or a data-tour mark.
+// Words can be given in both languages (["End shift", "শিফট শেষ করুন"]): the crew practise on
+// Bengali screens.
 // Each returns a function the lesson calls until the part appears (screens load after a tap).
 // The lesson's own overlay (data-coach) is never matched.
 
 export type Find = () => Element | null;
+/** What to look for: one wording, or the same thing in each language. */
+export type Words = string | string[];
 
 const norm = (s: string | null | undefined) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+const wants = (w: Words) => (Array.isArray(w) ? w : [w]).map(norm).filter(Boolean);
 
 function visible(el: Element) {
   const r = el.getBoundingClientRect();
@@ -28,23 +33,29 @@ export const tour = (id: string): Find => () => {
 };
 
 /** A button, link, row, tick box or choice whose name or words contain `name`. */
-export const button = (name: string, o: Where & { exact?: boolean } = {}): Find => () => {
+export const button = (name: Words, o: Where & { exact?: boolean } = {}): Find => () => {
   const root = rootOf(o);
   if (!root) return null;
-  const want = norm(name);
+  const want = wants(name);
   for (const el of Array.from(root.querySelectorAll('button,[role=button],a[href],[role=radio],[role=checkbox],[role=tab],[role=option],label'))) {
     if (el.closest('[data-coach]') || !visible(el)) continue;
     const label = norm(el.getAttribute('aria-label') || el.textContent);
-    if (o.exact ? label === want : label.includes(want)) return el;
+    if (want.some((w) => (o.exact ? label === w : label.includes(w)))) return el;
   }
   return null;
 };
 
 /** The smallest piece of text on screen that contains `text`. */
-export const text = (text: string, o: Where = {}): Find => () => {
+export const text = (words: Words, o: Where = {}): Find => () => {
+  for (const one of wants(words)) {
+    const el = textOne(one, o);
+    if (el) return el;
+  }
+  return null;
+};
+function textOne(want: string, o: Where): Element | null {
   const root = rootOf(o);
   if (!root) return null;
-  const want = norm(text);
   // Usually the words are one piece of text: find it directly.
   const walker = document.createTreeWalker(root === document ? document.body : (root as Node), NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -58,19 +69,25 @@ export const text = (text: string, o: Where = {}): Find => () => {
     return el;
   }
   return null;
-};
+}
 
 /** The section (card or list) under the heading that contains `heading`. */
-export const section = (heading: string, o: Where = {}): Find => () => {
+export const section = (heading: Words, o: Where = {}): Find => () => {
   const head = text(heading, o)();
   return head?.closest('section') || head || null;
 };
 
 /** The input, box or picker labelled `label` (the label's start is enough). */
-export function input(label: string, o: Where = {}): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null {
+export function input(label: Words, o: Where = {}): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null {
+  for (const one of wants(label)) {
+    const el = inputOne(one, o);
+    if (el) return el;
+  }
+  return null;
+}
+function inputOne(want: string, o: Where): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null {
   const root = rootOf(o);
   if (!root) return null;
-  const want = norm(label);
   for (const l of Array.from(root.querySelectorAll('label'))) {
     if (l.closest('[data-coach]') || !norm(l.textContent).startsWith(want) || !visible(l)) continue;
     const el = (l.htmlFor ? document.getElementById(l.htmlFor) : null) || l.querySelector('input,textarea,select');
@@ -84,7 +101,7 @@ export function input(label: string, o: Where = {}): HTMLInputElement | HTMLText
 }
 
 /** The field labelled `label`, with its label (what a "type here" step lights up). */
-export const field = (label: string, o: Where = {}): Find => () => {
+export const field = (label: Words, o: Where = {}): Find => () => {
   const el = input(label, o);
   if (!el) return null;
   // The label, the box and any note under it: the nearest wrapper holding both.
@@ -95,7 +112,7 @@ export const field = (label: string, o: Where = {}): Find => () => {
 };
 
 /** Has the field labelled `label` got something in it (a money box's starting 0 doesn't count). */
-export const filled = (label: string, o: Where = {}) => () => {
+export const filled = (label: Words, o: Where = {}) => () => {
   const value = input(label, o)?.value.trim() || '';
   return !!value && !/^[₹\s]*0+(\.0+)?$/.test(value);
 };

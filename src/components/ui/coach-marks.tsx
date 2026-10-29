@@ -259,7 +259,9 @@ function CoachMarks({ open, steps, onClose, labels, noBack = false }: {
   const ok = step.act !== "do" || !step.ready || step.ready();
   // The part works by itself on tap and do steps; on the others it is a big Next button.
   const live = !!step.act && !!box;
-  const tapStep = step.act === "tap" && found === "yes";
+  // A part that can't be pressed (greyed out until something above is right) gets a Next too, so
+  // nobody is left stuck on it.
+  const tapStep = step.act === "tap" && found === "yes" && !step.target?.()?.matches(":disabled, [aria-disabled='true']");
   const finger = box && step.act !== "do" ? { x: box.x + box.w / 2 - 6, y: box.y + box.h / 2 - 4 } : null;
   const ease = reduce ? "" : "transition-[left,top,width,height,x,y,transform] duration-500 ease-(--ease-standard)";
   // Around a tap step's part, four panes catch taps everywhere else; the part itself is left

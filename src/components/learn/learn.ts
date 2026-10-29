@@ -65,6 +65,10 @@ export function markChapterDone(who: string, id: string) {
   try { window.localStorage.setItem(doneKey(who), JSON.stringify([...done, id])); } catch { /* storage off */ }
 }
 
+/** The screens' language in practice: the crew and riders use the app in Bengali (owner, 29 Oct
+ *  2026); managers practise on the English screens the guides show. */
+export const practiceLang = (persona: string): 'en' | 'bn' => (['store-crew', 'kitchen-crew', 'rider'].includes(persona) ? 'bn' : 'en');
+
 /** Which role's lessons and practice data fit this login. */
 export function learnPersona(nav: NavModel, designation?: string | null): string {
   switch (nav.kind) {

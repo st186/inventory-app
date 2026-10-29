@@ -6,7 +6,7 @@ import { installGuideMock } from '../../gallery/guidePreview/mock';
 import { FlaskConical } from 'lucide-react';
 import { PreviewShell } from '../../gallery/guidePreview/PreviewShell';
 import { useT } from '../../utils/i18n';
-import { leavePractice, type PracticeSession } from './learn';
+import { leavePractice, practiceLang, type PracticeSession } from './learn';
 
 installGuideMock();
 
@@ -28,7 +28,6 @@ function PracticeBanner() {
 }
 
 export default function PracticeApp({ session }: { session: PracticeSession }) {
-  // The guides' screens are in English with the lesson cards in both languages (owner, 29 Oct
-  // 2026); the store incharge's lessons find buttons by their English words.
-  return <PreviewShell personaId={session.persona} lang="en" name={session.name} banner={<PracticeBanner />} />;
+  // The lesson cards are in both languages; the screens in the language this role uses.
+  return <PreviewShell personaId={session.persona} lang={practiceLang(session.persona)} name={session.name} banner={<PracticeBanner />} />;
 }
