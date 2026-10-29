@@ -75,6 +75,8 @@ export const ONLINE_SALES = [
 
 export const TOPUPS = [
   { id: 'TOPUP-000000A1B2C3', date: TODAY, storeId: 'STORE-1', requestedAmount: 1500, reason: 'store_inventory', status: 'pending', requestedByName: 'Store Incharge Demo', requestedByEntityName: 'Store A', requestedByEntityType: 'store', requestDate: `${TODAY}T08:10:00.000Z` },
+  // A long reason with a long name: the id must still show (it was cut off, 29 Oct 2026).
+  { id: 'TOPUP-0000000WP61X', date: TODAY, storeId: 'STORE-1', requestedAmount: 11515, reason: 'production_inventory', status: 'pending', requestedByName: 'Operations Incharge Demo', requestedByEntityName: 'Store A', requestedByEntityType: 'store', requestDate: `${TODAY}T09:05:00.000Z` },
   { id: 'TOPUP-000000D4E5F6', date: TODAY, storeId: 'STORE-1', requestedAmount: 3000, reason: 'event_cash', note: 'Float for the winter fair stall', status: 'pending', requestedByName: 'Event Lead Demo', requestedByEntityName: 'Winter fair stall', requestedByEntityType: 'store', requestDate: `${TODAY}T09:40:00.000Z` },
   { id: 'TOPUP-000000G7H8I9', date: YESTERDAY, storeId: 'STORE-1', requestedAmount: 800, reason: 'store_inventory', status: 'approved', requestedByName: 'Store Incharge Demo', requestedByEntityName: 'Store A', requestedByEntityType: 'store', requestDate: `${YESTERDAY}T10:00:00.000Z`, approvedAt: `${YESTERDAY}T10:30:00.000Z` },
 ];
