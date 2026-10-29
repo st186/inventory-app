@@ -75,7 +75,7 @@ function forecast() {
 }
 
 const firstOfMonth = `${today.slice(0, 7)}-01`;
-const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, body: any, url: URL) => any }[] = [
+export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, body: any, url: URL) => any }[] = [
   { method: 'GET', re: /\/production-requests$/, reply: () => ({ requests }) },
   { method: 'POST', re: /\/production-requests$/, reply: (_m, body) => { const r = { ...body, id: `new-${Date.now()}`, status: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), storeName: 'Bidhan Nagar' }; requests.unshift(r); return { request: r }; } },
   { method: 'PUT', re: /\/production-requests\/([^/]+)\/status$/, reply: (m, body) => { const r = requests.find((x) => x.id === m[1]); if (r) { r.status = body.status; if (body.status === 'prepared') r.preparedAt = new Date().toISOString(); if (body.status === 'accepted') r.acceptedAt = new Date().toISOString(); } return { request: r }; } },

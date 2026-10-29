@@ -90,7 +90,7 @@ function RoleShell({ role }: { role: string }) {
 }
 
 /** Taps buttons / rows whose text contains each part of ?click=a|b, one after another. */
-function useAutoClick(steps: string[]) {
+export function useAutoClick(steps: string[]) {
   React.useEffect(() => {
     if (!steps.length) return;
     let cancelled = false;

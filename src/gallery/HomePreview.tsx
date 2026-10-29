@@ -23,7 +23,7 @@ import { addDays, getTodayIST } from '../utils/timezone';
 import { PREVIEW_PERSONAS } from './ShellPreview';
 import { buildHomeSample, istIso } from './homeSample';
 
-type Params = { role: string; lang: AppLanguage | null; event: boolean; shiftOn: boolean; empty: boolean };
+export type Params = { role: string; lang: AppLanguage | null; event: boolean; shiftOn: boolean; empty: boolean };
 
 function readParams(): Params {
   const p = new URLSearchParams(window.location.search);
@@ -66,7 +66,7 @@ function forecastFor(today: string) {
   });
 }
 
-function mockHomeData(personaId: string, params: Params, sample: ReturnType<typeof buildHomeSample>): HomeData {
+export function mockHomeData(personaId: string, params: Params, sample: ReturnType<typeof buildHomeSample>): HomeData {
   const today = getTodayIST();
   const workplace = personaId.startsWith('production') || personaId === 'kitchen-crew' ? 'production' : personaId === 'rider' ? 'none' : 'store';
   const punchIn = params.shiftOn || personaId.endsWith('crew');
