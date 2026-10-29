@@ -335,7 +335,8 @@ console.log('✅ Logger middleware configured');
 // carry X-Cron-Secret). Leftover setup/test/debug routes are switched off. The most sensitive
 // routes are limited by role here as well; routes still do their own finer checks.
 const API_PREFIX = '/make-server-c2dd9b9d';
-const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action', '/workplace/push-photo'];
+// The camera PC (cctv.ts) has no login: it sends the camera's own key.
+const PUBLIC_ROUTES = ['/health', '/app-version', '/push/vapid-public-key', '/quick-action', '/workplace/push-photo', '/cctv/config', '/cctv/frame'];
 // Read-only item catalog lists that app builds up to 1.15.18 (and the website before PR #4)
 // fetch with the public key. Nothing private in them; drop this once every phone is on 1.15.19+.
 const LEGACY_PUBLIC_READS = ['/inventory-items', '/custom-items', '/custom-categories'];

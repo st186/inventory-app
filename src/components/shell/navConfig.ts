@@ -86,7 +86,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance' | 'payslips' | 'performance';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance' | 'payslips' | 'performance' | 'cameras';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -124,6 +124,7 @@ export type ScreenSpec =
   | { screen: 'Compliance' }
   | { screen: 'Payslips' }
   | { screen: 'Performance' }
+  | { screen: 'Cameras' }
   | { screen: 'AppTour' }
   | { screen: 'ShoppingLists' }
   | { screen: 'PhotoGuide' }
@@ -396,6 +397,8 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   // payslips again and reads their notes here; managers and the owner write the notes.
   if (kind !== 'owner') add('payslips', 'more.payslips', 'payslips', { screen: 'Payslips' }, null, 'payslips');
   add('performance', 'more.performance', 'performance', { screen: 'Performance' }, null, 'performance');
+  // Cameras (owner, 29 Oct 2026): PPE and after-hours alerts with photos; incharges see their place's.
+  if (kind === 'owner' || kind === 'ops' || kind === 'store-incharge' || kind === 'production-incharge') add('cameras', 'more.cameras', 'cameras', { screen: 'Cameras' }, null, 'cameras');
   // Emergency contacts (owner, 29 Oct 2026): everyone can find and call a number; the owner, ops and incharges keep it up to date.
   add('contacts', 'more.contacts', 'contacts', { screen: 'Contacts' }, null, 'contacts');
   // App tour (owner, 29 Oct 2026): plays the first-open walk-through again.
@@ -430,7 +433,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening', 'compliance', 'performance'),
+      group('more.dailyOps', 'stock/requests', 'stock/production', 'stock/on-hand', 'stock/out-of-stock', 'stock/riders', 'shopping', 'events', 'complaints', 'audits', 'opening', 'compliance', 'performance', 'cameras'),
       group('more.assets', 'equipment', 'investments'),
       group('more.setup', 'items', 'stores', 'hierarchy', 'workplace-setup', 'photo-guide', 'recipes-costs'),
       group('more.data', 'reports', 'audit-report', 'backup'),
@@ -446,7 +449,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
       tab('more', 'nav.more', 'more', []),
     ];
     more = [
-      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'compliance', 'my-kpis', 'payslips', 'performance'),
+      group('more.business', 'insights', 'shopping', 'events', 'recipes-costs', 'complaints', 'audits', 'opening', 'compliance', 'my-kpis', 'payslips', 'performance', 'cameras'),
       group('more.assets', 'equipment'),
       group('more.setup', 'items', 'hierarchy', 'workplace-setup', 'photo-guide'),
       group('more.data', 'reports', 'audit-report'),
@@ -466,7 +469,7 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
     more = [
       group('more.myWork', 'my-pay', 'payslips', 'performance', 'my-attendance', 'my-kpis', 'my-checks', 'photo-guide'),
       // Manage Items stays reachable by link only on employee logins, as before.
-      group('more.business', 'insights', ...(staff ? [] : ['items']), 'equipment', 'reports', ...(staff ? [] : ['audit-report'])),
+      group('more.business', 'insights', ...(staff ? [] : ['items']), 'equipment', 'cameras', 'reports', ...(staff ? [] : ['audit-report'])),
       group('more.help', 'contacts', 'tour'),
     ];
   } else if (kind === 'crew') {

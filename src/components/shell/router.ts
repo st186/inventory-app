@@ -85,6 +85,7 @@ export const LEGACY_ALIASES: Record<string, Candidates> = {
   compliance: () => ['compliance'],
   payslips: () => ['payslips'],
   performance: () => ['performance'],
+  cameras: () => ['cameras'],
   tour: () => ['tour'],
   shopping: () => ['shopping'],
   'photo-guide': () => ['photo-guide'],

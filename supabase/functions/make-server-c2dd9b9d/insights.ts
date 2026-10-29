@@ -1319,6 +1319,58 @@ const hygieneSchema = {
   additionalProperties: false,
 };
 
+// A camera still (cctv.ts): who is in view and, for each person, whether the kitchen PPE is on.
+// "unclear" whenever the item can't be seen (turned away, out of frame, too small) - only a clear
+// "no" raises an alert.
+const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people.';
+const yesNo = { type: 'string', enum: ['yes', 'no', 'unclear'] };
+const cameraSchema = {
+  type: 'object',
+  properties: {
+    peopleCount: { type: 'integer', description: 'People in the frame' },
+    people: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { where: { type: 'string', description: 'Where in the frame, a few words' }, cap: yesNo, gloves: yesNo, apron: yesNo },
+        required: ['where', 'cap', 'gloves', 'apron'],
+        additionalProperties: false,
+      },
+    },
+    note: { type: 'string', description: 'One short sentence on what the frame shows' },
+  },
+  required: ['peopleCount', 'people', 'note'],
+  additionalProperties: false,
+};
+export type CameraLook = { peopleCount: number; people: { where: string; cap: string; gloves: string; apron: string }[]; note: string };
+
+export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType: string; place: string }): Promise<CameraLook> {
+  const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
+  const res = await callClaude(deps, {
+    purpose: 'camera',
+    system: CAMERA_SYSTEM,
+    effort: 'low',
+    noThinking: true,
+    maxTokens: 800,
+    format: { type: 'json_schema', schema: cameraSchema },
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: frame.mediaType, data: frame.base64 } },
+        { type: 'text', text: `Camera: ${frame.place.slice(0, 80)}.` },
+      ],
+    }],
+  });
+  let parsed: any = null;
+  try { parsed = JSON.parse(textOf(res)); } catch { /* handled below */ }
+  if (!parsed || typeof parsed.peopleCount !== 'number') throw new AiError('The camera check returned nothing.', 502);
+  const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
+  const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => ({
+    where: String(p?.where || '').slice(0, 60), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
+  }));
+  return { peopleCount: Math.max(people.length, Math.min(30, Math.round(parsed.peopleCount))), people, note: String(parsed.note || '').slice(0, 200) };
+}
+
 export async function aiScorePhoto(
   kv: Kv,
   photo: { base64: string; mediaType: string; itemName: string; hint?: string },

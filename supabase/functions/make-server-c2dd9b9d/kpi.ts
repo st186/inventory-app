@@ -28,6 +28,7 @@ import { registerSuppliesRoutes } from './supplies.ts';
 import { registerContactRoutes } from './contacts.ts';
 import { registerComplianceRoutes } from './compliance.ts';
 import { registerPerformanceRoutes } from './performance.ts';
+import { registerCameraRoutes } from './cctv.ts';
 import { openingScore, type OpeningDay, type OpeningTemplate } from './openingRules.ts';
 import {
   P, actorOf, canManage, loadConfig, loadPlaces, profileOf, registerAttendanceRoutes,
@@ -316,6 +317,7 @@ export function registerKpiRoutes(app: any, deps: KpiDeps) {
   registerContactRoutes(app, deps);
   registerComplianceRoutes(app, deps);
   registerPerformanceRoutes(app, deps);
+  registerCameraRoutes(app, deps);
 
   const fail = (c: any, err: any) => {
     if (err instanceof AiError) return c.json({ error: err.message, ...err.extra }, err.status);
