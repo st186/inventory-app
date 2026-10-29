@@ -39,7 +39,8 @@ const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return {
 export type KpiId = 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness' | 'expenseAccuracy';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness' | 'expenseAccuracy'
+  | 'productionSupply' | 'shoppingListOnTime';
 
 export const KPI_LABELS: Record<KpiId, string> = {
   attendance: 'Attendance',
@@ -68,6 +69,8 @@ export const KPI_LABELS: Record<KpiId, string> = {
   photoChecks: 'Photo checks (on time and clean)',
   storeReadiness: 'Store ready on time',
   expenseAccuracy: 'Expenses entered correctly',
+  productionSupply: 'Production supply: full and on time',
+  shoppingListOnTime: 'Shopping list sent by 7 AM',
 };
 
 // The KPIs the owner picks from for each person, grouped as in KPI settings (riders have none).
@@ -75,7 +78,7 @@ export const KPI_SECTIONS: { title: string; ids: KpiId[] }[] = [
   { title: 'Everyone', ids: ['attendance', 'punctuality', 'fullShift', 'timesheet'] },
   { title: 'Photo checks', ids: ['photoChecks', 'workplace', 'hygiene', 'placeClean', 'cratesClean'] },
   { title: 'Store', ids: ['salesOnTime', 'expensesOnTime', 'expenseAccuracy', 'requestOnTime', 'stockOuts', 'cashCount', 'cashAccuracy', 'posCash', 'storeCover'] },
-  { title: 'Production', ids: ['requestAccepted', 'productionApproved', 'productionLogged', 'wastage', 'shippedOnTime', 'productionCash'] },
+  { title: 'Production', ids: ['requestAccepted', 'productionApproved', 'productionLogged', 'wastage', 'shippedOnTime', 'productionSupply', 'shoppingListOnTime', 'productionCash'] },
 ];
 export const ADDED_KPI_WEIGHT = 10;
 

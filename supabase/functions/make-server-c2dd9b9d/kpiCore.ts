@@ -31,6 +31,10 @@ export const ACCEPT_BY_MIN = 9 * 60; // a stock request should be accepted (prep
 // (packs with the size of each) started. The expense checks (expenseReview.ts) that mean the entry
 // itself was wrong; a bill photo, the owner's OK or a big spend are not entry mistakes.
 export const EXPENSE_ACCURACY_FROM = '2026-11-01';
+// Shopping list sent by 7 AM (owner, 29 Oct 2026): the day's list to the shopper and each vendor's
+// WhatsApp by 7 AM, on the days the production house buys; counted from November.
+export const SHOPPING_LIST_BY_MIN = 7 * 60;
+export const SHOPPING_LIST_FROM = '2026-11-01';
 export const EXPENSE_MISTAKES: Record<string, string> = {
   category: 'wrong category', amount: 'amount unclear', weight: 'unit or quantity slip', bundle: 'wrong pieces per pack',
   duplicate: 'logged twice', detail: 'repair or labour without details',
@@ -88,7 +92,8 @@ export type KpiId =
   | 'attendance' | 'punctuality' | 'fullShift' | 'timesheet' | 'workplace' | 'hygiene'
   | 'cashCount' | 'cashAccuracy' | 'stockOuts' | 'productionLogged' | 'wastage' | 'shippedOnTime' | 'trips'
   | 'salesOnTime' | 'expensesOnTime' | 'productionApproved' | 'requestOnTime' | 'placeClean' | 'posCash' | 'productionCash'
-  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness' | 'expenseAccuracy';
+  | 'storeCover' | 'requestAccepted' | 'cratesClean' | 'photoChecks' | 'storeReadiness' | 'expenseAccuracy'
+  | 'productionSupply' | 'shoppingListOnTime';
 
 export type RoleGroup = 'store_incharge' | 'production_incharge' | 'production_staff' | 'store_staff' | 'operations' | 'rider';
 export type WorkplaceKind = 'store' | 'production' | 'mixed' | 'none';
@@ -120,6 +125,8 @@ export const KPI_LABELS: Record<KpiId, string> = {
   photoChecks: 'Photo checks (on time and clean)',
   storeReadiness: 'Store ready on time',
   expenseAccuracy: 'Expenses entered correctly',
+  productionSupply: 'Production supply: full and on time',
+  shoppingListOnTime: 'Shopping list sent by 7 AM',
 };
 
 export const ROLE_LABELS: Record<RoleGroup, string> = {
@@ -507,6 +514,8 @@ export type MonthInput = {
   storeRequests?: any[]; // stock requests sent from the person's own store
   expenses?: any[]; // expense entries (inventory and overhead) the person logged
   expenseFlags?: any[]; // the expense checks' flags on those entries (expense-flag:{expenseId}:{kind})
+  shoppingLists?: any[]; // shopping lists the person wrote (supplies.ts shopping-list:{id})
+  productionPurchaseDays?: string[]; // days the person's production house logged purchases
   approvals?: any[]; // production entries from the house that supplies the person's store
   placePhotos?: { date: string; item: any }[]; // every photo taken at the incharge's store or kitchen
   crateChecks?: { date: string; itemId: string; item: any | null }[]; // crates and containers checks due at that place, with the photo if one came
@@ -549,6 +558,8 @@ function tipFor(id: KpiId, s: KpiSettings, kind: WorkplaceKind) {
     case 'trips': return 'Finish every ride you take on and confirm the delivery.';
     case 'salesOnTime': return `Save the day's sales and cash count by ${fmt12(DAY_CLOSE_BY_MIN)} after closing.`;
     case 'expensesOnTime': return `Enter every expense on the day it is paid (by ${fmt12(DAY_CLOSE_BY_MIN)} after closing), so the cash count matches.`;
+    case 'productionSupply': return `Help production ship every stock request in full - every momo type as asked - by ${fmt12(SHIP_BY_MIN)} on its day. A late, short or unshipped request counts against.`;
+    case 'shoppingListOnTime': return `On every day the production house buys, send the shopping list to the shopper and each vendor's part on WhatsApp from the app by ${fmt12(SHOPPING_LIST_BY_MIN)} (the night before is fine). The list on time with a vendor late counts half.`;
     case 'expenseAccuracy': return 'Enter each expense right the first time: the right category, and an amount that says exactly what was bought - packs with the size of each (Butter 4 packets × 500 g, not 8 pcs), vegetables by weight. An entry the app flags that turns out wrong counts against you; one marked correct does not.';
     case 'productionApproved': return 'Check each day\'s production entry and approve it before it approves itself after 24 hours.';
     case 'placeClean': return `Walk the whole ${place} every day: garbage out, bins covered, nothing piled up. Every photo that needs cleaning costs ${PLACE_FLAG_PENALTY} points, a garbage dump or filth ${PLACE_SEVERE_PENALTY}.`;
@@ -811,6 +822,64 @@ export function computeMonthKpis(input: MonthInput): MonthKpis {
     }
   }
   // Production: each day's stock request accepted (preparation started) by 9 AM on its day.
+  // Production supply (owner, 29 Oct 2026: one KPI for the people production depends on, in place of
+  // "accepted by 9 AM" and "shipped on time"): each stock request shipped in full - every momo type
+  // at least as asked - by SHIP_BY_MIN on its day. Not shipped by the end of the counted days: missed.
+  if (ids.includes('productionSupply')) {
+    let n = 0, ok = 0, late = 0, short = 0, never = 0;
+    for (const r of input.requests || []) {
+      const d = String(r?.requestDate || '').slice(0, 10);
+      if (!d || d < from || d > to || r.status === 'cancelled') continue;
+      n++;
+      const shipDay = r.shippedAt ? istDayOf(r.shippedAt) : null;
+      if (!shipDay) { never++; continue; }
+      const onTime = shipDay < d || (shipDay === d && minutesOfDay(r.shippedAt, d) <= SHIP_BY_MIN);
+      // Momos are the request's top-level numbers (old requests: chickenMomos style, same keys less the s).
+      const sent = r.shippedQuantities && typeof r.shippedQuantities === 'object' ? r.shippedQuantities : null;
+      const full = !sent ? !String(r.status || '').startsWith('partially') : Object.entries(r).every(([k, v]) => {
+        if (typeof v !== 'number' || v <= 0) return true;
+        const got = Number(sent[k] ?? sent[k.replace(/s$/, '')] ?? 0);
+        return got >= v;
+      });
+      if (!onTime) late++;
+      if (!full) short++;
+      if (onTime && full) ok++;
+    }
+    if (!n) set('productionSupply', null, 'No stock requests in this period.');
+    else set('productionSupply', pct(ok, n), [
+      `${ok} of ${plural(n, 'stock request')} shipped in full by ${fmt12(SHIP_BY_MIN)} on their day.`,
+      late ? `${late} late.` : '', short ? `${short} short of what was asked.` : '', never ? `${never} not shipped.` : '',
+    ].filter(Boolean).join(' '));
+  }
+
+  if (ids.includes('shoppingListOnTime')) {
+    const start = from > SHOPPING_LIST_FROM ? from : SHOPPING_LIST_FROM;
+    const lists = (input.shoppingLists || []).filter((l) => l?.date && l.status !== 'cancelled' && l.status !== 'draft');
+    const byDay = new Map<string, any[]>();
+    for (const l of lists) byDay.set(String(l.date), [...(byDay.get(String(l.date)) || []), l]);
+    const needed = [...new Set([...(input.productionPurchaseDays || []), ...lists.map((l) => String(l.date))])]
+      .filter((d) => d >= start && d <= to && !fullLeave.has(d)).sort();
+    let points = 0, full = 0, half = 0, lateDays = 0, none = 0;
+    for (const d of needed) {
+      const due = istMidnightMs(d) + SHOPPING_LIST_BY_MIN * 60000;
+      const by = (iso: any) => !!iso && Date.parse(iso) <= due;
+      const ls = byDay.get(d) || [];
+      if (!ls.length) { none++; continue; }
+      const sent = ls.filter((l) => by(l.sentAt));
+      if (!sent.length) { lateDays++; continue; }
+      const vendorsOk = sent.every((l) => [...new Set((l.lines || []).map((x: any) => x?.vendorId).filter(Boolean))]
+        .every((v: any) => by(l.vendorOrders?.[v]?.at)));
+      if (vendorsOk) { full++; points += 1; } else { half++; points += 0.5; }
+    }
+    if (!needed.length) set('shoppingListOnTime', null, to < SHOPPING_LIST_FROM ? 'Counted from 1 Nov 2026.' : 'No shopping days in this period.');
+    else set('shoppingListOnTime', pct(points, needed.length), [
+      `${full} of ${plural(needed.length, 'shopping day')}: the list and every vendor's WhatsApp sent by ${fmt12(SHOPPING_LIST_BY_MIN)}.`,
+      half ? `${plural(half, 'day')} the list was on time but a vendor's WhatsApp was late or not sent (half marks).` : '',
+      lateDays ? `${plural(lateDays, 'day')} the list went after ${fmt12(SHOPPING_LIST_BY_MIN)}.` : '',
+      none ? `${plural(none, 'day')} with purchases but no list sent from the app.` : '',
+    ].filter(Boolean).join(' '));
+  }
+
   if (ids.includes('requestAccepted')) {
     let n = 0, ok = 0, never = 0;
     for (const r of input.requests || []) {

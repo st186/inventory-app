@@ -216,6 +216,43 @@ test('expenses entered correctly', () => {
   assert.equal(Object.fromEntries(oct.kpis.map((x) => [x.id, x])).expenseAccuracy.score, null);
 });
 
+test('production supply: full and on time', () => {
+  const base = crewMonth();
+  const settings = { ...resolveSettings({}, 'BM013', 'production', 'production_staff'), kpis: ['productionSupply'] as any, weights: { productionSupply: 20 } as any };
+  const requests = [
+    { requestDate: '2026-10-01', status: 'delivered', chicken: 600, veg: 60, shippedAt: at('2026-10-01', '14:30'), shippedQuantities: { chicken: 600, veg: 60 } }, // full, on time
+    { requestDate: '2026-10-02', status: 'delivered', chicken: 600, shippedAt: at('2026-10-02', '16:10'), shippedQuantities: { chicken: 600 } }, // late
+    { requestDate: '2026-10-03', status: 'partially-delivered', chicken: 600, cheeseCorn: 120, shippedAt: at('2026-10-03', '13:00'), shippedQuantities: { chicken: 600, cheeseCorn: 40 } }, // short
+    { requestDate: '2026-10-04', status: 'pending', chicken: 400 }, // never shipped
+    { requestDate: '2026-10-05', status: 'delivered', chickenMomos: 300, shippedAt: at('2026-10-04', '19:00') }, // old record, shipped the day before
+  ];
+  const r = computeMonthKpis({ ...base, group: 'production_staff', kind: 'production', settings, requests });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.productionSupply.score, 40); // 2 of 5
+  assert.match(k.productionSupply.explanation, /2 of 5 stock requests shipped in full by 3:00 PM on their day\. 1 late\. 1 short of what was asked\. 1 not shipped\./);
+});
+
+test('shopping list sent by 7 AM', () => {
+  const base = crewMonth();
+  const settings = { ...resolveSettings({}, 'BM004', 'production', 'operations'), kpis: ['shoppingListOnTime'] as any, weights: { shoppingListOnTime: 10 } as any };
+  const L = (date: string, sentAt: string | null, vendorAt: (string | null)[]) => ({
+    date, status: 'logged', sentAt,
+    lines: vendorAt.map((_, i) => ({ vendorId: `v${i}` })),
+    vendorOrders: Object.fromEntries(vendorAt.map((a, i) => [`v${i}`, a]).filter(([, a]) => a).map(([v, a]) => [v, { at: a }])),
+  });
+  const shoppingLists = [
+    L('2026-11-02', at('2026-11-01', '21:00'), [at('2026-11-01', '21:05')]), // full
+    L('2026-11-03', at('2026-11-03', '06:30'), [at('2026-11-03', '07:30')]), // vendor late: half
+    L('2026-11-04', at('2026-11-04', '08:00'), []), // list late
+  ];
+  const productionPurchaseDays = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-10-30'];
+  const r = computeMonthKpis({ ...base, month: '2026-11', today: '2026-11-10', group: 'operations', settings, shoppingLists, productionPurchaseDays, leaves: [] });
+  const k = Object.fromEntries(r.kpis.map((x) => [x.id, x]));
+  assert.equal(k.shoppingListOnTime.score, 37.5); // (1 + 0.5 + 0 + 0) / 4
+  assert.match(k.shoppingListOnTime.explanation, /1 of 4 shopping days/);
+  assert.match(k.shoppingListOnTime.explanation, /1 day with purchases but no list sent from the app/);
+});
+
 test('production KPIs', () => {
   const base = crewMonth();
   const settings = resolveSettings({ weeklyOff: [2] }, 'BM004', 'production', 'production_incharge');
