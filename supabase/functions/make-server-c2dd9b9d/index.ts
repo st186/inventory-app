@@ -1,3 +1,4 @@
+import { monthlySalaryOf } from './payslipRules.ts';
 import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
@@ -6320,6 +6321,60 @@ app.post('/make-server-c2dd9b9d/production-ledger/:houseId/:date/coach', async (
     if (error instanceof AiError) return c.json({ error: error.message }, error.status as any);
     console.log('Production coach failed:', error?.message || error);
     return c.json({ error: 'Bunny could not help just now' }, 500);
+  }
+});
+
+// GET /insights/staffing?storeId=&from=&to= - who was at the store each hour (from the shift
+// check-ins) and the day's wage cost (monthly salaries spread over the month), for "staffing
+// against orders by hour" on the Insights Revenue tab (owner, 30 Oct 2026). The owner and
+// operations managers only (salaries).
+app.get('/make-server-c2dd9b9d/insights/staffing', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  try {
+    const role = authResult.user.user_metadata?.role;
+    const designation = authResult.user.user_metadata?.designation;
+    const isOps = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+    if (role !== 'cluster_head' && !isOps) return c.json({ error: 'Only the owner or an operations manager sees staffing costs' }, 403);
+    const storeId = c.req.query('storeId') || '';
+    const from = c.req.query('from') || '';
+    const to = c.req.query('to') || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return c.json({ error: 'Pick a period' }, 400);
+    const stores = (await kv.getByPrefix('store:')).filter((st: any) => st?.id && (!storeId || st.id === storeId));
+    const ids = new Set(stores.map((st: any) => String(st.id)));
+    const staff = (await getAllByPrefixWithRetry('unified-employee:')).filter((e: any) => e?.employeeId && !['inactive', 'archived'].includes(e.status)
+      && e.role !== 'cluster_head' && e.designation !== 'rider' && !/^production_/.test(String(e.designation || '')) && e.department !== 'production'
+      && [e.storeId, ...(e.assignedStoreIds || [])].filter(Boolean).map(String).some((id: string) => ids.has(id)));
+    const days: any[] = [];
+    let since: string | null = null;
+    const today = getTodayIST();
+    for (let d = from; d <= to && d <= today; d = addDaysToDateString(d, 1)) {
+      const month = d.slice(0, 7);
+      const dim = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+      const byHour = Array(24).fill(0);
+      let staffHours = 0, onShift = 0;
+      for (const e of staff) {
+        const p: any = await kv.get(`punch:${e.employeeId}:${d}`).catch(() => null);
+        if (!p?.in?.at) continue;
+        onShift++;
+        if (!since || d < since) since = d;
+        const start = Date.parse(p.in.at) + IST_OFFSET_MS;
+        // No check-out: counted to the close (11 PM) on a past day, to now today.
+        const endRaw = p.out?.at ? Date.parse(p.out.at) + IST_OFFSET_MS : d < today ? Date.parse(`${d}T23:00:00Z`) : Date.now() + IST_OFFSET_MS;
+        const dayStart = Date.parse(`${d}T00:00:00Z`);
+        for (let h = 0; h < 24; h++) {
+          const hs = dayStart + h * 3600000, he = hs + 3600000;
+          const overlap = Math.max(0, Math.min(he, endRaw) - Math.max(hs, start));
+          if (overlap > 0) { byHour[h] += overlap / 3600000; staffHours += overlap / 3600000; }
+        }
+      }
+      const wages = staff.reduce((s: number, e: any) => s + monthlySalaryOf(e, month) / dim, 0);
+      days.push({ date: d, onShift, staffHours: Math.round(staffHours * 10) / 10, wages: Math.round(wages), byHour: byHour.map((x) => Math.round(x * 100) / 100) });
+    }
+    return c.json({ days, since, staff: staff.length });
+  } catch (error) {
+    console.log('Error loading staffing:', error);
+    return c.json({ error: 'Could not load staffing' }, 500);
   }
 });
 

@@ -1520,7 +1520,7 @@ async function fetchRecalibrationAndCalculateOpeningBalance() {
  // "last period" lines (Item Performance doesn't show one). Only Overview fetched it, so the
  // Revenue tab's order charts showed last period as 0 (owner, 30 Oct 2026).
  useEffect(() => {
- if ((activeView !== 'overview' && activeView !== 'profit') || !context.user?.accessToken) return;
+ if ((activeView !== 'overview' && activeView !== 'profit' && activeView !== 'sales') || !context.user?.accessToken) return;
  const accessToken = context.user.accessToken;
  let cancelled = false;
  (async () => {

@@ -1201,6 +1201,119 @@ ${JSON.stringify({
     } catch (err) { return fail(c, err); }
   });
 
+  // ---- Growing the business (owner, 30 Oct 2026: menu engineering + combos, the apps' own
+  // reports, weather) ----
+
+  // POST /ai/menu-ideas {storeId, lang, facts} - Bunny's menu, price and combo ideas from the
+  // menu numbers the Items tab works out (menuMath.ts). Same numbers, same ideas: kept for a day.
+  app.post(`${P}/ai/menu-ideas`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const lang = ['bn', 'hi'].includes(body.lang) ? body.lang : 'en';
+      const facts = JSON.stringify(body.facts || {}).slice(0, 6000);
+      const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${lang}|${facts}`)))).slice(0, 10).map((b) => b.toString(16).padStart(2, '0')).join('');
+      const key = `menu-ideas:${String(body.storeId || 'all').slice(0, 60)}:${hash}`;
+      const cached = await deps.kv.get<any>(key);
+      if (cached?.ideas) return c.json({ ideas: cached.ideas, cached: true });
+      const schema = {
+        type: 'object', additionalProperties: false, required: ['ideas'],
+        properties: { ideas: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['kind', 'title', 'why', 'action'], properties: {
+          kind: { type: 'string', enum: ['combo', 'price', 'promote', 'drop', 'upsell', 'other'] },
+          title: { type: 'string' }, why: { type: 'string' }, action: { type: 'string' },
+        } } } },
+      };
+      const res = await callClaude(deps, {
+        purpose: 'menu-ideas', user: aiUser(g.actor!), effort: 'low', noThinking: /haiku/.test(AI_MODEL), maxTokens: 1500,
+        format: { type: 'json_schema', schema },
+        system: `You advise the owner of Bunny Momos, a small momo shop in Burdwan, West Bengal (counter plus Zomato and Swiggy). You get the menu numbers for a period: dishes with plates sold, sales, share through the apps and change against the period before; preparation styles; the long tail of dishes that hardly sell; how often orders include a drink or soup; which kinds are bought together and how much more often than chance (lift). Give 3 to 5 ideas that would raise sales or profit, each tied to the numbers: combos to make (with a sensible price), dishes to push or to take off the menu (a shorter menu means less waste and faster cooking), upsells at the counter, price tests. Food cost per plate is not known yet, so never claim a margin. Quote the numbers you use. Plain, short sentences. Write in ${lang === 'bn' ? 'simple Bengali' : lang === 'hi' ? 'simple Hindi' : 'plain English'}; dish names may stay in English.`,
+        messages: [{ role: 'user', content: `Menu numbers:\n${facts}` }],
+      });
+      let parsed: any = null;
+      try { parsed = JSON.parse(textOf(res)); } catch { /* handled below */ }
+      const ideas = (Array.isArray(parsed?.ideas) ? parsed.ideas : []).slice(0, 5).map((x: any) => ({
+        kind: String(x?.kind || 'other').slice(0, 10), title: String(x?.title || '').slice(0, 120), why: String(x?.why || '').slice(0, 400), action: String(x?.action || '').slice(0, 300),
+      })).filter((x: any) => x.title);
+      if (!ideas.length) throw new AiError('Bunny had no menu ideas this time - try again.', 502);
+      await deps.kv.set(key, { ideas, at: new Date().toISOString() });
+      return c.json({ ideas });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // POST /ai/app-report {storeId, dataUrl} - Bunny reads a screenshot of the Zomato or Swiggy
+  // partner app's report (rating, orders, menu-to-order conversion, kitchen prep time, rejected
+  // and delayed orders, complaints) and keeps it per store, app and period; GET /app-reports lists
+  // them for the Revenue tab. The apps share none of this any other way.
+  app.post(`${P}/ai/app-report`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const m = typeof body.dataUrl === 'string' ? body.dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/) : null;
+      if (!m) return c.json({ error: 'Send the screenshot as a JPEG, PNG or WebP image' }, 400);
+      if (m[2].length > 5_000_000) return c.json({ error: 'The screenshot is too large' }, 400);
+      const num = { type: 'number', description: '-1 if not shown' };
+      const schema = {
+        type: 'object', additionalProperties: false,
+        required: ['readable', 'platform', 'periodStart', 'periodEnd', 'rating', 'ratingCount', 'orders', 'sales', 'menuOpens', 'menuToOrderPct', 'impressions', 'prepMinutes', 'rejectedOrders', 'delayedOrdersPct', 'complaints', 'adSpend', 'note'],
+        properties: {
+          readable: { type: 'boolean', description: 'false if this is not a Zomato or Swiggy partner report' },
+          platform: { type: 'string', enum: ['zomato', 'swiggy', 'unknown'] },
+          periodStart: { type: 'string', description: 'YYYY-MM-DD, "" if not shown' }, periodEnd: { type: 'string', description: 'YYYY-MM-DD, "" if not shown' },
+          rating: num, ratingCount: num, orders: num, sales: num, menuOpens: num,
+          menuToOrderPct: { type: 'number', description: 'menu opens to orders, %; -1 if not shown' },
+          impressions: num, prepMinutes: { type: 'number', description: 'average kitchen preparation time in minutes; -1 if not shown' },
+          rejectedOrders: num, delayedOrdersPct: num, complaints: num, adSpend: num,
+          note: { type: 'string', description: 'anything else on the screen worth the owner knowing, one sentence' },
+        },
+      };
+      const res = await callClaude(deps, {
+        purpose: 'app-report', user: aiUser(g.actor!), effort: 'low', maxTokens: 1200,
+        format: { type: 'json_schema', schema },
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
+          { type: 'text', text: `This is a screenshot from the Zomato or Swiggy restaurant partner app of a momo shop. Read the report numbers exactly as shown (rupees and counts as plain numbers, ratings to one decimal). Use -1 for anything not on the screen - never guess. Today is ${deps.getTodayIST()}.` },
+        ] }],
+      });
+      let r: any = null;
+      try { r = JSON.parse(textOf(res)); } catch { /* handled below */ }
+      if (!r || !r.readable || r.platform === 'unknown') return c.json({ error: 'That does not look like a Zomato or Swiggy report - take a screenshot of the report screen' }, 400);
+      const storeId = String(body.storeId || '').slice(0, 60) || 'all';
+      const end = /^\d{4}-\d{2}-\d{2}$/.test(r.periodEnd) ? r.periodEnd : deps.getTodayIST();
+      const report = { ...r, storeId, periodEnd: end, savedAt: new Date().toISOString(), savedBy: g.actor!.name };
+      await deps.kv.set(`app-report:${storeId}:${r.platform}:${end}`, report);
+      return c.json({ report });
+    } catch (err) { return fail(c, err); }
+  });
+  app.get(`${P}/app-reports`, async (c: any) => {
+    const g = await guard(c, 'view'); if (g.error) return g.error;
+    try {
+      const storeId = c.req.query('storeId') || '';
+      const rows = (await allRows(deps, 'app-report:')).filter((r: any) => r?.platform && (!storeId || r.storeId === storeId || r.storeId === 'all'));
+      rows.sort((a: any, b: any) => String(b.periodEnd).localeCompare(String(a.periodEnd)));
+      return c.json({ reports: rows.slice(0, 40) });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // GET /insights/weather - daily rain and temperature for Burdwan: the last 92 days and the next
+  // 7 (Open-Meteo, free, no key), kept 3 hours.
+  app.get(`${P}/insights/weather`, async (c: any) => {
+    const g = await guard(c, 'view'); if (g.error) return g.error;
+    try {
+      const cached = await deps.kv.get<any>('weather-cache');
+      if (cached?.at && Date.now() - Date.parse(cached.at) < 3 * 3600000) return c.json({ days: cached.days, cached: true });
+      const url = 'https://api.open-meteo.com/v1/forecast?latitude=23.2324&longitude=87.8615&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max&past_days=92&forecast_days=8&timezone=Asia%2FKolkata';
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`weather ${res.status}`);
+      const j: any = await res.json();
+      const d = j?.daily || {};
+      const days = (d.time || []).map((date: string, i: number) => ({
+        date, rainMm: Number(d.precipitation_sum?.[i] ?? 0), rainChance: d.precipitation_probability_max?.[i] ?? null, maxC: d.temperature_2m_max?.[i] ?? null,
+      }));
+      await deps.kv.set('weather-cache', { at: new Date().toISOString(), days });
+      return c.json({ days });
+    } catch (err) { return fail(c, err); }
+  });
+
   // "Ask Bunny": a question answered from the app's data. Claude can only read, never change.
   // Ask Bunny - the chat behind the floating Bunny button on every screen. Answers in the person's
   // chosen language, about the screen they're looking at (its visible text comes with the

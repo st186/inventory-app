@@ -612,6 +612,35 @@ export async function readInvoice(accessToken: string, dataUrl: string): Promise
 }
 
 // Out-of-stock log (store SOP ST-28) - see utils/stockOuts.ts.
+// ---- Growing the business (Insights, owner 30 Oct 2026) ----
+export type MenuIdea = { kind: string; title: string; why: string; action: string };
+export async function getMenuIdeas(accessToken: string, storeId: string | null, lang: string, facts: unknown): Promise<MenuIdea[]> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/menu-ideas`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, lang, facts }) });
+  return data.ideas || [];
+}
+export type AppReport = {
+  platform: 'zomato' | 'swiggy'; storeId: string; periodStart: string; periodEnd: string; rating: number; ratingCount: number; orders: number; sales: number;
+  menuOpens: number; menuToOrderPct: number; impressions: number; prepMinutes: number; rejectedOrders: number; delayedOrdersPct: number; complaints: number; adSpend: number;
+  note: string; savedAt: string; savedBy: string;
+};
+export async function readAppReport(accessToken: string, storeId: string | null, dataUrl: string): Promise<AppReport> {
+  const data = await fetchWithAuth(`${API_BASE}/ai/app-report`, accessToken, { method: 'POST', body: JSON.stringify({ storeId, dataUrl }) });
+  return data.report;
+}
+export async function getAppReports(accessToken: string, storeId: string | null): Promise<AppReport[]> {
+  const data = await fetchWithAuth(`${API_BASE}/app-reports${storeId ? `?storeId=${encodeURIComponent(storeId)}` : ''}`, accessToken);
+  return data.reports || [];
+}
+export type WeatherDay = { date: string; rainMm: number; rainChance: number | null; maxC: number | null };
+export async function getWeather(accessToken: string): Promise<WeatherDay[]> {
+  const data = await fetchWithAuth(`${API_BASE}/insights/weather`, accessToken);
+  return data.days || [];
+}
+export type StaffingDay = { date: string; onShift: number; staffHours: number; wages: number; byHour: number[] };
+export async function getStaffing(accessToken: string, storeId: string | null, from: string, to: string): Promise<{ days: StaffingDay[]; since: string | null; staff: number }> {
+  return fetchWithAuth(`${API_BASE}/insights/staffing?storeId=${encodeURIComponent(storeId || '')}&from=${from}&to=${to}`, accessToken);
+}
+
 export async function getStockOuts(accessToken: string, storeId: string, from: string, to: string): Promise<StockOutEntry[]> {
   const data = await fetchWithAuth(`${API_BASE}/stock-outs?storeId=${encodeURIComponent(storeId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, accessToken);
   return data.entries || [];
