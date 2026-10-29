@@ -1494,10 +1494,10 @@ async function fetchRecalibrationAndCalculateOpeningBalance() {
  // counts aren't tracked as a number anywhere - offline vs online is only knowable by
  // counting real orders, via externalId/paymentMode, same as Item Performance does).
  useEffect(() => {
- // 'profit' (Revenue & Channels) no longer needs this fetch - the Channel Economics
- // comparison that was its only consumer here moved to OnlineSalesTab.tsx, which fetches
- // its own copy scoped to that page's date range.
- if ((activeView !== 'sales' && activeView !== 'overview' && activeView !== 'unit-economics') || !context.user?.accessToken) return;
+ // 'profit' (Revenue & Channels) needs it too: its orders-per-day, orders-by-hour, order-size
+ // and service-type charts are built from these orders (owner, 30 Oct 2026: they showed nothing
+ // when the Revenue tab was opened first).
+ if ((activeView !== 'sales' && activeView !== 'overview' && activeView !== 'unit-economics' && activeView !== 'profit') || !context.user?.accessToken) return;
  const accessToken = context.user.accessToken;
  let cancelled = false;
  (async () => {
@@ -1516,10 +1516,11 @@ async function fetchRecalibrationAndCalculateOpeningBalance() {
  return () => { cancelled = true; };
  }, [activeView, effectiveStoreId, itemPerfDateRange.startDate, itemPerfDateRange.endDate, context.user?.accessToken]);
 
- // Same fetch, for the previous-period comparison range - only needed on the Overview
- // tab (Item Performance doesn't show a previous-period line).
+ // Same fetch, for the previous-period comparison range - the Overview and Revenue tabs' dashed
+ // "last period" lines (Item Performance doesn't show one). Only Overview fetched it, so the
+ // Revenue tab's order charts showed last period as 0 (owner, 30 Oct 2026).
  useEffect(() => {
- if (activeView !== 'overview' || !context.user?.accessToken) return;
+ if ((activeView !== 'overview' && activeView !== 'profit') || !context.user?.accessToken) return;
  const accessToken = context.user.accessToken;
  let cancelled = false;
  (async () => {
