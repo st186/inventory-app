@@ -1,7 +1,7 @@
-// Sample days through the guided production day (kitchenDay.ts). Run with plain node:
-//   node src/components/production/kitchenDay.test.ts
+// Sample days through the guided production day (kitchenDayMath.ts). Run with plain node:
+//   node src/components/production/kitchenDayMath.test.ts
 import assert from 'node:assert/strict';
-import { ALL_ITEMS, countState, gapMatters, itemDay, itemsForDay } from './kitchenDay.ts';
+import { ALL_ITEMS, countState, gapMatters, itemDay, itemsForDay } from './kitchenDayMath.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -12,6 +12,7 @@ test('a good day: 2 kg left, plan 750 -> make 6.5 kg; 740 momos -> about 0.5 kg 
   const d = itemDay(item('stuffing:chicken'), { opening: 2, prepared: 6.5, closingActual: 0.5 }, { chicken: 750 }, { chicken: 740 }, perKg);
   assert.equal(d.need, 8.15);
   assert.equal(d.makeKg, 6.5);
+  assert.equal(d.stillToMake, 0); // the 6.5 kg batch was it
   assert.equal(d.covers, 180);
   assert.equal(d.overMade, false);
   assert.equal(d.used, 8.04);
@@ -61,6 +62,13 @@ test('without learnt momos per kg, no plan figures are made up', () => {
   assert.equal(d.need, null);
   assert.equal(d.makeKg, null);
   assert.equal(d.shouldLeft, null);
+  assert.equal(gapMatters(d), false);
+});
+
+test('no momos of a type entered: all of its stuffing should still be there', () => {
+  const d = itemDay(item('stuffing:cheeseCorn'), { opening: 0.6, prepared: 0, closingActual: 0.6 }, { cheeseCorn: 100 }, {}, perKg);
+  assert.equal(d.used, 0);
+  assert.equal(d.shouldLeft, 0.6);
   assert.equal(gapMatters(d), false);
 });
 

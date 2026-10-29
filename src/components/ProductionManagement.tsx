@@ -34,6 +34,8 @@ import { WeeklyGoalCard } from './production/WeeklyGoalCard';
 import { ProductionApprovals } from './production/ProductionApprovals';
 import { ProductionFlagsBanner } from './production/ProductionFlags';
 import { useProductionPlan } from './production/useProductionPlan';
+import { KITCHEN_DAY_FROM, KitchenDay } from './production/KitchenDay';
+import { ALL_ITEMS, itemDay } from './production/kitchenDayMath';
 import { CollapsibleCard, StickyActions, StockPage, bagsText, dayLabel, formatCount, momoName } from './stock/stockShared';
 
 // Matches the backend's PRODUCTION_LEDGER_GO_LIVE_DATE (index.ts) exactly - dates before
@@ -167,6 +169,8 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
   const [ledgerItemSubmitting, setLedgerItemSubmitting] = useState(false);
   const [ledgerCloseSubmitting, setLedgerCloseSubmitting] = useState(false);
   const [wastageNotes, setWastageNotes] = useState<api.ProductionWastageNote[]>([]);
+  const [morning, setMorning] = useState<api.MorningWeighIn | null>(null);
+  const [lastCounted, setLastCounted] = useState<api.LastCounted>({});
 
 
   const ledgerTrackingLive = selectedDate >= PRODUCTION_LEDGER_GO_LIVE_DATE;
@@ -180,7 +184,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     if (!resolvedProductionHouseId || !context.user?.accessToken || !ledgerTrackingLive) return;
     setLedgerLoading(true);
     try {
-      const [{ entry, live, items, hasAnyPriorRecord }, notes] = await Promise.all([
+      const [{ entry, live, items, hasAnyPriorRecord, morning: weighIn, lastCounted: counted }, notes] = await Promise.all([
         api.getProductionLedger(context.user.accessToken, resolvedProductionHouseId, selectedDate),
         api.getProductionWastageNotes(context.user.accessToken, resolvedProductionHouseId, selectedDate),
       ]);
@@ -189,12 +193,16 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
       setLedgerItems(items);
       setLedgerHasAnyPriorRecord(hasAnyPriorRecord);
       setWastageNotes(notes);
+      setMorning(weighIn);
+      setLastCounted(counted);
     } catch (error) {
       console.error('Failed to load production ledger:', error);
       setLedgerEntry(null);
       setLedgerLive(null);
       setLedgerItems([]);
       setWastageNotes([]);
+      setMorning(null);
+      setLastCounted({});
     } finally {
       setLedgerLoading(false);
     }
@@ -217,12 +225,12 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
   useEffect(() => {
     let cancelled = false;
     setDayContext(null);
-    if (!resolvedProductionHouseId || !context.user?.accessToken || !ledgerTrackingLive || !canEditLedger) return;
+    if (!resolvedProductionHouseId || !context.user?.accessToken || !ledgerTrackingLive || !(canEditLedger || isClusterHead)) return;
     api.getLedgerDayContext(context.user.accessToken, resolvedProductionHouseId, selectedDate)
       .then((ctx) => { if (!cancelled) setDayContext(ctx); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [resolvedProductionHouseId, selectedDate, context.user?.accessToken, ledgerTrackingLive, canEditLedger]);
+  }, [resolvedProductionHouseId, selectedDate, context.user?.accessToken, ledgerTrackingLive, canEditLedger, isClusterHead]);
 
   // Rolls today's per-pool ledger wastage (dough, batter, every stuffing:*/coating:* pool)
   // back up into the same 4-field shape the old manual "Wastage Tracking" inputs used to
@@ -550,6 +558,17 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     : productionForDate.approvalStatus === 'approved'
       ? <StatusChip status="approval.approved" />
       : <StatusChip status="approval.pending" />;
+  // Momos entered today by inventory key, and what each kitchen item should have left (the guided day).
+  const piecesToday = useMemo(() => Object.fromEntries(MOMO_TYPES.map((m) => [m.inventoryKey, Number((formData as any)[m.key]?.final) || 0])), [formData]);
+  const expectedLeft = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const it of ALL_ITEMS) {
+      const d = itemDay(it, (ledgerPools as Record<string, api.ProductionLedgerPoolState>)[it.id], plan as Record<string, number> | null, piecesToday, dayContext?.perKg || {});
+      if (d.shouldLeft !== null) out[it.id] = d.shouldLeft;
+    }
+    return out;
+  }, [ledgerPools, plan, piecesToday, dayContext]);
+
   const typeWastage = (m: typeof MOMO_TYPES[number]) => {
     const w = (ledgerPools as Record<string, api.ProductionLedgerPoolState | undefined>)[`${m.perTypePoolField}:${m.inventoryKey}`]?.wastage;
     return typeof w === 'number' && w > 0 ? w : null;
@@ -673,6 +692,39 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         <Callout tone="warning" title={t('stock.prod.ledgerFrom', { date: PRODUCTION_LEDGER_GO_LIVE_DATE })} />
       ) : ledgerLoading ? (
         <SkeletonListRows count={3} leading="none" />
+      ) : selectedDate >= KITCHEN_DAY_FROM ? (
+        <div className="flex flex-col gap-3">
+          <KitchenDay
+            date={selectedDate} houseId={resolvedProductionHouseId} accessToken={context.user?.accessToken || ''}
+            pools={ledgerPools as Record<string, api.ProductionLedgerPoolState>} morning={morning} lastCounted={lastCounted}
+            plan={plan as Record<string, number> | null} pieces={piecesToday} perKg={dayContext?.perKg || {}}
+            closed={ledgerClosed} canEdit={canEditLedger} onWeighed={fetchLedger}
+            makeForm={(
+              <div className="flex flex-col gap-5">
+                <LogSharedPoolForm disabled={!canEditLedger} submitting={ledgerItemSubmitting} onAdd={(poolKey, qty) => handleAddLedgerItem(poolKey, qty, 0)} />
+                <PrepareLineItemForm
+                  disabled={!canEditLedger} submitting={ledgerItemSubmitting} onAdd={handleAddLedgerItem}
+                  leftoverKg={Object.fromEntries(Object.entries(ledgerPools || {}).map(([id, p]) => [id, (p as api.ProductionLedgerPoolState | undefined)?.opening || 0]))}
+                  plan={plan as Record<string, number> | null} perKg={dayContext?.perKg}
+                />
+                <PreparedLineItemsList items={ledgerItems} disabled={!canEditLedger || ledgerClosed} onDelete={handleDeleteLedgerItem} />
+              </div>
+            )}
+            nightForm={(
+              <EndOfDayCloseForm
+                pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting} dayContext={dayContext}
+                savedReport={ledgerEntry?.leftoverReport || null} readOnly={!canEditLedger} disabled={!canEditLedger} expectedLeft={expectedLeft}
+                closedBy={ledgerEntry?.closedAt ? `${ledgerEntry.closedByName ? `${ledgerEntry.closedByName}, ` : ''}${new Date(ledgerEntry.closedAt).toLocaleString(lang === 'en' ? 'en-IN' : lang, { timeZone: 'UTC', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : null}
+                onSubmit={handleCloseLedgerDay}
+              />
+            )}
+          />
+          <CollapsibleCard title={t('stock.prod.otherWastage')} subtitle={t('stock.prod.otherWastageHint')} chip={wastageNotes.length ? <StatusChip tone="neutral">{wastageNotes.length}</StatusChip> : undefined}>
+            <div className="p-4">
+              <AdditionalWastageForm productionHouseId={resolvedProductionHouseId} date={selectedDate} disabled={!canEditLedger} notes={wastageNotes} onAdd={handleAddWastageNote} onDelete={handleDeleteWastageNote} />
+            </div>
+          </CollapsibleCard>
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
           <CollapsibleCard title={t('stock.prod.shared')} subtitle={t('stock.prod.sharedHint')}>

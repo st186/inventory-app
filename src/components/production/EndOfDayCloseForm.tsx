@@ -28,13 +28,16 @@ type Props = {
   closedBy?: string | null;
   // The owner looks without counting (owner, 29 Oct 2026: "what about todays leftover").
   readOnly?: boolean;
+  // What each item should have left from the morning weigh-in, what was made and the momos entered
+  // (the guided day, kitchenDayMath.ts) - shown next to the count so a wrong one stands out.
+  expectedLeft?: Record<string, number>;
   onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport) => void | Promise<void>;
 };
 const LEFTOVER_REASON_MIN_KG = 0.5; // the server says the same (minKg)
 
 // The directly-reported leftover snapshot per pool - counted/weighed at day's end, not
 // computed from a yield formula (confirmed requirement).
-export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, closedBy, readOnly, onSubmit }: Props) {
+export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, closedBy, readOnly, expectedLeft = {}, onSubmit }: Props) {
   const { t, lang } = useT();
   const [leftover, setLeftover] = useState<LeftoverDraft>(emptyLeftoverDraft);
   const [closingInputs, setClosingInputs] = useState<Record<string, string>>({});
@@ -142,6 +145,11 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
                     {t('stock.prod.preparedKg', { n: pool.prepared.toFixed(2) })} · <span className="font-semibold text-text">{t('stock.prod.startingKg', { n: startingStock.toFixed(2) })}</span>
                   </span>
                 </div>
+                {typeof expectedLeft[id] === 'number' && (
+                  <p className={`num text-label ${closingRaw !== '' && !isNaN(closingValue) && Math.abs(closingValue - expectedLeft[id]) > Math.max(0.5, expectedLeft[id] * 0.15) ? 'font-semibold text-warning' : 'text-text-2'}`}>
+                    {t('kd.shouldBeAbout', { kg: expectedLeft[id].toFixed(2) })}
+                  </p>
+                )}
                 <div className={`grid gap-3 ${isFirstEverDay && !closed ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   {isFirstEverDay && !closed && (
                     <Field label={t('stock.prod.alreadyThere')} error={looksLikeGrams(openingOverrideInputs[id]) ? t('stock.prod.looksLikeGrams') : undefined}>

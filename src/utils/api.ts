@@ -728,9 +728,29 @@ export interface ProductionLedgerItem {
   withLeftover?: WithLeftoverReason & { openingKg: number };
 }
 
-export async function getProductionLedger(accessToken: string, productionHouseId: string, date: string): Promise<{ entry: ProductionLedgerEntry | null; live: ProductionLedgerLive | null; items: ProductionLedgerItem[]; hasAnyPriorRecord: boolean }> {
+// The guided production day (owner, 29 Oct 2026): the morning weigh-in, and when each item was
+// last weighed (a night count or a morning weigh-in).
+export interface MorningWeighIn { productionHouseId: string; date: string; counts: Record<string, number>; at: string; by: string; byName: string }
+export type LastCounted = Record<string, { date: string; kg: number; when: 'night' | 'morning' }>;
+
+export async function getProductionLedger(accessToken: string, productionHouseId: string, date: string): Promise<{ entry: ProductionLedgerEntry | null; live: ProductionLedgerLive | null; items: ProductionLedgerItem[]; hasAnyPriorRecord: boolean; morning: MorningWeighIn | null; lastCounted: LastCounted }> {
   const data = await fetchWithAuth(`${API_BASE}/production-ledger?productionHouseId=${encodeURIComponent(productionHouseId)}&date=${encodeURIComponent(date)}`, accessToken);
-  return { entry: data.entry || null, live: data.live || null, items: data.items || [], hasAnyPriorRecord: !!data.hasAnyPriorRecord };
+  return { entry: data.entry || null, live: data.live || null, items: data.items || [], hasAnyPriorRecord: !!data.hasAnyPriorRecord, morning: data.morning || null, lastCounted: data.lastCounted || {} };
+}
+
+export async function saveMorningWeighIn(accessToken: string, productionHouseId: string, date: string, counts: Record<string, number>): Promise<MorningWeighIn> {
+  const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/morning`, accessToken, {
+    method: 'PUT', body: JSON.stringify({ counts }),
+  });
+  return data.morning;
+}
+
+/** Bunny's plain words on the day's numbers (stage morning / night / summary), in the reader's language. */
+export async function getProductionCoach(accessToken: string, productionHouseId: string, date: string, stage: 'morning' | 'night' | 'summary', lang: string, facts: unknown): Promise<string> {
+  const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/coach`, accessToken, {
+    method: 'POST', body: JSON.stringify({ stage, lang, facts }),
+  });
+  return String(data.text || '');
 }
 
 export async function getProductionLedgerRange(accessToken: string, productionHouseId: string, from: string, to: string): Promise<ProductionLedgerEntry[]> {

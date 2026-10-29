@@ -3,7 +3,7 @@
 // production incharge"). One line per kitchen item - dough, batter, each stuffing - telling the
 // day's story: weighed in the morning -> made -> used for the momos -> should be left -> counted at
 // night. The sums live here so they can be tested with plain node:
-//   node src/components/production/kitchenDay.test.ts
+//   node src/components/production/kitchenDayMath.test.ts
 // Momos a kg makes comes from the house's own counted days (server leftoverRules.ts piecesPerKg).
 
 export type Pool = { opening: number; prepared: number; closingActual: number | null };
@@ -77,7 +77,8 @@ export type ItemDay = {
   perKg: number | null;          // momos a kg makes, learnt
   need: number | null;           // kg the plan needs
   covers: number | null;         // momos the morning stock covers
-  makeKg: number | null;         // what to make today (0 = don't)
+  makeKg: number | null;         // what the day needs making, from the morning stock (0 = don't)
+  stillToMake: number | null;    // what is left to make after today's batches so far
   overMade: boolean;             // made more than the plan needed, with enough already there
   used: number | null;           // kg used for the momos entered
   shouldLeft: number | null;     // morning + made - used
@@ -94,13 +95,15 @@ export function itemDay(it: Item, pool: Pool | undefined, plan: Record<string, n
   const need = per && planned ? r2(planned / per) : null;
   const makeKg = need === null ? null : Math.max(0, halfUp(need - morning));
   const usedPieces = piecesMade(it, pieces);
-  const used = per && usedPieces ? r2(usedPieces / per) : null;
+  // No momos of a type entered: none of its stuffing was used (all of it should still be there).
+  const used = per ? r2(usedPieces / per) : null;
   const shouldLeft = used === null ? null : r2(Math.max(0, morning + made - used));
   const counted = typeof pool?.closingActual === 'number' ? pool.closingActual : null;
   return {
     item: it, morning, made, planned, perKg: per, need,
     covers: per ? Math.round((morning * per) / 10) * 10 : null,
     makeKg,
+    stillToMake: need === null ? null : Math.max(0, halfUp(need - morning - made)),
     overMade: need !== null && made > 0 && morning + made > need * 1.25 + 0.5,
     used, shouldLeft, counted,
     gap: counted !== null && shouldLeft !== null ? r2(counted - shouldLeft) : null,
