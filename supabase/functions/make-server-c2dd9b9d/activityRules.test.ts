@@ -124,6 +124,8 @@ test('not in the kitchen: a whole burst missed counts, a moment out of view does
   const blue = s.people.find((p) => p.slot === 'blue')!;
   assert.equal(red.notInKitchenMinutes, 0); // one frame out of view for 15 seconds
   assert.equal(blue.notInKitchenMinutes, Math.round(7 * 8.75)); // gone from 10:00:15 to 11:10:15: 2 + 4 + 1 frames missed
+  assert.deepEqual(blue.away, [{ date: '2026-10-30', from: '10:00', to: '11:10', minutes: 61 }]); // last seen, back
+  assert.deepEqual(red.away, []);
   assert.deepEqual(s.kitchen.folding, { from: '10:00', to: '10:35', mostPeople: 2 });
   assert.equal(summarise([d, d], {}, 0).kitchen.folding, null);
 });

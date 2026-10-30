@@ -201,6 +201,15 @@ export function KitchenActivity() {
                           </li>
                         )}
                       </ul>
+                      {!!p.away?.length && (
+                        <p className="text-body-sm text-text-2">
+                          Away (last seen – back): {p.away.map((a, j) => (
+                            <span key={j} className="num">
+                              {j > 0 && ', '}{span[0] !== span[1] && `${dayName(a.date)} `}<span className="font-semibold text-text">{a.from}–{a.to}</span>
+                            </span>
+                          ))}
+                        </p>
+                      )}
                       <p className="text-body-sm text-text-2">
                         Phone: <span className="num font-semibold text-text">{p.phoneTimes}</span> time{p.phoneTimes === 1 ? '' : 's'}, {hm(p.phoneMinutes)}
                         {p.ppePercent !== null && <> · Cap, gloves, apron all on: <span className="num font-semibold text-text">{p.ppePercent}%</span></>}

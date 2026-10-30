@@ -172,14 +172,22 @@ export function addBurst(day: ActivityDay | null, o: {
  * for. Before they first come in and after they leave for the day isn't counted.
  */
 export function notInKitchen(d: ActivityDay, s: Slot, awayMin = AWAY_MIN): number {
+  return awaySpells(d, s, awayMin).reduce((t, x) => t + x.minutes, 0);
+}
+
+/** Each time out of the kitchen (owner, 30 Oct 2026: "along with timestamp"): last seen, back, and
+ *  the minutes it counts (the frames missed in between). */
+export type AwaySpell = { date: string; from: string; to: string; minutes: number };
+export function awaySpells(d: ActivityDay, s: Slot, awayMin = AWAY_MIN): AwaySpell[] {
   const at = [...(s.at || [])].sort((a, b) => a - b);
   const frames = d.frames || [];
-  let total = 0;
+  const out: AwaySpell[] = [];
   for (let i = 1; i < at.length; i++) {
     if (at[i] - at[i - 1] < awayMin) continue;
-    total += frames.filter((t) => t > at[i - 1] + 1e-6 && t < at[i] - 1e-6).length * (d.mpf || 0);
+    const missed = frames.filter((t) => t > at[i - 1] + 1e-6 && t < at[i] - 1e-6).length;
+    if (missed) out.push({ date: d.date, from: clockOf(at[i - 1]), to: clockOf(at[i]), minutes: missed * (d.mpf || 0) });
   }
-  return total;
+  return out;
 }
 
 /** When folding started and ended that day, and the most people folding at once (from the frames). */
@@ -191,7 +199,7 @@ export function foldingSpan(d: ActivityDay): { from: string; to: string; mostPeo
 }
 
 export type PersonRow = {
-  slot: string; name: string | null; minutes: Partial<Record<Activity, number>>; seenMinutes: number; notInKitchenMinutes: number;
+  slot: string; name: string | null; minutes: Partial<Record<Activity, number>>; seenMinutes: number; notInKitchenMinutes: number; away: AwaySpell[];
   foldingMinutes: number; phoneMinutes: number; phoneTimes: number; idleMinutes: number; ppePercent: number | null; first: string; last: string;
 };
 
@@ -203,10 +211,12 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       const name = names[d.date]?.[slot] || null;
       // A named person adds up across days; an unnamed colour stays that day's colour.
       const key = name ? `name:${name}` : `${d.date}:${slot}`;
-      const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, notInKitchenMinutes: 0, foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
+      const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, notInKitchenMinutes: 0, away: [], foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
       for (const [a, m] of Object.entries(s.minutes)) r.minutes[a as Activity] = (r.minutes[a as Activity] || 0) + (m || 0);
       r.seenMinutes += Object.values(s.minutes).reduce((x, y) => x + (y || 0), 0);
-      r.notInKitchenMinutes += notInKitchen(d, s);
+      const spells = awaySpells(d, s);
+      r.notInKitchenMinutes += spells.reduce((t, x) => t + x.minutes, 0);
+      r.away.push(...spells);
       r.phoneMinutes += s.phoneMinutes;
       r.phoneTimes += s.phoneTimes;
       (r as any)._judged += s.ppe.judged;
@@ -227,6 +237,7 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       minutes,
       seenMinutes: Math.round(r.seenMinutes),
       notInKitchenMinutes: Math.round(r.notInKitchenMinutes),
+      away: (r.away as AwaySpell[]).map((x) => ({ ...x, minutes: Math.round(x.minutes) })).sort((a, b) => (a.date + a.from).localeCompare(b.date + b.from)),
       phoneMinutes: Math.round(r.phoneMinutes),
       foldingMinutes: minutes.folding || 0,
       idleMinutes: minutes.idle || 0,
