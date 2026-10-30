@@ -183,8 +183,20 @@ export function buildExpenseCandidates(customItems: CustomItem[]): ExpenseCandid
 
   // Previously-classified custom items (from earlier quick-add uses or the legacy
   // "+ Add Custom Item" flow) - these take priority since they reflect real past choices.
+  // One item, one category: a built-in item added again under another category isn't offered
+  // ("Oil" was on the list under spices too, so oil got saved there, 27 Oct 2026). The server
+  // saves a known item under its own category whatever is sent (itemHome.ts).
+  const builtInHome = new Map<string, string[]>();
+  for (const lists of [CATEGORY_ITEMS, STORE_CATEGORY_ITEMS] as Record<string, readonly string[] | undefined>[]) {
+    for (const [category, items] of Object.entries(lists)) {
+      for (const item of items || []) builtInHome.set(normalizeItemName(item), [...(builtInHome.get(normalizeItemName(item)) || []), category]);
+    }
+  }
+  const samePackaging = (a: string, b: string) => a === b || (a.startsWith('packaging') && b.startsWith('packaging'));
   for (const item of customItems) {
     const category = canonicalCategory(item.category);
+    const home = builtInHome.get(normalizeItemName(item.itemName));
+    if (home && (item.entryType || 'inventory') === 'inventory' && !home.some((h) => samePackaging(h, category))) continue;
     candidates.push({
       label: item.itemName,
       entryType: entryTypeForCategory(category, item.entryType || 'inventory'),

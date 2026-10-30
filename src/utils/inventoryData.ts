@@ -50,7 +50,9 @@ export const CATEGORY_ITEMS = {
     'Black Pepper',
     'White Pepper',
     'Peri Peri Masala',
-    'Corn Flakes'
+    'Corn Flakes',
+    // Dried, for the spice shelf ("Red Chilli" is the fresh one): one item, one category.
+    'Dry Red Chilli'
   ],
   bread_buns: ['Burger'],
   beverages: ['Coca-Cola', 'Campa Cola', 'Water Bottle'],
@@ -286,6 +288,7 @@ export const BUILT_IN_ITEM_BENGALI: Record<string, string> = {
   'Mayonnaise': 'মেয়োনিজ',
   'Aromatic Powder': 'অ্যারোমেটিক পাউডার',
   'Corn Flakes': 'কর্নফ্লেক্স',
+  'Dry Red Chilli': 'শুকনো লঙ্কা',
   'Momo Box': 'মোমো বক্স',
   'Momo Tray': 'মোমো ট্রে',
   'Spoon': 'চামচ',

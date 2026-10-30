@@ -194,11 +194,8 @@ export function QuickAddExpense({
     return Object.entries(SELECTABLE_FIXED_COST_CATEGORIES);
   }, [manualType, entity, canUseRestrictedCategories]);
 
-  useEffect(() => {
-    if (!manualCategory && manualCategoryOptions.length > 0) {
-      setManualCategory(manualCategoryOptions[0][0]);
-    }
-  }, [manualCategoryOptions, manualCategory]);
+  // A new item's category is picked, never filled in: it used to start on the first in the list,
+  // and "Makhani Gravy" (spelt unlike the listed "Makhni Gravy") was saved under Meat, 28 Oct 2026.
 
   const selectSuggestion = (s: ExpenseSuggestion) => {
     setMatched(s);
@@ -529,6 +526,7 @@ export function QuickAddExpense({
     setQuery('');
     setItemName('');
     setMatched(null);
+    setManualCategory('');
     setQuantity('1');
     setUnit('pcs');
     setIsBundleMode(false);
@@ -660,8 +658,9 @@ export function QuickAddExpense({
               <PickerField
                 title={t('exp.category')}
                 items={manualCategoryOptions.map(([key, label]) => ({ value: key, label: stripEmoji(label) }))}
-                value={manualCategory}
+                value={manualCategory || null}
                 onValueChange={setManualCategory}
+                placeholder={t('exp.chooseCategory')}
               />
             </Field>
           </div>

@@ -14,6 +14,7 @@ import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { LEFTOVER_PLANS, OVER_PREPARED_CAUSES, checkNewReason, cleanWithLeftover, leftoverLines, piecesPerKg, poolLabel, reasonsText, uncountedPools, withLeftoverLines } from './leftoverRules.ts';
 import { checkBurgers, isBurgerPurchase, salesByDay } from './burgerCheck.ts';
+import { homeElsewhere, homeLabel, itemHomes, settleCategory } from './itemHome.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
 import { BENGALI_TITLE, BUNDLE_MINUTES, DEFAULT_PREFS, bundles, inQuietHours, notificationCategory } from './notificationRules.ts';
@@ -1185,6 +1186,9 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
 
     const item = await c.req.json();
     console.log('💾 [INVENTORY POST] Item data received:', { date: item.date, itemName: item.itemName, amount: item.amount });
+    // One item, one category (itemHome.ts): a known item goes under its own, whatever the form sent.
+    const settled = settleCategory(item.itemName, item.category, await loadItemHomes());
+    if (settled.moved) console.log(`[INVENTORY POST] ${item.itemName} sent under ${item.category}: saved under ${settled.category}, its own category`);
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `inventory:${userId}:${itemId}`;
@@ -1227,6 +1231,7 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
 
     const inventoryItem = {
       ...item,
+      category: settled.category,
       id: itemId,
       userId,
       storeId: resolvedStoreId,
@@ -1326,6 +1331,8 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
       id: itemId,
       userId: ownerId
     });
+    const settled = settleCategory(inventoryItem.itemName, inventoryItem.category, await loadItemHomes());
+    if (settled.moved) inventoryItem.category = settled.category;
     inventoryItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(inventoryItem, role, existing);
 
     await kvWithRetry.set(key, inventoryItem);
@@ -9916,6 +9923,17 @@ app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
   }
 });
 
+// One item, one category (itemHome.ts): the built-in list plus the items added to it, read again
+// at most every 10 minutes and straight after the list changes.
+let itemHomesCache: { at: number; homes: Map<string, string[]> } | null = null;
+async function loadItemHomes(): Promise<Map<string, string[]>> {
+  if (itemHomesCache && Date.now() - itemHomesCache.at < 10 * 60_000) return itemHomesCache.homes;
+  const custom = await kv.getByPrefix('custom-item:').catch(() => null);
+  const homes = itemHomes(Array.isArray(custom) ? custom : []);
+  if (Array.isArray(custom)) itemHomesCache = { at: Date.now(), homes };
+  return homes;
+}
+
 // Add custom item to a category - cluster-head only (see the InventoryForm/QuickAddExpense
 // "+ Add Custom Item" gating on the frontend for why: store/operations incharges shouldn't
 // be able to expand the item catalog on their own, only pick from what's already there).
@@ -9957,6 +9975,12 @@ app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
       item.value.category === category && item.value.itemName === itemName
     );
 
+    // Already on the list under another category: one item, one category.
+    if ((entryType || 'inventory') === 'inventory') {
+      const other = homeElsewhere(itemName, category, await loadItemHomes());
+      if (other) return c.json({ error: `"${itemName}" is already on the list under ${homeLabel(other)}. One item goes under one category.`, category: other }, 409);
+    }
+
     if (duplicate) {
       return c.json({
         customItem: {
@@ -9981,6 +10005,7 @@ app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
     };
 
     await kv.set(`custom-item:${id}`, customItem);
+    itemHomesCache = null;
 
     return c.json({
       customItem: {
@@ -10016,7 +10041,14 @@ app.put('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
     }
 
     const updated = { ...existing, ...updates };
+    if ((updated.entryType || 'inventory') === 'inventory' && (updates.category || updates.itemName)) {
+      // Its own row doesn't count, so an added item the built-in list doesn't have can still be moved.
+      const others = ((await kv.getByPrefix('custom-item:')) || []).filter((x: any) => !(x?.itemName === (existing as any).itemName && x?.category === (existing as any).category));
+      const other = homeElsewhere(updated.itemName, updated.category, itemHomes(others));
+      if (other) return c.json({ error: `"${updated.itemName}" is already on the list under ${homeLabel(other)}. One item goes under one category.`, category: other }, 409);
+    }
     await kv.set(key, updated);
+    itemHomesCache = null;
 
     return c.json({ customItem: { id, ...updated } });
   } catch (error) {
@@ -10030,6 +10062,7 @@ app.delete('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
   try {
     const id = c.req.param('id');
     await kv.del(`custom-item:${id}`);
+    itemHomesCache = null;
     return c.json({ success: true });
   } catch (error) {
     console.log('Error deleting custom item:', error);
