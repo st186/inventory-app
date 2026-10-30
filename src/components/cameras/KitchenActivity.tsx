@@ -104,6 +104,36 @@ const GROUPS: { key: string; label: string; acts: string[]; cls: string }[] = [
   { key: 'idle', label: 'Idle / other', acts: ['idle', 'other'], cls: 'bg-chart-5' },
 ];
 
+const dayName = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+/** When folding started and ended and the most people folding at once (owner, 30 Oct 2026). Bursts
+ *  come every 35 minutes, so the times are within about half an hour. */
+function FoldingMarker({ days, single }: { days: (api.KitchenTotals & { date: string })[]; single: boolean }) {
+  const folded = days.filter((d) => d.folding);
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-border bg-surface p-4">
+      <span className="mt-1.5 size-2.5 shrink-0 rounded-full bg-chart-1" aria-hidden="true" />
+      <div className="flex min-w-0 flex-col gap-1">
+        {!folded.length ? (
+          <p className="text-body-md font-semibold text-text">No folding seen{single && days[0]?.date === getTodayIST() ? ' yet today' : ''}</p>
+        ) : single ? (
+          <p className="text-body-md font-semibold text-text">
+            Folding <span className="num">{folded[0].folding!.from}–{folded[0].folding!.to}</span>
+            <span className="font-normal text-text-2"> · up to <span className="num font-semibold text-text">{folded[0].folding!.mostPeople}</span> {folded[0].folding!.mostPeople === 1 ? 'person' : 'people'} at once</span>
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-0.5 text-body-sm text-text">
+            {folded.map((d) => (
+              <li key={d.date}><span className="font-semibold">{dayName(d.date)}</span> · folding <span className="num">{d.folding!.from}–{d.folding!.to}</span>, up to <span className="num">{d.folding!.mostPeople}</span> at once</li>
+            ))}
+          </ul>
+        )}
+        <p className="text-body-sm text-text-2">First and last folding the camera saw; it looks every 35 minutes, so each time is within about half an hour.</p>
+      </div>
+    </div>
+  );
+}
+
 export function KitchenActivity() {
   const topName = useTopName();
   const today = getTodayIST();
@@ -130,6 +160,7 @@ export function KitchenActivity() {
           <h2 className="text-subtitle font-semibold text-text">{c.camera.place} · {c.camera.name}</h2>
           {!c.kitchen.stills ? <EmptyState compact icon={Users} title="No stills in this period" /> : (
             <>
+              <FoldingMarker days={c.perDay} single={span[0] === span[1]} />
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatTile label="Folding" value={<span className="num">{c.kitchen.foldingHours} h</span>} caption="all people" />
                 <StatTile label="Pieces made" value={<span className="num">{c.kitchen.piecesMade.toLocaleString('en-IN')}</span>} caption="production entries" />
@@ -141,6 +172,7 @@ export function KitchenActivity() {
                   ? <>From {c.kitchen.bursts} burst{c.kitchen.bursts === 1 ? '' : 's'} of {c.camera.burst.frames} frames, {c.camera.burst.gapSec} seconds apart, then a {c.camera.everyMin}-minute wait: each frame stands for about {Math.round(((c.camera.everyMin + (c.camera.burst.frames * c.camera.burst.gapSec) / 60) / c.camera.burst.frames) * 10) / 10} minutes</>
                   : <>From {c.kitchen.stills} stills, one every {c.camera.everyMin} minutes: each sighting counts {c.camera.everyMin} minutes</>}
                 , so these are estimates, good for trends. Unnamed people show by the colour of their top - name them in "Who is who".
+                {' '}Not in kitchen: gone 15 minutes or more between when they were first and last seen that day (shorter is just out of view).
               </p>
               <div className="flex flex-col gap-3">
                 {c.people.map((p, i) => {
@@ -162,6 +194,12 @@ export function KitchenActivity() {
                             {g.label} <span className="num font-semibold text-text">{hm(groupMin(g.acts))}</span>
                           </li>
                         ))}
+                        {!!p.notInKitchenMinutes && (
+                          <li className="flex items-center gap-1.5">
+                            <span className="size-2.5 rounded-xs border border-text-3" aria-hidden="true" />
+                            Not in kitchen <span className="num font-semibold text-text">{hm(p.notInKitchenMinutes)}</span>
+                          </li>
+                        )}
                       </ul>
                       <p className="text-body-sm text-text-2">
                         Phone: <span className="num font-semibold text-text">{p.phoneTimes}</span> time{p.phoneTimes === 1 ? '' : 's'}, {hm(p.phoneMinutes)}

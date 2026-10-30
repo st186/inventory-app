@@ -18,8 +18,13 @@ export type Alert = {
 export type PersonRow = {
   slot: string; name: string | null; minutes: Record<string, number>; seenMinutes: number; foldingMinutes: number;
   phoneMinutes: number; phoneTimes: number; idleMinutes: number; ppePercent: number | null; first: string; last: string;
+  notInKitchenMinutes?: number; // gone 15 minutes or more between first and last sighting
 };
-export type KitchenTotals = { foldingHours: number; phoneMinutes: number; idleMinutes: number; piecesMade: number; piecesPerFoldingHour: number | null; stills: number; bursts?: number };
+export type FoldingSpan = { from: string; to: string; mostPeople: number };
+export type KitchenTotals = {
+  foldingHours: number; phoneMinutes: number; idleMinutes: number; piecesMade: number; piecesPerFoldingHour: number | null; stills: number; bursts?: number;
+  folding?: FoldingSpan | null; // one day: when folding started and ended, the most people at it at once
+};
 export type Activity = {
   from: string; to: string; labels: Record<string, string>;
   cameras: { camera: { id: string; name: string; everyMin: number; burst?: { frames: number; gapSec: number } | null; place: string }; people: PersonRow[]; kitchen: KitchenTotals; perDay: (KitchenTotals & { date: string })[] }[];

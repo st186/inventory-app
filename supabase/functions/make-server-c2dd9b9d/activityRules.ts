@@ -31,8 +31,20 @@ export type Slot = {
   first: string; // HH:MM first seen
   last: string;
   ppe: { judged: number; ok: number }; // sightings where every checked item could be seen; all on
+  at?: number[]; // when they were seen: minutes of the day, one per frame
 };
-export type ActivityDay = { date: string; cameraId: string; stills: number; bursts?: number; slots: Record<string, Slot> };
+export type ActivityDay = {
+  date: string; cameraId: string; stills: number; bursts?: number; slots: Record<string, Slot>;
+  frames?: number[]; // when the camera looked: minutes of the day, one per frame
+  mpf?: number; // minutes each frame stands for
+  folding?: [number, number][]; // [minute of the day, people folding] for each frame with anyone folding
+};
+
+// Not in the kitchen (owner, 30 Oct 2026): gone and not back within this many minutes. Shorter is just
+// out of view for a moment.
+export const AWAY_MIN = 15;
+const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const clockOf = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(Math.floor(min % 60)).padStart(2, '0')}`;
 
 const onPhone = (p: Sighting) => p.phone === 'in_hand' || p.phone === 'at_ear' || p.activity === 'phone';
 const topOf = (t: string): Top => ((TOPS as readonly string[]).includes(t) ? t as Top : 'other');
@@ -73,6 +85,11 @@ export function addStill(day: ActivityDay | null, o: {
 }): ActivityDay {
   const d: ActivityDay = day && day.date === o.date ? day : { date: o.date, cameraId: o.cameraId, stills: 0, slots: {} };
   d.stills += 1;
+  const t = toMin(o.clock);
+  d.frames = [...(d.frames || []), t];
+  d.mpf = o.everyMin;
+  const folders = o.people.filter((p) => activityOf(p.activity) === 'folding').length;
+  if (folders) d.folding = [...(d.folding || []), [t, folders]];
   const seen = new Set<string>();
   const keys = slotKeys(o.people, Object.keys(d.slots));
   for (const [i, p] of o.people.entries()) {
@@ -89,6 +106,7 @@ export function addStill(day: ActivityDay | null, o: {
     s.onPhone = phone;
     s.samples += 1;
     s.last = o.clock;
+    s.at = [...(s.at || []), t];
     judgePpe(s, p, o.checks);
     d.slots[key] = s;
   }
@@ -106,11 +124,18 @@ export type BurstPerson = { top: string; bottom?: string; activities: string[]; 
  * PPE is judged once per burst (the AI looks across all the frames).
  */
 export function addBurst(day: ActivityDay | null, o: {
-  date: string; cameraId: string; from: string; to: string; frames: number; minutesPerFrame: number; people: BurstPerson[]; checks: string[];
+  date: string; cameraId: string; from: string; to: string; frames: number; minutesPerFrame: number; people: BurstPerson[]; checks: string[]; gapSec?: number;
 }): ActivityDay {
   const d: ActivityDay = day && day.date === o.date ? day : { date: o.date, cameraId: o.cameraId, stills: 0, slots: {} };
   d.stills += o.frames;
   d.bursts = (d.bursts || 0) + 1;
+  const times = Array.from({ length: o.frames }, (_, f) => toMin(o.from) + (f * (o.gapSec || 15)) / 60);
+  d.frames = [...(d.frames || []), ...times];
+  d.mpf = o.minutesPerFrame;
+  times.forEach((t, f) => {
+    const folders = o.people.filter((p) => activityOf(p.activities[f] || 'away') === 'folding' && p.activities[f] !== 'away').length;
+    if (folders) d.folding = [...(d.folding || []), [t, folders]];
+  });
   const keys = slotKeys(o.people, Object.keys(d.slots));
   for (const s of Object.values(d.slots)) s.onPhone = false;
   for (const [i, p] of o.people.entries()) {
@@ -131,6 +156,7 @@ export function addBurst(day: ActivityDay | null, o: {
       }
       onPhoneNow = phone;
       s.samples += 1;
+      s.at = [...(s.at || []), times[f]];
     });
     if (o.from < s.first) s.first = o.from;
     if (o.to > s.last) s.last = o.to;
@@ -140,8 +166,32 @@ export function addBurst(day: ActivityDay | null, o: {
   return d;
 }
 
+/**
+ * Minutes a person was out of the kitchen: between their first and last sighting, every absence that
+ * lasted AWAY_MIN or more; each frame the camera took while they were gone counts what a frame stands
+ * for. Before they first come in and after they leave for the day isn't counted.
+ */
+export function notInKitchen(d: ActivityDay, s: Slot, awayMin = AWAY_MIN): number {
+  const at = [...(s.at || [])].sort((a, b) => a - b);
+  const frames = d.frames || [];
+  let total = 0;
+  for (let i = 1; i < at.length; i++) {
+    if (at[i] - at[i - 1] < awayMin) continue;
+    total += frames.filter((t) => t > at[i - 1] + 1e-6 && t < at[i] - 1e-6).length * (d.mpf || 0);
+  }
+  return total;
+}
+
+/** When folding started and ended that day, and the most people folding at once (from the frames). */
+export function foldingSpan(d: ActivityDay): { from: string; to: string; mostPeople: number } | null {
+  const f = d.folding || [];
+  if (!f.length) return null;
+  const times = f.map(([t]) => t);
+  return { from: clockOf(Math.min(...times)), to: clockOf(Math.max(...times)), mostPeople: Math.max(...f.map(([, n]) => n)) };
+}
+
 export type PersonRow = {
-  slot: string; name: string | null; minutes: Partial<Record<Activity, number>>; seenMinutes: number;
+  slot: string; name: string | null; minutes: Partial<Record<Activity, number>>; seenMinutes: number; notInKitchenMinutes: number;
   foldingMinutes: number; phoneMinutes: number; phoneTimes: number; idleMinutes: number; ppePercent: number | null; first: string; last: string;
 };
 
@@ -153,9 +203,10 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       const name = names[d.date]?.[slot] || null;
       // A named person adds up across days; an unnamed colour stays that day's colour.
       const key = name ? `name:${name}` : `${d.date}:${slot}`;
-      const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
+      const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, notInKitchenMinutes: 0, foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
       for (const [a, m] of Object.entries(s.minutes)) r.minutes[a as Activity] = (r.minutes[a as Activity] || 0) + (m || 0);
       r.seenMinutes += Object.values(s.minutes).reduce((x, y) => x + (y || 0), 0);
+      r.notInKitchenMinutes += notInKitchen(d, s);
       r.phoneMinutes += s.phoneMinutes;
       r.phoneTimes += s.phoneTimes;
       (r as any)._judged += s.ppe.judged;
@@ -175,6 +226,7 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       ...rest,
       minutes,
       seenMinutes: Math.round(r.seenMinutes),
+      notInKitchenMinutes: Math.round(r.notInKitchenMinutes),
       phoneMinutes: Math.round(r.phoneMinutes),
       foldingMinutes: minutes.folding || 0,
       idleMinutes: minutes.idle || 0,
@@ -190,6 +242,8 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       piecesMade,
       // Pieces made for each hour of folding seen on camera (the whole house's production).
       piecesPerFoldingHour: foldingMinutes >= 30 ? Math.round(piecesMade / (foldingMinutes / 60)) : null,
+      // When folding started and ended, and the most people at it at once (one day; null over several).
+      folding: days.length === 1 ? foldingSpan(days[0]) : null,
       stills: days.reduce((s, d) => s + d.stills, 0),
       bursts: days.reduce((s, d) => s + (d.bursts || 0), 0),
     },

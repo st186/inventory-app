@@ -1478,7 +1478,7 @@ export type CameraLook = {
   note: string;
 };
 
-export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType: string; place: string }): Promise<CameraLook> {
+export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType: string; place: string; notes?: string }): Promise<CameraLook> {
   const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
   const res = await callClaude(deps, {
     purpose: 'camera',
@@ -1491,7 +1491,7 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
       role: 'user',
       content: [
         { type: 'image', source: { type: 'base64', media_type: frame.mediaType, data: frame.base64 } },
-        { type: 'text', text: `Camera: ${frame.place.slice(0, 80)}.` },
+        { type: 'text', text: `Camera: ${frame.place.slice(0, 80)}.${frame.notes ? ` About this kitchen: ${frame.notes.slice(0, 400)}` : ''}` },
       ],
     }],
   });
@@ -1579,7 +1579,7 @@ export type BurstLook = {
   note: string;
 };
 
-export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string }): Promise<BurstLook> {
+export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string; notes?: string }): Promise<BurstLook> {
   const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
   const n = burst.frames.length;
   const content: any[] = [];
@@ -1587,7 +1587,7 @@ export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: n
     content.push({ type: 'text', text: `Frame ${i + 1}` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
   });
-  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}. ${n} frames, ${burst.gapSec} seconds apart: give each person exactly ${n} activities.` });
+  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}.${burst.notes ? ` About this kitchen: ${burst.notes.slice(0, 400)}` : ''} ${n} frames, ${burst.gapSec} seconds apart: give each person exactly ${n} activities.` });
   const res = await callClaude(deps, {
     purpose: 'camera',
     system: BURST_SYSTEM,

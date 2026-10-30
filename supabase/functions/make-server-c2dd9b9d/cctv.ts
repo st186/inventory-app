@@ -54,6 +54,9 @@ type Camera = {
   // each burst); PPE alerts then at most every ppeGapMin.
   activity?: boolean;
   ppeGapMin?: number;
+  // What Bunny should know about this kitchen when it reads the frames (owner, 30 Oct 2026: momos
+  // are folded at the folding table), set by the owner.
+  notes?: string;
   createdAt: string; createdBy: string; lastSeenAt?: string; lastScheduledAt?: string; lastMotionLookAt?: string;
   lastAlert?: { ppe?: string; intruder?: string };
 };
@@ -180,7 +183,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     const startMs = nowMs - images.length * BURST.gapSec * 1000;
     const day = addBurst(before, {
       date, cameraId: cam.id, from: istClock(startMs), to: istClock(nowMs), frames: images.length,
-      minutesPerFrame: minutesPerFrame(cam.everyMin, { frames: images.length, gapSec: BURST.gapSec }), people: look.people, checks: cam.checks,
+      minutesPerFrame: minutesPerFrame(cam.everyMin, { frames: images.length, gapSec: BURST.gapSec }), people: look.people, checks: cam.checks, gapSec: BURST.gapSec,
     });
     await deps.kv.set(key, day);
     const pKey = `cctv-activity-photos:${cam.id}:${date}`;
@@ -303,8 +306,8 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       await deps.kv.set(`cctv-camera:${cam.id}`, cam);
 
       const place = await placeName(cam);
-      const burst = isBurst ? await aiLookAtBurst(deps.kv as any, { frames: images, gapSec: BURST.gapSec, place: `${cam.name}, ${place}` }) : null;
-      const look = burst || await aiLookAtCamera(deps.kv as any, { base64: image, mediaType: 'image/jpeg', place: `${cam.name}, ${place}` });
+      const burst = isBurst ? await aiLookAtBurst(deps.kv as any, { frames: images, gapSec: BURST.gapSec, place: `${cam.name}, ${place}`, notes: cam.notes }) : null;
+      const look = burst || await aiLookAtCamera(deps.kv as any, { base64: image, mediaType: 'image/jpeg', place: `${cam.name}, ${place}`, notes: cam.notes });
       // The photo kept with an alert: the burst frame that best shows it.
       const evidence = burst ? images[burst.evidenceFrame - 1] : image;
       const lastAlertAt = kind === 'motion' ? cam.lastAlert?.intruder : cam.lastAlert?.ppe;

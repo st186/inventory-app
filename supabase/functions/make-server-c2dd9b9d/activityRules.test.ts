@@ -113,4 +113,19 @@ test('two people in the same top are told apart by their trousers; trousers unse
   assert.deepEqual(d.slots['red~black'].minutes, { machine: 1.75, idle: 1.75 });
 });
 
+test('not in the kitchen: a whole burst missed counts, a moment out of view does not; folding span', () => {
+  const b = (d: ActivityDay | null, from: string, people: { top: string; bottom?: string; activities: string[]; phoneFrames: number[] }[]) =>
+    addBurst(d, { date: '2026-10-30', cameraId: 'cam', from, to: from, frames: 4, minutesPerFrame: 8.75, checks: [], gapSec: 15, people });
+  let d = b(null, '10:00', [{ top: 'red', activities: ['folding', 'away', 'folding', 'folding'], phoneFrames: [] }, { top: 'blue', activities: ['folding', 'folding', 'away', 'away'], phoneFrames: [] }]);
+  d = b(d, '10:35', [{ top: 'red', activities: ['folding', 'folding', 'folding', 'folding'], phoneFrames: [] }]);
+  d = b(d, '11:10', [{ top: 'red', activities: ['idle', 'idle', 'idle', 'idle'], phoneFrames: [] }, { top: 'blue', activities: ['away', 'packing', 'packing', 'packing'], phoneFrames: [] }]);
+  const s = summarise([d], {}, 0);
+  const red = s.people.find((p) => p.slot === 'red')!;
+  const blue = s.people.find((p) => p.slot === 'blue')!;
+  assert.equal(red.notInKitchenMinutes, 0); // one frame out of view for 15 seconds
+  assert.equal(blue.notInKitchenMinutes, Math.round(7 * 8.75)); // gone from 10:00:15 to 11:10:15: 2 + 4 + 1 frames missed
+  assert.deepEqual(s.kitchen.folding, { from: '10:00', to: '10:35', mostPeople: 2 });
+  assert.equal(summarise([d, d], {}, 0).kitchen.folding, null);
+});
+
 console.log(`activityRules: ${passed} tests passed`);
