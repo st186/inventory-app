@@ -1,7 +1,7 @@
 // State, loading and actions of the stock requests screen: the store incharge's request, the
 // production queue (accept, pack, ship) and the oversight views. The screen and its sections read
 // everything from what this returns.
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type * as React from 'react';
 import { InventoryContextType } from '../../App';
 import * as api from '../../utils/api';
@@ -10,7 +10,7 @@ import { confirm } from '../ui/confirm';
 import { getSupabaseClient } from '../../utils/supabase/client';
 import { getAssignedProductionHouseIds, getAssignedStoreIds, getDefaultStoreId } from '../../utils/entityAccess';
 import { bagSize, roundUpToBags, isPhase1Live } from '../../utils/batches';
-import { addDays, getTodayIST } from '../../utils/timezone';
+import { addDays, getNowIST, getTodayIST } from '../../utils/timezone';
 import type { ForecastDay } from '../../utils/forecast';
 import type { PlanRow } from '../../utils/requestPlan';
 import { PLAN_KEYS, loadStorePlanData, planForStore } from '../../utils/requestPlanLoad';
@@ -78,9 +78,21 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   // Form state for new request - DYNAMIC for all finished products
   const [momoQuantities, setMomoQuantities] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
-  // Tomorrow: each day's request is sent the night before, by midnight (owner, 29 Oct 2026).
-  const getDefaultRequestDate = () => addDays(getTodayIST(), 1);
-  const [requestDate, setRequestDate] = useState(getDefaultRequestDate());
+  // Tomorrow: each day's request is sent the night before, by midnight (owner, 29 Oct 2026). A day
+  // that began with no request takes it until noon, as Home shows it late: on 30 Oct Rohan sent
+  // that day's request at 3:10 AM and the screen had put it down for the next day.
+  const getDefaultRequestDate = (list: api.ProductionRequest[] = requests) => {
+    const today = getTodayIST();
+    const morning = Number(getNowIST().slice(11, 13)) < 12;
+    const sent = list.some((r) => r.storeId === context.user?.storeId && r.requestDate === today);
+    return morning && !sent ? today : addDays(today, 1);
+  };
+  const [requestDate, setRequestDateState] = useState(() => getDefaultRequestDate([]));
+  const dateTouched = useRef(false);
+  const setRequestDate = (date: string) => { dateTouched.current = true; setRequestDateState(date); };
+  useEffect(() => {
+    if (!loading && !dateTouched.current) setRequestDateState(getDefaultRequestDate(requests));
+  }, [loading, requests]);
   const [lastReminderDate, setLastReminderDate] = useState<string | null>(null);
 
   // Kitchen Utilities state (item -> {quantity, unit})
@@ -827,7 +839,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       setSauces({});
       setUtilities({});
       setNotes('');
-      setRequestDate(getDefaultRequestDate());
+      dateTouched.current = false; // the reload below moves the screen on to the next day due
 
       // Reload requests
       await loadRequests();
