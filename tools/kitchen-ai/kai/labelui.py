@@ -1,6 +1,7 @@
 """The labelling page, on this PC only: http://localhost:8765 (`ka.py label`). One person at a time, big:
 press a number for what they're doing (o = other), Enter to agree with the suggestion, 0 for a box that isn't a
-person, Backspace to go back. A few hundred checked labels are worth more than thousands of Bunny's."""
+person, Backspace to go back. A few hundred checked labels are worth more than thousands of Bunny's.
+The video labels (kai/rowsui.py, /rows) are served from here too."""
 import json
 import os
 import threading
@@ -9,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import cv2
 
+from . import rowsui
 from .store import ACTIVITIES, NOT_A_PERSON
 
 KEYS = {str(i + 1): a for i, a in enumerate(ACTIVITIES[:9])}  # 1-9; o = other, 0 = not a person
@@ -42,7 +44,7 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 </style></head><body>
 <header><h1>Kitchen labels</h1>
 <label>Show <select id=mode><option value=check>Bunny's labels to check</option><option value=new>People with no label</option><option value=unsure>The model's least sure</option></select></label>
-<span id=stats></span></header>
+<span id=stats></span><a href="/rows" style="color:var(--accent)">Video labels</a></header>
 <div id=done>Nothing left here. Pick another list above, or come back after the next day is added.</div>
 <main id=work><div class=pane><img id=crop alt="The person to label"></div>
 <div class=pane><img id=frame alt="Where they are in the kitchen (box)">
@@ -107,7 +109,7 @@ stats(); show();
 </script></body></html>"""
 
 
-def make_handler(store, lock):
+def make_handler(store, lock, rows_ctx=None):
     page = PAGE.replace("__KEYS__", json.dumps(KEYS)).replace("__SHOWN__", json.dumps(SHOWN)).encode()
 
     class Handler(BaseHTTPRequestHandler):
@@ -127,6 +129,8 @@ def make_handler(store, lock):
         def do_GET(self):
             u = urlparse(self.path)
             q = parse_qs(u.query)
+            if rows_ctx is not None and rowsui.get(self, u, q, rows_ctx, lock):
+                return None
             if u.path == "/":
                 return self._send(page, "text/html; charset=utf-8")
             if u.path == "/api/stats":
@@ -162,7 +166,15 @@ def make_handler(store, lock):
             return self._json({"error": "not found"}, 404)
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/label":
+            path = urlparse(self.path).path
+            if rows_ctx is not None and path.startswith("/api/rows/"):
+                try:
+                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                except ValueError:
+                    return self._json({"error": "send JSON"}, 400)
+                rowsui.post(self, path, body if isinstance(body, dict) else {}, rows_ctx, lock)
+                return None
+            if path != "/api/label":
                 return self._json({"error": "not found"}, 404)
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
@@ -178,10 +190,10 @@ def make_handler(store, lock):
     return Handler
 
 
-def serve(store, port=8765, open_browser=True):
-    lock = threading.Lock()
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, lock))
-    url = f"http://localhost:{port}"
+def serve(store, port=8765, open_browser=True, rows_ctx=None, page="/"):
+    lock = threading.RLock()
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, lock, rows_ctx))
+    url = f"http://localhost:{port}{page if page != '/' else ''}"
     print(f"Labelling page: {url}  (Ctrl+C to stop)")
     if open_browser:
         import webbrowser

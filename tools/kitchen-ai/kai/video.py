@@ -101,3 +101,44 @@ def frame_at(day_pieces, when):
             finally:
                 cap.release()
     return None, None
+
+
+def every(piece, fps_out):
+    """(time, frame) right through a piece, `fps_out` frames a second; the frames in between are only
+    grabbed (an H.264 picture can't be skipped, but it needn't be turned into an image)."""
+    cap = cv2.VideoCapture(piece.path, cv2.CAP_FFMPEG)
+    try:
+        step, want, i = piece.fps / fps_out, 0.0, 0
+        while cap.grab():
+            if i + 1e-6 >= want:
+                ok, f = cap.retrieve()
+                if ok:
+                    yield piece.start + timedelta(seconds=i / piece.fps), f
+                want += step
+            i += 1
+    finally:
+        cap.release()
+
+
+def read_span(day_pieces, start, seconds, every_s=None):
+    """[(time, frame)] for `seconds` from `start` - every frame, or one every `every_s` seconds - from
+    the piece that has that moment; empty if it wasn't recorded."""
+    for p in day_pieces:
+        if p.start <= start < p.end:
+            cap = cv2.VideoCapture(p.path, cv2.CAP_FFMPEG)
+            try:
+                cap.set(cv2.CAP_PROP_POS_MSEC, (start - p.start).total_seconds() * 1000)
+                out, want = [], 0.0
+                for i in range(int(round(seconds * p.fps))):
+                    if not cap.grab():
+                        break
+                    rel = i / p.fps
+                    if every_s is None or rel + 1e-6 >= want:
+                        ok, f = cap.retrieve()
+                        if ok:
+                            out.append((start + timedelta(seconds=rel), f))
+                        want += every_s or 0
+                return out
+            finally:
+                cap.release()
+    return []

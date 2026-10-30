@@ -4,12 +4,15 @@
     python ka.py setup --yes            download the two ready-made models (~125 MB, once)
     python ka.py harvest [DATE]         frames every 10 s from a recorded day into the dataset
     python ka.py prelabel [DATE]        Bunny's burst readings as first labels (all days if no date)
-    python ka.py label                  the labelling page, http://localhost:8765
+    python ka.py label [--video]        the labelling page, http://localhost:8765 (photos; video at /rows)
+    python ka.py rows [DATE] [--only HH-MM]  everyone followed through a recorded day, for the video labels
+                                        (all its recordings not done yet, or just the one starting HH-MM)
+    python ka.py clips                  the labelled video stretches as 2-second clips, a folder per activity
     python ka.py train                  train on the labels, report the score on unseen hours
     python ka.py day DATE               judge a recorded day, next to Bunny's bursts (HTML report)
     python ka.py run [--minutes N]      watch the kitchen live, a line per person per minute
     python ka.py nightly                every recorded day not done yet + Bunny's labels (+ today's report
-                                        once a model is trained); Windows runs it at 8:45 PM, log in
+                                        once a model is trained; last the video rows and clips); Windows runs it at 8:45 PM, log in
                                         <root>\\kitchen-ai.log
 
 DATE is YYYY-MM-DD (yesterday if left out). Settings: camera_watch.ini ([kitchen_ai], see kai/config.py).
@@ -102,8 +105,21 @@ def cmd_prelabel(s, a):
 
 
 def cmd_label(s, a):
-    from kai import labelui
-    labelui.serve(_store(s), s.port, open_browser=not a.no_browser)
+    from kai import labelui, rowsui
+    cam = s.camera(a.camera)["id"]
+    labelui.serve(_store(s), s.port, open_browser=not a.no_browser, rows_ctx=rowsui.Ctx(s, cam), page="/rows" if a.video else "/")
+
+
+def cmd_rows(s, a):
+    from kai import rows
+    cam = s.camera(a.camera)["id"]
+    looker = _looker(s, cam)
+    rows.follow(s, looker.finder, looker.reader, cam, a.date or _yesterday(), only=a.only)
+
+
+def cmd_clips(s, a):
+    from kai import clips
+    clips.export(s, s.camera(a.camera)["id"])
 
 
 def _train(s, store, say=print):
@@ -233,6 +249,13 @@ def cmd_nightly(s, a):
                 jobs.day(s, looker, model, cam, today, say=say)
         st = store.stats()
         say(f"nightly done in {time.time() - t0:.0f} s: {st['people']} people in the dataset, labels yours {st['yours']} / Bunny's {st['bunny']}")
+        # Last, as it is the long part (~5 h for a day on this PC's processor): everyone followed
+        # through the recordings for the video labels, and the clips of whatever was labelled.
+        from kai import clips, rows
+        for d in days:
+            rows.follow(s, looker.finder, looker.reader, cam, d, say=say)
+        clips.export(s, cam, say=say)
+        say(f"video rows and clips done, {time.time() - t0:.0f} s in all")
     except BaseException:  # noqa: BLE001 - the log is the only place anyone will see it
         say("nightly failed:\n" + traceback.format_exc())
         raise
@@ -253,6 +276,11 @@ def main(argv=None):
             x.add_argument("--no-browser", action="store_true")
     x = sub.add_parser("label")
     x.add_argument("--no-browser", action="store_true")
+    x.add_argument("--video", action="store_true", help="open the video labels")
+    x = sub.add_parser("rows")
+    x.add_argument("date", nargs="?")
+    x.add_argument("--only", help="just the recording starting at this time, e.g. 13-51")
+    sub.add_parser("clips")
     sub.add_parser("train")
     x = sub.add_parser("run")
     x.add_argument("--minutes", type=float)
@@ -264,7 +292,8 @@ def main(argv=None):
     a = p.parse_args(argv)
     s = config.load(root=a.root)
     {"status": cmd_status, "setup": cmd_setup, "harvest": cmd_harvest, "prelabel": cmd_prelabel, "label": cmd_label,
-     "train": cmd_train, "day": cmd_day, "run": cmd_run, "nightly": cmd_nightly, "heatmap": cmd_heatmap}[a.cmd](s, a)
+     "train": cmd_train, "day": cmd_day, "run": cmd_run, "nightly": cmd_nightly, "heatmap": cmd_heatmap, "rows": cmd_rows,
+     "clips": cmd_clips}[a.cmd](s, a)
 
 
 if __name__ == "__main__":

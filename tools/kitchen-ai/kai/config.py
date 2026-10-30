@@ -10,6 +10,8 @@ and the [record] folder), plus an optional [kitchen_ai] section in the same file
     live_stream = still  ; still = the camera's full stream, watch = its small one
     port = 8765          ; the labelling page: http://localhost:8765
     ai_weight = 0.4      ; how much a label from Bunny's burst reading counts against one of yours
+    follow_fps = 5       ; frames a second looked at when following everyone through a day (video rows)
+    clip_every_s = 6     ; a 2-second clip starts this often in a labelled stretch
 """
 import configparser
 import os
@@ -33,6 +35,8 @@ class Settings:
     live_stream: str = "still"
     port: int = 8765
     ai_weight: float = 0.4
+    follow_fps: float = 5
+    clip_every_s: float = 6
     models: str = MODELS
     zones: str = ZONES
 
@@ -92,4 +96,6 @@ def load(ini=INI, root=None):
         s.live_stream = k.get("live_stream", s.live_stream).strip()
         s.port = k.getint("port", s.port)
         s.ai_weight = k.getfloat("ai_weight", s.ai_weight)
+        s.follow_fps = k.getfloat("follow_fps", s.follow_fps)
+        s.clip_every_s = k.getfloat("clip_every_s", s.clip_every_s)
     return s

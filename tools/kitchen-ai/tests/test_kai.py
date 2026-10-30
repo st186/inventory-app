@@ -367,5 +367,201 @@ def _():
 
 
 
+
+def _col(top, bottom=30):
+    """Clothes colours like colours_of: a top colour bin and a trouser bin, unit length."""
+    v = np.zeros(48, np.float32)
+    v[top], v[bottom] = 1, 1
+    return v / np.linalg.norm(v)
+
+
+@test("video rows: two people crossing keep their own pieces, flickers dropped, a box that never moves marked")
+def _():
+    from kai import rows
+    red, yellow = _col(0), _col(3)
+    f, ended = rows.Follower(), []
+    for i in range(50):  # 10 s at 5 a second: red walks right, yellow left, through each other
+        t = 100 + i * 0.2
+        rx, yx = 0.1 + 0.5 * i / 49, 0.6 - 0.5 * i / 49
+        found = [((rx, 0.2, rx + 0.2, 0.9), 0.9, red), ((yx, 0.25, yx + 0.2, 0.92), 0.9, yellow)]
+        if i == 20:
+            found.append(((0.8, 0.1, 0.85, 0.3), 0.5, _col(8)))  # the finder guessing, once
+        ended += f.update(t, found)
+    ended += f.close_all()
+    kept = [p for p in ended if p.worth_keeping()]
+    assert len(kept) == 2, [(p.start, p.end, len(p.boxes)) for p in ended]
+    for p in kept:
+        xs = [b[1] for b in p.boxes]
+        assert len(p.boxes) == 50 and (xs == sorted(xs) or xs == sorted(xs, reverse=True)), xs  # nobody swapped at the crossing
+        assert not p.still()
+    sack = rows.Piece(0, (0.1, 0.1, 0.2, 0.4), 0.6, red)
+    for i in range(1, 20):
+        sack.take(i * 0.2, (0.1, 0.1, 0.2, 0.4), 0.6, red)
+    assert sack.worth_keeping() and sack.still()
+
+
+def _piece(start, end, look):
+    from kai import rows
+    p = rows.Piece(start, (0.1, 0.1, 0.3, 0.9), 0.9, _col(0))
+    t = start
+    while t < end - 1e-6:
+        t = round(t + 0.2, 2)
+        p.take(t, (0.1, 0.1, 0.3 + 0.01 * (t % 2), 0.9), 0.9, _col(0))
+    p.thumbs = {int(x // 5 * 5): b"\xff\xd8jpg" for x in np.arange(start, end, 5)}
+    return p, look
+
+
+@test("video rows: pieces joined into people - not two at once, not after a long gap - and the page's helpers")
+def _():
+    from kai import rows
+    a = np.zeros(432, np.float32)
+    a[0], a[384] = 1, 1
+    b = np.zeros(432, np.float32)
+    b[0], b[2], b[384] = 0.8, 0.6, 1  # alike to a (0.9), but less than a itself
+    other = np.zeros(432, np.float32)
+    other[1], other[390] = 1, 1
+    db = rows.RowsDB(os.path.join(TMP, "rows"), "cam-k", "2026-10-31")
+    ids = [db.add_piece(*_piece(*x)) for x in [(0, 10, a), (30, 40, a), (5, 15, b), (200, 210, a), (50, 60, other)]]
+    assert db.join_new() == 4
+    who = {r["id"]: r["person"] for r in db.db.execute("select id, person from pieces")}
+    assert who[ids[0]] == who[ids[1]]                       # 20 s apart, alike: one person
+    assert who[ids[2]] != who[ids[0]]                       # at the same time: someone else
+    assert who[ids[3]] not in (who[ids[0]], who[ids[2]])    # over a minute later: new, but suggested
+    assert who[ids[4]] not in (who[ids[0]], who[ids[3]])    # looks different
+    ppl = {p["id"]: p for p in db.persons()}
+    assert {x["id"] for x in ppl[who[ids[3]]]["alike"]} == {who[ids[0]], who[ids[2]]}, ppl[who[ids[3]]]["alike"]
+    assert ppl[who[ids[0]]]["seen"] == 20.0 and len(ppl[who[ids[0]]]["pieces"]) == 2
+    db.set_who(who[ids[3]], "Vijay Das")
+    db.join(who[ids[3]], who[ids[0]])                       # the labeller: same person
+    assert db.db.execute("select who from persons where id=?", (who[ids[0]],)).fetchone()[0] == "Vijay Das"
+    assert len(db.persons()) == 3 and db.names() == ["Vijay Das"]
+    new = db.move_piece(ids[1])                             # "not Vijay": a person of its own
+    assert new not in who.values() and len(db.persons()) == 4
+    bl = db.blocks(who[ids[0]])
+    assert [b["t"] for b in bl] == [0, 5, 200, 205] and all(b["label"] is None for b in bl)
+    db.set_labels([(ids[0], 0), (ids[0], 5)], "folding", "Rudra")
+    db.set_labels([(ids[3], 200)], "phone", "Rudra")
+    st = db.stretches()
+    assert [(x["label"], x["t0"], round(x["t1"], 1), x["who"], x["by"]) for x in st] == [
+        ("folding", 0, 10, "Vijay Das", "Rudra"), ("phone", 200, 205, "Vijay Das", "Rudra")], st
+    assert db.counts() == {"folding": 2, "phone": 1}
+    tl = {p["id"]: p["spans"] for p in db.timeline()}[who[ids[0]]]
+    assert tl == [[0, 10, "folding"], [200, 205, "phone"], [205, 210, None]], tl
+    db.set_labels([(ids[0], 5)], None, "")
+    assert db.counts() == {"folding": 1, "phone": 1}
+    db.close()
+    assert rows.RowsDB.days(os.path.join(TMP, "rows"), "cam-k") == ["2026-10-31"]
+    # Long pieces: very alike joins however far apart, and a scrap stuck to that person doesn't stop it
+    db = rows.RowsDB(os.path.join(TMP, "rows"), "cam-k", "2026-11-01")
+    near = a.copy()
+    near[1] = 0.45  # 0.95 alike to a after the unit step below
+    near[:384] /= np.linalg.norm(near[:384])
+    ids = [db.add_piece(*_piece(*x)) for x in [(0, 120, a), (100, 106, a), (500, 700, near), (150, 300, other)]]
+    db.join_new()
+    who = {r["id"]: r["person"] for r in db.db.execute("select id, person from pieces")}
+    assert who[ids[2]] == who[ids[0]] and who[ids[3]] != who[ids[0]], who
+    db.set_labels([(ids[0], 0)], "folding", "Rudra")
+    try:
+        db.rejoin()
+        raise AssertionError("rejoin must refuse a labelled day")
+    except ValueError:
+        pass
+    db.close()
+
+
+class WalkingFinder:
+    """One person walking slowly to the right: a box 2 px further on each look."""
+    def __init__(self):
+        self.i = 0
+
+    def find(self, frame, min_score=0.3, classes=None):
+        self.i += 1
+        x = 400 + 2 * self.i
+        return [(x, 100, x + 200, 600, 0.9, PERSON)]
+
+
+@test("video rows end to end: a recorded day followed, labelled on the page, cut into clips")
+def _():
+    from kai import clips, labelui, rows, rowsui
+    root = os.path.join(TMP, "rows-day")
+    s = _settings(root)
+    s.clip_every_s = 2
+    write_video(os.path.join(s.recordings, "cam-k", "2026-10-31", "09-00-00.mp4"), seconds=12)
+    assert rows.follow(s, WalkingFinder(), StubReader(), "cam-k", "2026-10-31", say=lambda m: None) == (1, 1)
+    assert rows.follow(s, WalkingFinder(), StubReader(), "cam-k", "2026-10-31", say=lambda m: None) == (0, 0)  # done once
+    db = rows.RowsDB(os.path.join(root, "rows"), "cam-k", "2026-10-31")
+    (person,) = db.persons()
+    piece = person["pieces"][0]["id"]
+    assert [b["t"] for b in db.blocks(person["id"])] == [32400, 32405, 32410]  # 09:00:00, 09:00:05, 09:00:10
+    assert db.thumb(piece, 32405)[:2] == b"\xff\xd8"
+    db.close()
+
+    server = labelui.ThreadingHTTPServer(("127.0.0.1", 0), labelui.make_handler(Store(os.path.join(root, "ds")), threading.RLock(), rowsui.Ctx(s, "cam-k")))
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        get = lambda p: urllib.request.urlopen(f"http://127.0.0.1:{port}{p}").read()  # noqa: E731
+
+        def post(path, body):
+            req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", json.dumps(body).encode(), {"Content-Type": "application/json"})
+            try:
+                return urllib.request.urlopen(req).status
+            except urllib.error.HTTPError as e:
+                return e.code
+        assert b"Kitchen video labels" in get("/rows") and b'href="/rows"' in get("/")
+        assert json.loads(get("/api/rows/days"))["days"] == ["2026-10-31"]
+        ppl = json.loads(get("/api/rows/people?date=2026-10-31"))["people"]
+        assert [p["id"] for p in ppl] == [person["id"]]
+        for kind in ("thumb", "loop", "frame"):
+            assert get(f"/rows/{kind}/2026-10-31/{piece}/32400")[:2] == b"\xff\xd8", kind
+        items = [{"piece": piece, "t": 32400}, {"piece": piece, "t": 32405}]
+        assert post("/api/rows/label", {"date": "2026-10-31", "items": items, "label": "folding", "by": ""}) == 400  # who is labelling?
+        assert post("/api/rows/label", {"date": "2026-10-31", "items": items, "label": "dancing", "by": "Aniket"}) == 400
+        assert post("/api/rows/label", {"date": "2026-10-31", "items": items, "label": "folding", "by": "Aniket"}) == 200
+        assert post("/api/rows/who", {"date": "2026-10-31", "person": person["id"], "who": "Vijay Das"}) == 200
+        assert post("/api/rows/label", {"date": "2026-11-01", "items": items, "label": "folding", "by": "Aniket"}) == 404
+        bl = json.loads(get(f"/api/rows/blocks?date=2026-10-31&person={person['id']}"))["blocks"]
+        assert [(b["label"], b["by"]) for b in bl] == [("folding", "Aniket"), ("folding", "Aniket"), (None, None)]
+        tl = json.loads(get("/api/rows/timeline?date=2026-10-31"))["people"]
+        assert tl[0]["who"] == "Vijay Das" and tl[0]["spans"][0][2] == "folding"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    lines = clips.export(s, "cam-k", say=lambda m: None)
+    assert [ln["start"] for ln in lines] == ["09:00:00", "09:00:02", "09:00:04", "09:00:06", "09:00:08"], lines  # 09:00:00-09:00:10 in 2 s steps
+    first = os.path.join(root, "clips", lines[0]["path"])
+    assert lines[0]["path"] == "folding/cam-k_2026-10-31_09-00-00.0_Vijay-Das.mp4" and os.path.exists(first), lines[0]
+    cap = cv2.VideoCapture(first)
+    n, size = 0, None
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        n, size = n + 1, fr.shape[:2]
+    cap.release()
+    assert size == (256, 256) and 18 <= n <= 21, (size, n)
+    index = open(os.path.join(root, "clips", "index.csv"), encoding="utf-8").read().splitlines()
+    assert index[0].startswith("path,activity,camera,date,start") and len(index) == 6
+    db = rows.RowsDB(os.path.join(root, "rows"), "cam-k", "2026-10-31")
+    db.set_labels([(piece, 32405)], "idle", "Aniket")  # changed their mind about the second block
+    db.close()
+    lines = clips.export(s, "cam-k", say=lambda m: None)
+    assert sorted((ln["activity"], ln["start"]) for ln in lines) == [("folding", "09:00:00"), ("folding", "09:00:02"), ("idle", "09:00:05"), ("idle", "09:00:07")], lines
+    assert not os.path.exists(os.path.join(root, "clips", "folding", "cam-k_2026-10-31_09-00-04.0_Vijay-Das.mp4"))
+
+
+@test("clip cut: the boxes together, room round them, square, inside the picture")
+def _():
+    from kai import clips
+    assert clips.clip_box([], 1280, 720) is None
+    x1, y1, x2, y2 = clips.clip_box([(0.4, 0.2, 0.5, 0.8), (0.45, 0.25, 0.55, 0.85)], 1280, 720)
+    assert x2 - x1 == y2 - y1 and 0 <= x1 and x2 <= 1280 and 0 <= y1 and y2 <= 720
+    assert x1 <= 0.4 * 1280 and x2 >= 0.55 * 1280 and y1 <= 0.2 * 720
+    x1, y1, x2, y2 = clips.clip_box([(0.0, 0.0, 0.2, 1.0)], 1280, 720)  # at the edge, tall: as tall as the picture
+    assert (x1, y1, x2, y2) == (0, 0, 720, 720)
+    assert clips.starts(0, 10, 6) == [0, 6] and clips.starts(0, 1.5, 2) == []
+
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"kitchen-ai: {passed} tests passed")
