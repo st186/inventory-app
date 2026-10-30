@@ -9,7 +9,7 @@ from datetime import datetime
 import numpy as np
 import cv2
 
-ACTIVITIES = ["folding", "machine", "filling", "cooking", "packing", "cleaning", "phone", "idle", "other"]
+ACTIVITIES = ["folding", "machine", "prep", "filling", "cooking", "packing", "cleaning", "phone", "idle", "other"]
 NOT_A_PERSON = "not-a-person"  # your label for a wrong box; such boxes are left out of training
 
 SCHEMA = """
@@ -26,6 +26,7 @@ create table if not exists labels (
   ai text, ai_phone integer, owner text, owner_at text);
 create table if not exists preds (
   person_id integer primary key references people(id), model text, label text, p real);
+create table if not exists pieces (path text primary key, done_at text);
 """
 
 
@@ -69,6 +70,14 @@ class Store:
                 ids.append(pid)
             self.db.commit()
             return ids
+
+    def piece_done(self, path):
+        return self.db.execute("select 1 from pieces where path=?", (path,)).fetchone() is not None
+
+    def mark_piece(self, path):
+        with self.lock:
+            self.db.execute("insert or replace into pieces (path, done_at) values (?,?)", (path, datetime.now().isoformat(timespec="seconds")))
+            self.db.commit()
 
     def set_ai(self, person_id, label, phone):
         with self.lock:

@@ -8,6 +8,9 @@
     python ka.py train                  train on the labels, report the score on unseen hours
     python ka.py day DATE               judge a recorded day, next to Bunny's bursts (HTML report)
     python ka.py run [--minutes N]      watch the kitchen live, a line per person per minute
+    python ka.py nightly                every recorded day not done yet + Bunny's labels (+ today's report
+                                        once a model is trained); Windows runs it at 8:45 PM, log in
+                                        <root>\\kitchen-ai.log
 
 DATE is YYYY-MM-DD (yesterday if left out). Settings: camera_watch.ini ([kitchen_ai], see kai/config.py).
 """
@@ -140,6 +143,41 @@ def cmd_run(s, a):
     jobs.live(s, _looker(s, c["id"]), _current_model(s), c["id"], url, minutes=a.minutes)
 
 
+def cmd_nightly(s, a):
+    """The evening job (Task Scheduler, 8:45 PM, after the recording stops): new recordings into the
+    dataset, Bunny's burst labels onto them, and with a trained model, its guesses and today's report."""
+    import time
+    import traceback
+    from datetime import datetime
+    from kai import jobs
+    os.makedirs(s.root, exist_ok=True)
+    log_path = os.path.join(s.root, "kitchen-ai.log")
+
+    def say(msg):
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {msg}\n")
+
+    t0 = time.time()
+    try:
+        cam = s.camera(a.camera)["id"]
+        store, looker = _store(s), _looker(s, cam)
+        rec = os.path.join(s.recordings, cam)
+        for d in sorted(os.listdir(rec)) if os.path.isdir(rec) else []:
+            jobs.harvest(s, store, looker, cam, d, say=say)
+        jobs.prelabel(s, store, looker, cam, None, say=say)
+        if os.path.exists(os.path.join(s.trained, "current.json")):
+            model = _current_model(s)
+            jobs.predict_all(store, model, say=say)
+            today = Date.today().isoformat()
+            if os.path.isdir(os.path.join(rec, today)):
+                jobs.day(s, looker, model, cam, today, say=say)
+        st = store.stats()
+        say(f"nightly done in {time.time() - t0:.0f} s: {st['people']} people in the dataset, labels yours {st['yours']} / Bunny's {st['bunny']}")
+    except BaseException:  # noqa: BLE001 - the log is the only place anyone will see it
+        say("nightly failed:\n" + traceback.format_exc())
+        raise
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Bunny Momos kitchen model")
     p.add_argument("--camera", help="camera id (the first in camera_watch.ini if left out)")
@@ -158,10 +196,11 @@ def main(argv=None):
     sub.add_parser("train")
     x = sub.add_parser("run")
     x.add_argument("--minutes", type=float)
+    sub.add_parser("nightly")
     a = p.parse_args(argv)
     s = config.load(root=a.root)
     {"status": cmd_status, "setup": cmd_setup, "harvest": cmd_harvest, "prelabel": cmd_prelabel, "label": cmd_label,
-     "train": cmd_train, "day": cmd_day, "run": cmd_run}[a.cmd](s, a)
+     "train": cmd_train, "day": cmd_day, "run": cmd_run, "nightly": cmd_nightly}[a.cmd](s, a)
 
 
 if __name__ == "__main__":

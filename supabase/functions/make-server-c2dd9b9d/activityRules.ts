@@ -9,13 +9,13 @@
 // Kept apart from cctv.ts so it can be tested with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/activityRules.test.ts
 
-export const ACTIVITIES = ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] as const;
+export const ACTIVITIES = ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] as const;
 export type Activity = typeof ACTIVITIES[number];
 export const TOPS = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'] as const;
 export type Top = typeof TOPS[number];
 
 export const ACTIVITY_LABEL: Record<Activity, string> = {
-  folding: 'Folding momos', machine: 'At the machine / dough', filling: 'Making filling', cooking: 'Steaming / frying',
+  folding: 'Folding momos', machine: 'At the machine / dough', prep: 'Cutting veg (prep)', filling: 'Making filling', cooking: 'Steaming / frying',
   packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other',
 };
 

@@ -1435,7 +1435,7 @@ const hygieneSchema = {
 // A camera still (cctv.ts): who is in view and, for each person, whether the kitchen PPE is on.
 // "unclear" whenever the item can't be seen (turned away, out of frame, too small) - only a clear
 // "no" raises an alert.
-const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people. Also, for each person: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet), what they are doing right now (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking), and whether a phone is in their hand or at their ear.';
+const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people. Also, for each person: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet), what they are doing right now (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; prep = cutting, chopping or peeling vegetables (onion, cabbage, coriander, garlic); filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking), and whether a phone is in their hand or at their ear.';
 const yesNo = { type: 'string', enum: ['yes', 'no', 'unclear'] };
 const cameraSchema = {
   type: 'object',
@@ -1448,7 +1448,7 @@ const cameraSchema = {
         properties: {
           where: { type: 'string', description: 'Where in the frame, a few words' }, cap: yesNo, gloves: yesNo, apron: yesNo,
           top: { type: 'string', enum: ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'] },
-          activity: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] },
+          activity: { type: 'string', enum: ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] },
           phone: { type: 'string', enum: ['in_hand', 'at_ear', 'none', 'unclear'] },
         },
         required: ['where', 'cap', 'gloves', 'apron', 'top', 'activity', 'phone'],
@@ -1526,7 +1526,7 @@ export async function aiProductionCoach(kv: Kv, o: { stage: string; lang: string
 const BURST_SYSTEM = `You watch a short burst of CCTV frames from a momo kitchen in India: the same camera, frames in order, a fixed number of seconds apart.
 - List each distinct person seen in any frame once, following them from frame to frame by their clothes and where they are. Not people in posters, screens or reflections.
 - top: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet).
-- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking; away = not in this frame).
+- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; prep = cutting, chopping or peeling vegetables (onion, cabbage, coriander, garlic); filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking; away = not in this frame).
 - phoneFrames: the frame numbers (1 = first) where a phone is in their hand or at their ear.
 - cap (head covering: cap, hairnet or bandana), gloves (on both visible hands), apron: judged across the frames. "no" only when the item is clearly missing in most frames where the person is clearly visible; "yes" when clearly worn; otherwise "unclear".
 - bestFrame: the frame number where this person is seen most clearly.
@@ -1544,7 +1544,7 @@ const burstSchema = {
           where: { type: 'string', description: 'Where they mostly are in the frame, a few words' },
           top: cameraSchema.properties.people.items.properties.top,
           cap: yesNo, gloves: yesNo, apron: yesNo,
-          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
+          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
           phoneFrames: { type: 'array', items: { type: 'integer' } },
           bestFrame: { type: 'integer' },
         },

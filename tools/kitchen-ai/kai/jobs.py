@@ -31,6 +31,8 @@ def harvest(s, store, looker, cam, date, say=print):
     """Every step_sec seconds of a recorded day into the dataset (frames already there are skipped)."""
     found = done = 0
     for piece in video.pieces(s.recordings, cam, date):
+        if store.piece_done(piece.path):
+            continue
         t0 = time.time()
         for ts, frame, later in video.sample(piece, s.step_sec):
             if store.has_frame(cam, _key(ts), "rec"):
@@ -39,6 +41,7 @@ def harvest(s, store, looker, cam, date, say=print):
             store.add_frame(cam, _key(ts), "rec", frame, people)
             found += len(people)
             done += 1
+        store.mark_piece(piece.path)
         say(f"  {os.path.basename(piece.path)}: done in {time.time() - t0:.0f} s")
     say(f"{date}: {done} frames looked at, {found} people found")
     return done, found

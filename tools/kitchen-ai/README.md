@@ -1,7 +1,7 @@
 # Kitchen model (runs on the kitchen PC, not in the app)
 
-Learns what each person in the production kitchen is doing (folding, machine, filling, cooking,
-packing, cleaning, phone, idle, other) from our own recordings, and runs on this PC. Video, crops
+Learns what each person in the production kitchen is doing (folding, machine, prep = cutting veg,
+filling, cooking, packing, cleaning, phone, idle, other) from our own recordings, and runs on this PC. Video, crops
 and labels never leave the PC; only the numbers are meant to reach the Bunny server, the same way
 the camera watcher's are. Nothing here is built into the app or the website.
 
@@ -39,7 +39,7 @@ The two ready-made models run with onnxruntime on the CPU (fast enough); the RTX
 python ka.py setup --yes        # once: download the two models (~125 MB)
 python ka.py harvest 2026-10-31 # a recorded day into the dataset (a frame every 10 s)
 python ka.py prelabel           # Bunny's burst labels onto the people found
-Kitchen labels.bat              # you: check labels, http://localhost:8765 (keys 1-9, Enter, 0, Backspace)
+Kitchen labels.bat              # you: check labels, http://localhost:8765 (keys 1-9, o, Enter, 0, Backspace)
 python ka.py train              # train, and see the score on unseen hours
 python ka.py day 2026-11-01     # a day judged, next to Bunny's bursts (opens a report)
 python ka.py run                # live, after the recording week (writes a line per person per minute)

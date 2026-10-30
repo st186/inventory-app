@@ -1,5 +1,5 @@
 """The labelling page, on this PC only: http://localhost:8765 (`ka.py label`). One person at a time, big:
-press a number for what they're doing, Enter to agree with the suggestion, 0 for a box that isn't a
+press a number for what they're doing (o = other), Enter to agree with the suggestion, 0 for a box that isn't a
 person, Backspace to go back. A few hundred checked labels are worth more than thousands of Bunny's."""
 import json
 import os
@@ -11,8 +11,12 @@ import cv2
 
 from .store import ACTIVITIES, NOT_A_PERSON
 
-KEYS = {str(i + 1): a for i, a in enumerate(ACTIVITIES)}
+KEYS = {str(i + 1): a for i, a in enumerate(ACTIVITIES[:9])}  # 1-9; o = other, 0 = not a person
+KEYS["o"] = "other"
 KEYS["0"] = NOT_A_PERSON
+# What the buttons say (the same meanings Bunny is given for its burst readings).
+SHOWN = {"folding": "folding momos", "machine": "machine / dough", "prep": "cutting veg (prep)", "filling": "making filling", "cooking": "steaming / frying",
+         "packing": "packing", "cleaning": "cleaning", "phone": "phone", "idle": "idle", "other": "other / walking", NOT_A_PERSON: "not a person"}
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Kitchen labels</title><style>
@@ -47,13 +51,13 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 <div class=row><button id=accept><kbd>Enter</kbd> agree with the suggestion</button><button id=skip><kbd>&rarr;</kbd> skip</button><button id=undo><kbd>&larr;</kbd> back</button></div>
 </div></main><div id=flash role=status aria-live=polite></div>
 <script>
-const KEYS = __KEYS__;
+const KEYS = __KEYS__, SHOWN = __SHOWN__;
 let queue = [], cur = null, seen = new Set(), history = [];
 const $ = (id) => document.getElementById(id);
 const keysEl = $('keys');
 for (const [k, a] of Object.entries(KEYS)) {
   const b = document.createElement('button'); b.dataset.label = a;
-  b.innerHTML = `<kbd>${k}</kbd> ${a === 'not-a-person' ? 'not a person' : a}`;
+  b.innerHTML = `<kbd>${k}</kbd> ${SHOWN[a] || a}`;
   b.onclick = () => label(a); keysEl.appendChild(b);
 }
 async function stats() {
@@ -104,7 +108,7 @@ stats(); show();
 
 
 def make_handler(store, lock):
-    page = PAGE.replace("__KEYS__", json.dumps(KEYS)).encode()
+    page = PAGE.replace("__KEYS__", json.dumps(KEYS)).replace("__SHOWN__", json.dumps(SHOWN)).encode()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):

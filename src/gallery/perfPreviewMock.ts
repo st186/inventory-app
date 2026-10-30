@@ -50,7 +50,7 @@ const person = (slot: string, name: string | null, minutes: Record<string, numbe
 };
 const activity = {
   from: '2026-10-30', to: '2026-10-30',
-  labels: { folding: 'Folding momos', machine: 'At the machine / dough', filling: 'Making filling', cooking: 'Steaming / frying', packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other' },
+  labels: { folding: 'Folding momos', machine: 'At the machine / dough', prep: 'Cutting veg (prep)', filling: 'Making filling', cooking: 'Steaming / frying', packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other' },
   cameras: [{
     camera: { id: 'cam-kitchen1', name: 'Kitchen camera', everyMin: 30, burst: { frames: 20, gapSec: 15 }, place: 'Main Production House' },
     people: [

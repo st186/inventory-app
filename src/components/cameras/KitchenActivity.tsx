@@ -70,7 +70,7 @@ export function WhoIsWho() {
 // Five chart colours: folding, other kitchen work, cleaning, phone, idle / other.
 const GROUPS: { key: string; label: string; acts: string[]; cls: string }[] = [
   { key: 'folding', label: 'Folding', acts: ['folding'], cls: 'bg-chart-1' },
-  { key: 'work', label: 'Other kitchen work', acts: ['machine', 'filling', 'cooking', 'packing'], cls: 'bg-chart-2' },
+  { key: 'work', label: 'Other kitchen work', acts: ['machine', 'prep', 'filling', 'cooking', 'packing'], cls: 'bg-chart-2' },
   { key: 'cleaning', label: 'Cleaning', acts: ['cleaning'], cls: 'bg-chart-4' },
   { key: 'phone', label: 'Phone', acts: ['phone'], cls: 'bg-chart-3' },
   { key: 'idle', label: 'Idle / other', acts: ['idle', 'other'], cls: 'bg-chart-5' },
