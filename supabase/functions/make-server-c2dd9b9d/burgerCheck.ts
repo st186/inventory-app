@@ -16,7 +16,7 @@
 export type BurgerKind = 'standalone' | 'mania' | 'combo';
 export type BurgerSales = Record<BurgerKind, number>;
 export type BurgerPurchase = { date: string; quantity: number; category?: string; unit?: string };
-export type BurgerAnomaly = { kind: 'sold-more' | 'bought-more' | 'odd-entry'; days: number; bought: number; sold: number; date?: string; text: string };
+export type BurgerAnomaly = { kind: 'sold-more' | 'bought-more' | 'odd-entry' | 'none-sold'; days: number; bought: number; sold: number; date?: string; text: string };
 export type BurgerCheck = {
   since: string; to: string;
   bunsPerUnit: number | null; // buns in one logged "Burger"; null until the owner says
@@ -81,7 +81,10 @@ export function isBurgerPurchase(item: { itemName?: string }): boolean {
 
 const total = (s: BurgerSales) => s.standalone + s.mania + s.combo;
 
-export function checkBurgers(o: { purchases: BurgerPurchase[]; sales: Record<string, BurgerSales>; since: string; today: string; bunsPerUnit: number | null }): BurgerCheck {
+export function checkBurgers(o: {
+  purchases: BurgerPurchase[]; sales: Record<string, BurgerSales>; since: string; today: string; bunsPerUnit: number | null;
+  posDays?: string[]; // days the POS orders are in for (enough of them to trust), for the none-sold check
+}): BurgerCheck {
   const per = o.bunsPerUnit || 1;
   const inRange = (d: string, from: string, to: string) => d >= from && d <= to;
   const boughtIn = (from: string, to: string) => o.purchases.filter((p) => inRange(p.date, from, to)).reduce((s, p) => s + p.quantity * per, 0);
@@ -127,6 +130,18 @@ export function checkBurgers(o: { purchases: BurgerPurchase[]; sales: Record<str
     const from14 = addDays(o.today, -13);
     const stale14 = sumIn(staleOn, from14), b14 = boughtIn(addDays(from14, -BUN_LIFE_DAYS), o.today);
     if (stale14 > Math.max(8, b14 * 0.3)) anomalies.push({ kind: 'bought-more', days: 14, bought: b14, sold: soldIn(from14, o.today), text: `${stale14} buns went past ${BUN_LIFE_DAYS} days without being used in the last 14 days` });
+  }
+  // No burger, meal or combo sold two days running, though the day's orders are in and burgers
+  // normally sell most days: out of buns, or switched off in Ciferon (owner, 30 Oct 2026: none sold
+  // 12-26 Oct - momos and drinks went up instead - and nobody noticed for two weeks).
+  const posDays = new Set(o.posDays || []);
+  const sellsOn = (d: string) => !!o.sales[d] && total(o.sales[d]) > 0;
+  if ([addDays(o.today, -1), o.today].every((d) => posDays.has(d) && !sellsOn(d))) {
+    const before = Array.from({ length: 14 }, (_, i) => addDays(o.today, -2 - i)).filter((d) => posDays.has(d));
+    const selling = before.filter(sellsOn).length;
+    if (before.length >= 7 && selling >= before.length * 0.7) {
+      anomalies.push({ kind: 'none-sold', days: 2, bought: 0, sold: 0, text: `No burgers, momo meals or combos sold yesterday or today, though they sold on ${selling} of the ${before.length} days before` });
+    }
   }
   // A burger entry filed under the wrong category or an odd unit (27 Oct 2026: one went under spices).
   for (const p of o.purchases.filter((x) => inRange(x.date, addDays(o.today, -30), o.today))) {

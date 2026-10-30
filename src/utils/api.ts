@@ -1942,7 +1942,7 @@ export interface UtilitiesConsumption {
 }
 
 // Burger buns bought against burgers sold (server burgerCheck.ts, owner 30 Oct 2026).
-export type BurgerAnomaly = { kind: 'sold-more' | 'bought-more' | 'odd-entry'; days: number; bought: number; sold: number; date?: string; text: string };
+export type BurgerAnomaly = { kind: 'sold-more' | 'bought-more' | 'odd-entry' | 'none-sold'; days: number; bought: number; sold: number; date?: string; text: string };
 export interface BurgerCheck {
   since: string; to: string;
   bunsPerUnit: number | null; // buns in one logged "Burger" (a packet); null until the owner says

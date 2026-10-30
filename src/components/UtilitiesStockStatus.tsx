@@ -49,9 +49,10 @@ function BurgerSection({ data, canSet, onSet }: { data: api.BurgerCheck; canSet:
         </Callout>
       )}
       {data.anomalies.map((a, i) => (
-        <Callout key={`${a.kind}-${i}`} tone={a.kind === 'sold-more' ? 'danger' : a.kind === 'bought-more' ? 'warning' : 'neutral'}
-          title={a.kind === 'sold-more' ? 'More burgers sold than buns bought' : a.kind === 'bought-more' ? 'Buns bought, not sold' : 'Check this purchase'}>
-          {a.text}.{a.kind === 'sold-more' ? ' Buns bought and not logged, or the count is off.' : a.kind === 'bought-more' ? ' Buns going stale, or burgers made and not billed.' : ''}
+        <Callout key={`${a.kind}-${i}`} tone={a.kind === 'sold-more' || a.kind === 'none-sold' ? 'danger' : a.kind === 'bought-more' ? 'warning' : 'neutral'}
+          title={a.kind === 'sold-more' ? 'More burgers sold than buns bought' : a.kind === 'bought-more' ? 'Buns going stale' : a.kind === 'none-sold' ? 'No burgers sold for 2 days' : 'Check this purchase'}>
+          {a.text}.{a.kind === 'sold-more' ? ' Buns bought and not logged, or the count is off.' : a.kind === 'bought-more' ? ' Bought too many, or burgers made and not billed.'
+            : a.kind === 'none-sold' ? ' Out of buns, or burgers and meals switched off in Ciferon? If they are being sold, they are not being billed.' : ''}
         </Callout>
       ))}
       <StatGrid>

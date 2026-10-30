@@ -65,4 +65,18 @@ test('the check: totals, packets of 2, weeks, sold-more and bought-more, odd ent
   assert.equal(fresh.left, 32);
 });
 
+test('none sold two days running, when they normally sell every day (12-26 Oct 2026)', () => {
+  const days = (from: string, to: string) => { const out: string[] = []; for (let d = from; d <= to; d = new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)) out.push(d); return out; };
+  const pos = days('2026-09-25', '2026-10-14');
+  const sales = Object.fromEntries(days('2026-09-25', '2026-10-11').map((d) => [d, { standalone: 2, mania: 0, combo: 3 }]));
+  const on = (today: string, posDays = pos) => checkBurgers({ purchases: [], sales, since: '2026-09-25', today, bunsPerUnit: null, posDays }).anomalies.map((a) => a.kind);
+  assert.deepEqual(on('2026-10-12'), []); // one day without: nothing yet
+  assert.deepEqual(on('2026-10-13'), ['none-sold']); // the second day
+  assert.match(checkBurgers({ purchases: [], sales, since: '2026-09-25', today: '2026-10-13', bunsPerUnit: null, posDays: pos }).anomalies[0].text, /sold on 14 of the 14 days before/);
+  assert.deepEqual(on('2026-10-13', pos.filter((d) => d !== '2026-10-13')), []); // today's orders not in yet: don't guess
+  // a store where burgers hardly sell: two quiet days are normal
+  const rare = Object.fromEntries([['2026-10-01', { standalone: 1, mania: 0, combo: 0 }], ['2026-10-05', { standalone: 1, mania: 0, combo: 0 }]]);
+  assert.deepEqual(checkBurgers({ purchases: [], sales: rare, since: '2026-09-25', today: '2026-10-13', bunsPerUnit: null, posDays: pos }).anomalies, []);
+});
+
 console.log(`burgerCheck: ${passed} tests passed`);

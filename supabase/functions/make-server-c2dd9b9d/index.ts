@@ -6919,7 +6919,9 @@ async function burgerCheckFor(records: any[], storeId: string | undefined, since
   const purchases = (await getAllByPrefixWithRetry('inventory:'))
     .filter((i: any) => isBurgerPurchase(i) && (!storeId || !i.storeId || i.storeId === storeId))
     .map((i: any) => ({ date: String(i.date || '').slice(0, 10), quantity: Number(i.quantity) || 0, category: i.category, unit: i.unit }));
-  return checkBurgers({ purchases, sales: salesByDay(records), since, today, bunsPerUnit: Number(settings?.bunsPerUnit) || null });
+  // Days with enough orders synced to trust a day with no burgers (21 Oct 2026 came through with one).
+  const posDays = records.filter((r: any) => (r.orders || []).length >= 15).map((r: any) => r.date);
+  return checkBurgers({ purchases, sales: salesByDay(records), since, today, bunsPerUnit: Number(settings?.bunsPerUnit) || null, posDays });
 }
 
 // PUT /burger-settings {bunsPerUnit} - how many buns one logged "Burger" (a packet) holds. Owner or
@@ -6957,8 +6959,10 @@ async function sendBurgerAlerts(): Promise<number> {
   for (const a of check.anomalies) {
     const key = `burger-alert:${a.kind}:${a.kind === 'odd-entry' ? a.date : monday}`;
     if (await kv.get(key)) continue;
-    const title = a.kind === 'sold-more' ? 'Burgers: more sold than buns bought' : a.kind === 'bought-more' ? 'Burgers: buns bought, not sold' : 'Burgers: check a bun purchase';
-    const why = a.kind === 'sold-more' ? ' Buns bought and not logged, or the count is off.' : a.kind === 'bought-more' ? ' Buns going stale, or burgers made and not billed.' : '';
+    const title = a.kind === 'sold-more' ? 'Burgers: more sold than buns bought' : a.kind === 'bought-more' ? 'Buns going stale'
+      : a.kind === 'none-sold' ? 'Burgers: none sold for 2 days' : 'Burgers: check a bun purchase';
+    const why = a.kind === 'sold-more' ? ' Buns bought and not logged, or the count is off.' : a.kind === 'bought-more' ? ' Bought too many, or burgers made and not billed.'
+      : a.kind === 'none-sold' ? ' Out of buns, or burgers and meals switched off in Ciferon? If they are being sold, they are not being billed.' : '';
     for (const p of people.values()) {
       await notifyUser(p.authUserId, 'burger_check', `🍔 ${title}`, `${a.text}.${why} Stock on hand › Boxes.`, undefined, today).catch(() => undefined);
     }
