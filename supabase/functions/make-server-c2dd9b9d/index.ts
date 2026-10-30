@@ -17,7 +17,7 @@ import { checkBurgers, isBurgerPurchase, salesByDay } from './burgerCheck.ts';
 import { homeElsewhere, homeLabel, itemHomes, settleCategory } from './itemHome.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
-import { BENGALI_TITLE, BUNDLE_MINUTES, DEFAULT_PREFS, bundles, inQuietHours, notificationCategory } from './notificationRules.ts';
+import { BENGALI_TITLE, BUNDLE_MINUTES, DAILY_BUZZ_CAP, DEFAULT_PREFS, bundles, escalates, inQuietHours, loudness, notificationCategory, oneADay, oneRowPerRecord, ownerBuzzes } from './notificationRules.ts';
 import { DEFAULT_GRACE_MIN, DEFAULT_SHIFTS, lateStartIssues, parseHHMM } from './kpiCore.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
@@ -10728,7 +10728,8 @@ app.post('/make-server-c2dd9b9d/cron/notification-escalations', async (c) => {
     for (const row of data || []) {
       const n = row.value;
       await kvWithRetry.set(row.key, { ...n, escalatedAt: new Date().toISOString() });
-      if (ownerIds.has(n.userId)) continue;
+      // Reminders that ask again by themselves aren't sent on to the owner (notificationRules.ts).
+      if (ownerIds.has(n.userId) || !escalates(n.type)) continue;
       const who = staff.find((u: any) => u.authUserId === n.userId)?.name || 'Someone';
       const time = new Date(Date.parse(n.createdAt) + IST_OFFSET_MS).toISOString().slice(11, 16);
       for (const o of owners) {
@@ -10831,42 +10832,82 @@ app.delete('/make-server-c2dd9b9d/notifications/cleanup', async (c) => {
 
 // Create notification (internal helper)
 async function createNotification(userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) {
+  return (await saveNotification(userId, type, title, message, relatedId, relatedDate))?.record || null;
+}
+
+// Midnight today in India, as an ISO time.
+function istDayStartISO(nowMs = Date.now()): string {
+  return new Date(`${new Date(nowMs + IST_OFFSET_MS).toISOString().slice(0, 10)}T00:00:00+05:30`).toISOString();
+}
+
+// Saves the inbox row and says whether it should buzz (notificationRules.ts, owner 30 Oct 2026: too
+// many notifications). null = not sent at all. A quiet kind is saved already read; a stock request
+// keeps one row per person that each step replaces; a noisy kind keeps one row a day.
+async function saveNotification(userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string): Promise<{ record: any; buzz: boolean } | null> {
+  const loud = loudness(type);
+  if (loud === 'off') return null;
   const category = notificationCategory(type);
   const now = new Date().toISOString();
+  const quiet = loud === 'quiet';
+  const unread = (n: any) => {
+    const { resolvedAt: _a, resolvedBy: _b, resolvedVerb: _c, readAt: _d, escalatedAt: _e, ...rest } = n;
+    return quiet ? { ...rest, read: true, readAt: now } : { ...rest, read: false };
+  };
   try {
-    // Another of the same kind within 30 minutes, still unread, folds into the last one
-    // ("Inventory logged +3 more") - notificationRules.ts says which kinds bundle.
-    if (bundles(type)) {
-      const since = new Date(Date.now() - BUNDLE_MINUTES * 60000).toISOString();
-      const { data } = await supabase.from('kv_store_c2dd9b9d').select('key, value')
-        .like('key', `notification:${userId}:%`).eq('value->>type', type).eq('value->>read', 'false').gte('value->>createdAt', since)
-        .order('value->>createdAt', { ascending: false }).limit(1);
+    if (relatedId && oneRowPerRecord(type)) {
+      const keys: string[] = ((await kvWithRetry.get(`notification-related:${relatedId}`)) || []).filter((k: string) => k.startsWith(`notification:${userId}:`));
+      for (const key of keys) {
+        const p = await kvWithRetry.get(key);
+        if (!p?.id || !oneRowPerRecord(String(p.type || ''))) continue;
+        const record = unread({ ...p, type, category, title, message, relatedDate: relatedDate || p.relatedDate || null, createdAt: now, steps: [p.title, ...(p.steps || [])].filter(Boolean).slice(0, 8) });
+        await kvWithRetry.set(key, record);
+        return { record, buzz: !quiet && p.type !== type };
+      }
+    }
+    // Another of the same kind today (one-a-day kinds), or within 30 minutes and still unread (the
+    // kinds that bundle), folds into the last one ("Inventory logged +3 more").
+    const daily = oneADay(type);
+    if (daily || bundles(type)) {
+      let q = supabase.from('kv_store_c2dd9b9d').select('key, value')
+        .like('key', `notification:${userId}:%`).eq('value->>type', type)
+        .gte('value->>createdAt', daily ? istDayStartISO() : new Date(Date.now() - BUNDLE_MINUTES * 60000).toISOString());
+      if (!daily) q = q.eq('value->>read', 'false');
+      const { data } = await q.order('value->>createdAt', { ascending: false }).limit(1);
       const prev = data?.[0];
       if (prev?.value?.id) {
         const p = prev.value;
         const merged = {
           ...p, title, message, category, relatedId: relatedId || p.relatedId || null, relatedDate: relatedDate || p.relatedDate || null,
-          count: (Number(p.count) || 1) + 1, items: [p.message, ...(p.items || [])].filter(Boolean).slice(0, 6), createdAt: now,
+          // The earlier one's title too when it said something else ("Workplace photos missed · Rohan").
+          count: (Number(p.count) || 1) + 1, items: [p.title && p.title !== title ? `${p.title}: ${p.message}` : p.message, ...(p.items || [])].filter(Boolean).slice(0, 6), createdAt: now,
         };
-        await kvWithRetry.set(prev.key, merged);
+        const record = daily ? unread(merged) : merged;
+        await kvWithRetry.set(prev.key, record);
         if (relatedId) await indexRelatedNotification(relatedId, prev.key);
-        return merged;
+        return { record, buzz: !daily && !quiet };
       }
     }
     const notificationId = crypto.randomUUID();
     const notification = {
       id: notificationId, userId, type, category, title, message,
-      relatedId: relatedId || null, relatedDate: relatedDate || null, read: false, createdAt: now,
+      relatedId: relatedId || null, relatedDate: relatedDate || null, read: quiet, ...(quiet ? { readAt: now } : {}), createdAt: now,
     };
     const key = `notification:${userId}:${notificationId}`;
     await kvWithRetry.set(key, notification);
     if (relatedId) await indexRelatedNotification(relatedId, key);
-    return notification;
+    return { record: notification, buzz: !quiet };
   } catch (error: any) {
     console.error(`Failed to create notification for user ${userId}:`, error);
     // Don't throw - notifications are non-critical, don't fail the main operation
     return null;
   }
+}
+
+// Buzzes a person has had today, urgent apart (DAILY_BUZZ_CAP).
+async function buzzedToday(userId: string): Promise<number> {
+  const { count } = await supabase.from('kv_store_c2dd9b9d').select('key', { count: 'exact', head: true })
+    .like('key', `notification:${userId}:%`).eq('value->>buzzed', 'true').neq('value->>category', 'urgent').gte('value->>createdAt', istDayStartISO());
+  return count || 0;
 }
 
 // Which notifications are about one record (notification-related:{relatedId}), so they can all be
@@ -11013,7 +11054,10 @@ async function notifyUser(
   // imageUrl: a photo shown inside the Android notification (a link that works for a day).
   extras?: { imageUrl?: string }
 ) {
-  const notificationResult = await createNotification(userId, type, title, message, relatedId, relatedDate);
+  const saved = await saveNotification(userId, type, title, message, relatedId, relatedDate);
+  const notificationResult = saved?.record || null;
+  // Not sent, quiet, or added to a row that already buzzed: no buzz (notificationRules.ts).
+  if (!saved?.buzz) return notificationResult;
 
   try {
     const emp = (await staffForNotifications()).find((u: any) => u.authUserId === userId) || null;
@@ -11026,7 +11070,9 @@ async function notifyUser(
     if (category !== 'urgent') {
       if (prefs.muted?.[category]) held = 'muted';
       else if (inQuietHours(prefs)) held = 'quiet';
-      else if (prefs.digest && category === 'update') held = 'digest';
+      // The owner's phone: urgent and what only the owner decides; the rest in the 9 PM summary.
+      else if (prefs.digest && (emp?.role === 'cluster_head' ? !ownerBuzzes(type) : category === 'update')) held = 'digest';
+      else if (await buzzedToday(userId) >= DAILY_BUZZ_CAP) held = 'digest';
     }
     if (held && notificationResult?.id) {
       await kvWithRetry.set(`notification:${userId}:${notificationResult.id}`, { ...notificationResult, pushHeld: held }).catch(() => undefined);
@@ -11070,6 +11116,11 @@ async function notifyUser(
         tag: type,
         data,
       });
+      // Counted for the daily cap; a row that buzzed now isn't held for the digest any more.
+      if (notificationResult?.id && (!notificationResult.buzzed || notificationResult.pushHeld)) {
+        const { pushHeld: _held, ...rest } = notificationResult;
+        await kvWithRetry.set(`notification:${userId}:${notificationResult.id}`, { ...rest, buzzed: true }).catch(() => undefined);
+      }
     }
   } catch (pushError) {
     console.log(`Push notification failed for user ${userId}:`, pushError);
@@ -15494,7 +15545,9 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
 
       const missingDates = relevantDates.filter(d => !filledDates.has(d) && !leaveDates.has(d));
 
-      if (missingDates.length === 0) {
+      // Only when yesterday is missing: the same old days used to be asked about every morning for
+      // five days, and the reminder was opened 15% of the time (owner, 30 Oct 2026).
+      if (missingDates.length === 0 || !missingDates.includes(windowDates[0])) {
         skippedComplete++;
         continue;
       }

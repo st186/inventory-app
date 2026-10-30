@@ -47,6 +47,47 @@ export function bundles(type: string): boolean {
   return cat === 'update' || type === 'expense_flag' || type === 'production_flag' || type === 'workplace_flag' || type === 'stock_request_new';
 }
 
+// How loud each kind is (owner, 30 Oct 2026: "too many notifications, people have stopped reading
+// them" - 20 to 35 buzzes a day each for the owner and the incharges, 16-50% opened). A phone buzzes
+// when its owner has to do something or something is wrong; the rest goes in the inbox without a sound.
+//   off   - not sent at all: the app shows it where it happens (Money, the request card)
+//   quiet - in the inbox, already marked read, no buzz
+//   push  - buzzes (still subject to quiet hours, the digest and the daily cap)
+export type Loudness = 'off' | 'quiet' | 'push';
+const OFF = new Set(['inventory_logged', 'sales_logged']);
+const QUIET = new Set([
+  'timesheet_approved', 'leave_approved', 'production_approved', 'cash_topup_approved', 'production_cash_store_bill',
+  'rider_picked_up', 'rider_on_the_way', 'rider_delivered', 'rider_receipt', 'complaint_read', 'equipment_check_done', 'supply_sorted',
+  // a stock request's steps on the way: only "new" (to the kitchen) and "shipped" (to the store) buzz
+  'production_request_accepted', 'production_request_in-preparation', 'production_request_prepared',
+  'production_request_partially-delivered', 'production_request_delivered',
+]);
+export function loudness(type: string): Loudness {
+  if (OFF.has(type)) return 'off';
+  if (QUIET.has(type) && !URGENT.has(type)) return 'quiet';
+  return 'push';
+}
+// One row a day per person: the first buzzes, later ones add to it quietly ("×6 today"). The camera's
+// cap/gloves/apron alerts came 10-11 times a day each to three people and 8% were opened.
+const ONE_A_DAY = new Set(['cctv_ppe', 'workplace_flag', 'production_flag', 'expense_flag', 'supply_low', 'workplace_missed', 'pos_sync_stock_failed', 'store_cover']);
+export const oneADay = (type: string) => ONE_A_DAY.has(type);
+// One row per stock request: each step replaces the last (relatedId = the request), and the same step
+// again (a second part shipped) doesn't buzz again.
+export const oneRowPerRecord = (type: string) => type.startsWith('production_request_');
+// The owner's phone buzzes for what's urgent and what only the owner decides; everything else waits
+// for the 9 PM summary (while the evening digest is on, as it is by default).
+const OWNER_BUZZ = new Set([
+  'expense_approval', 'cash_topup_request', 'loan_requested', 'discrepancy_request', 'production_cash_discrepancy_request',
+  'leave_pending', 'stock_request_missed', 'complaint_answered', 'audit_report', 'test_notification',
+]);
+export const ownerBuzzes = (type: string) => notificationCategory(type) === 'urgent' || OWNER_BUZZ.has(type);
+// Reminders that come back by themselves on a timetable aren't also sent to the owner as "Not seen
+// yet": 16 a day of those reached the owner, 12% opened.
+const NO_ESCALATE = new Set(['stock_request_reminder', 'delivery_confirmation_reminder', 'stock_count_reminder', 'shipped_delivery_check', 'escalation']);
+export const escalates = (type: string) => notificationCategory(type) === 'urgent' && !NO_ESCALATE.has(type);
+// Buzzes a person gets in a day, urgent apart; past it the rest wait for the 9 PM summary.
+export const DAILY_BUZZ_CAP = 12;
+
 // Quiet hours, as HH:MM in IST; the window may run past midnight (23:00-07:00).
 export function inQuietHours(prefs: { quietOn?: boolean; quietFrom?: string; quietTo?: string } | null, nowMs = Date.now()): boolean {
   if (!prefs?.quietOn) return false;
