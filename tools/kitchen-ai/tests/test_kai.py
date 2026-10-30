@@ -273,6 +273,9 @@ def _():
     assert jobs.harvest(s, st, lk, "cam-k", "2026-10-31", say=lambda *_: None) == (4, 4)
     assert jobs.harvest(s, st, lk, "cam-k", "2026-10-31", say=lambda *_: None) == (0, 0)
     assert st.piece_done(os.path.join(s.recordings, "cam-k", "2026-10-31", "09-00-00.mp4"))
+    assert jobs.rezone(s, st, "cam-k", say=lambda *_: None) == 4  # zones drawn after the harvest
+    assert {r["zone"] for r in st.people_rows()} == {"Folding table"}
+    assert jobs.rezone(s, st, "cam-k", say=lambda *_: None) == 0
     rows = st.people_rows()
     for r in rows:
         st.set_owner(r["id"], "folding")

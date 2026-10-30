@@ -106,25 +106,32 @@ def cmd_label(s, a):
     labelui.serve(_store(s), s.port, open_browser=not a.no_browser)
 
 
-def cmd_train(s, a):
+def _train(s, store, say=print):
+    """Train on every label so far, make it the model in use, and save its guesses for everyone."""
     from kai import jobs, learn
-    store = _store(s)
     rows = store.training_rows()
-    if len(rows) < 50:
-        raise SystemExit(f"Only {len(rows)} labelled people so far - label at least 50 (a few hundred is better).")
     model, report = learn.train(rows, store.feat, ai_weight=s.ai_weight)
     folder = os.path.join(s.trained, model.name)
     model.save(folder, report)
     with open(os.path.join(s.trained, "current.json"), "w", encoding="utf-8") as f:
         json.dump({"name": model.name}, f)
-    print(f"Trained {model.name} on {len(rows)} people ({report['labels']['yours']} yours, {report['labels']['bunny']} Bunny's).")
+    say(f"Trained {model.name} on {len(rows)} people ({report['labels']['yours']} yours, {report['labels']['bunny']} Bunny's).")
     for key, title in (("vsYours", "against your labels"), ("vsBunny", "against Bunny's")):
         r = report.get(key)
         if r:
-            print(f"  on hours it never saw, {title}: {r['accuracy']:.0%} right (macro F1 {r['macroF1']:.2f}, {r['n']} people)")
+            say(f"  on hours it never saw, {title}: {r['accuracy']:.0%} right (macro F1 {r['macroF1']:.2f}, {r['n']} people)")
             for act, v in r["perClass"].items():
-                print(f"    {act:<9} {v['n']:>5}  found {v['recall']:.0%}  right when it says so {v['precision']:.0%}")
-    jobs.predict_all(store, model)
+                say(f"    {act:<9} {v['n']:>5}  found {v['recall']:.0%}  right when it says so {v['precision']:.0%}")
+    jobs.predict_all(store, model, say=say)
+    return model
+
+
+def cmd_train(s, a):
+    store = _store(s)
+    n = len(store.training_rows())
+    if n < 50:
+        raise SystemExit(f"Only {n} labelled people so far - label at least 50 (a few hundred is better).")
+    _train(s, store)
 
 
 def cmd_day(s, a):
@@ -143,9 +150,14 @@ def cmd_run(s, a):
     jobs.live(s, _looker(s, c["id"]), _current_model(s), c["id"], url, minutes=a.minutes)
 
 
+NIGHTLY_TRAIN_FROM = 200  # labels needed before the evening job trains a model on its own
+
+
 def cmd_nightly(s, a):
     """The evening job (Task Scheduler, 8:45 PM, after the recording stops): new recordings into the
-    dataset, Bunny's burst labels onto them, and with a trained model, its guesses and today's report."""
+    dataset, Bunny's burst labels onto them, the zones worked out again (in case they were redrawn),
+    a fresh model once there are enough labels (Bunny's alone at first, yours as they come), its
+    guesses for the labelling page, and today's report next to Bunny's bursts."""
     import time
     import traceback
     from datetime import datetime
@@ -165,9 +177,14 @@ def cmd_nightly(s, a):
         for d in sorted(os.listdir(rec)) if os.path.isdir(rec) else []:
             jobs.harvest(s, store, looker, cam, d, say=say)
         jobs.prelabel(s, store, looker, cam, None, say=say)
+        jobs.rezone(s, store, cam, say=say)
+        trained = len(store.training_rows()) >= NIGHTLY_TRAIN_FROM
+        if trained:
+            _train(s, store, say=say)
         if os.path.exists(os.path.join(s.trained, "current.json")):
             model = _current_model(s)
-            jobs.predict_all(store, model, say=say)
+            if not trained:
+                jobs.predict_all(store, model, say=say)  # guesses for the people added tonight
             today = Date.today().isoformat()
             if os.path.isdir(os.path.join(rec, today)):
                 jobs.day(s, looker, model, cam, today, say=say)

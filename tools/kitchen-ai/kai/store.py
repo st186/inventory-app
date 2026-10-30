@@ -79,6 +79,12 @@ class Store:
             self.db.execute("insert or replace into pieces (path, done_at) values (?,?)", (path, datetime.now().isoformat(timespec="seconds")))
             self.db.commit()
 
+    def set_zones(self, changes):
+        """[(zone, person id)]"""
+        with self.lock:
+            self.db.executemany("update people set zone=? where id=?", changes)
+            self.db.commit()
+
     def set_ai(self, person_id, label, phone):
         with self.lock:
             self.db.execute("insert into labels (person_id, ai, ai_phone) values (?,?,?) on conflict(person_id) do update set ai=excluded.ai, ai_phone=excluded.ai_phone",

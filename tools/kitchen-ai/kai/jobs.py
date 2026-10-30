@@ -11,6 +11,7 @@ import numpy as np
 import cv2
 
 from . import bursts, learn, video
+from . import zones as zone_mod
 from .store import ACTIVITIES
 from .track import Tracker
 
@@ -83,6 +84,21 @@ def prelabel(s, store, looker, cam, date=None, say=print):
             frames += 1
     say(f"Bunny's labels: {labelled} people in {frames} burst frames")
     return labelled
+
+
+def rezone(s, store, cam, say=print):
+    """Everyone's zone worked out again from their box and the zones as drawn now, so zones can be
+    drawn or redrawn at any time."""
+    zs = zone_mod.load(s.zones, cam)
+    changes = []
+    for r in store.people_rows("f.cam = ?", (cam,)):
+        z = zone_mod.zone_of(zs, (r["x1"] + r["x2"]) / 2, r["y2"]) if zs else ""
+        if z != (r["zone"] or ""):
+            changes.append((z, r["id"]))
+    if changes:
+        store.set_zones(changes)
+        say(f"zones updated for {len(changes)} people")
+    return len(changes)
 
 
 def predict_all(store, model, say=print):
