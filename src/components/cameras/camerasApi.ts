@@ -6,7 +6,7 @@ import { regionHeaders } from '../../utils/http';
 export type PpeItem = 'cap' | 'gloves' | 'apron';
 export type Camera = {
   id: string; name: string; placeKind: 'production' | 'store'; placeId: string; place: string; checks: PpeItem[];
-  from: string; to: string; everyMin: number; active: boolean; afterHours?: boolean; keyHint: string; online: boolean; lastSeenAt?: string;
+  from: string; to: string; everyMin: number; active: boolean; afterHours?: boolean; activity?: boolean; keyHint: string; online: boolean; lastSeenAt?: string;
   week: { checks: number; alerts: number; falseAlarms: number; unmarked: number };
   lastCheck: { at: string; kind: string; peopleCount: number; alert: string | null; note: string } | null;
 };
@@ -19,10 +19,10 @@ export type PersonRow = {
   slot: string; name: string | null; minutes: Record<string, number>; seenMinutes: number; foldingMinutes: number;
   phoneMinutes: number; phoneTimes: number; idleMinutes: number; ppePercent: number | null; first: string; last: string;
 };
-export type KitchenTotals = { foldingHours: number; phoneMinutes: number; idleMinutes: number; piecesMade: number; piecesPerFoldingHour: number | null; stills: number };
+export type KitchenTotals = { foldingHours: number; phoneMinutes: number; idleMinutes: number; piecesMade: number; piecesPerFoldingHour: number | null; stills: number; bursts?: number };
 export type Activity = {
   from: string; to: string; labels: Record<string, string>;
-  cameras: { camera: { id: string; name: string; everyMin: number; place: string }; people: PersonRow[]; kitchen: KitchenTotals; perDay: (KitchenTotals & { date: string })[] }[];
+  cameras: { camera: { id: string; name: string; everyMin: number; burst?: { frames: number; gapSec: number } | null; place: string }; people: PersonRow[]; kitchen: KitchenTotals; perDay: (KitchenTotals & { date: string })[] }[];
 };
 export type WhoIs = {
   date: string; staff: string[];

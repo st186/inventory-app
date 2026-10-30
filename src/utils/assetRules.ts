@@ -10,7 +10,7 @@
 export type AssetCategory =
   | 'cooking_equipment' | 'refrigeration' | 'storage_bins' | 'utensils_pans' | 'furniture'
   | 'electrical_lighting' | 'cleaning' | 'vehicle' | 'other';
-export type AssetCondition = 'good' | 'needs_repair' | 'broken' | 'disposed';
+export type AssetCondition = 'good' | 'needs_repair' | 'broken' | 'missing' | 'disposed';
 export type AssetLocationKind = 'store' | 'production_house';
 export type ExpensePrefix = 'inventory' | 'overhead';
 
@@ -57,12 +57,33 @@ export interface Asset {
   dismissedAt?: string;
   dismissedBy?: string;
   disposedAt?: string | null;
+  // Reported missing (owner, 30 Oct 2026: "suppose there is a equipment or asset lost how can we
+  // report that"): until it is found or written off. A whole item is condition 'missing'; part of
+  // a set ("2 of 12 trays") keeps its condition with missing.count set.
+  missing?: AssetMissing | null;
+  // Written off after going missing: what, when, by whom (the whole item is then disposed, or the
+  // quantity goes down by the count).
+  writtenOff?: { at: string; by: string; note: string; count: number } | null;
+  // When it was last found in an equipment check (or a surprise auditor's spot check).
+  lastCheckedAt?: string | null;
   confirmedAt?: string;
   confirmedBy?: string;
   createdAt: string;
   createdBy?: string;
   updatedAt: string;
   updatedBy: string;
+}
+
+export interface AssetMissing {
+  reportedAt: string;
+  by: string;
+  count: number;            // how many of `quantity` are missing
+  lastSeen: string | null;  // YYYY-MM-DD
+  where: string;            // where it was kept
+  note: string;             // what happened
+  policeRef: string;        // if stolen and reported
+  source: 'report' | 'check' | 'audit';
+  prevCondition: AssetCondition; // what it goes back to when found
 }
 
 // Register entries are made from expenses dated on or after the day the register started.
@@ -86,6 +107,7 @@ export const ASSET_CONDITIONS: { key: AssetCondition; label: string; bn: string 
   { key: 'good', label: 'Good', bn: 'ভালো' },
   { key: 'needs_repair', label: 'Needs repair', bn: 'মেরামত দরকার' },
   { key: 'broken', label: 'Broken', bn: 'ভাঙা' },
+  { key: 'missing', label: 'Missing', bn: 'হারিয়ে গেছে' },
   { key: 'disposed', label: 'Disposed', bn: 'ফেলে দেওয়া' },
 ];
 export const ASSET_CONDITION_KEYS = ASSET_CONDITIONS.map((c) => c.key);
@@ -339,4 +361,69 @@ export function planReconcile(input: {
     plan.remove.push(...missingRemoves);
   }
   return plan;
+}
+
+// ---------------- Equipment check (owner, 30 Oct 2026) ----------------
+// Every 3 months each store and production house goes through its list: seen, not found or
+// broken, a count for sets, and a photo of anything over Rs 2,000 apiece. It runs with the
+// month-end momo count of January, April, July and October and can be done from the 25th of that
+// month to the 5th of the next. A surprise auditor also gets 5 of the place's items to find.
+
+export const CHECK_MONTHS = [1, 4, 7, 10];
+// The first check is January 2027 (owner, 30 Oct 2026: "start in jan" - not with October's count).
+export const CHECKS_FROM = '2027-01';
+export const CHECK_PHOTO_ABOVE = 2000;
+export const CHECK_OPENS_DAY = 25;
+export const CHECK_CLOSES_DAY = 5;
+
+const ym = (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`;
+
+/** The check ('YYYY-MM' of its month) a date can be done for, or null outside the window. */
+export function checkPeriodOf(date: string): string | null {
+  const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7)), d = Number(date.slice(8, 10));
+  const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y;
+  const p = CHECK_MONTHS.includes(m) && d >= CHECK_OPENS_DAY ? ym(y, m) : CHECK_MONTHS.includes(pm) && d <= CHECK_CLOSES_DAY ? ym(py, pm) : null;
+  return p && p >= CHECKS_FROM ? p : null;
+}
+
+/** The check that is open on a date, or the next one ('YYYY-MM'). */
+export function nextCheckPeriod(date: string): string {
+  const open = checkPeriodOf(date);
+  if (open) return open;
+  if (date.slice(0, 7) < CHECKS_FROM) return CHECKS_FROM;
+  let y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7));
+  for (let i = 0; i < 13; i++) {
+    if (CHECK_MONTHS.includes(m) && (i > 0 || Number(date.slice(8, 10)) < CHECK_OPENS_DAY)) return ym(y, m);
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return ym(y, m);
+}
+
+/** What one piece cost (the total over the quantity when only that is known). */
+export const pieceCost = (a: Pick<Asset, 'unitCost' | 'totalCost' | 'quantity'>): number | null =>
+  a.unitCost ?? (a.totalCost != null && a.quantity ? a.totalCost / a.quantity : null);
+
+/** A photo is part of the check for anything over Rs 2,000 apiece. */
+export const checkNeedsPhoto = (a: Pick<Asset, 'unitCost' | 'totalCost' | 'quantity'>) => (pieceCost(a) ?? 0) > CHECK_PHOTO_ABOVE;
+
+/** What a check covers: everything at the place that is still there, confirmed in the register. */
+export const checkable = (a: Asset) => !a.dismissed && a.condition !== 'disposed' && !a.needsReview;
+
+/**
+ * The surprise auditor's items: n of the place's items, chosen from the audit id (the same audit
+ * always gets the same ones), with up to two of the costly ones first when there are any.
+ */
+export function pickSpotCheck<T extends Asset>(assets: T[], seed: string, n = 5): T[] {
+  let h = 2166136261;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const rand = () => {
+    h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  const pool = assets.filter((a) => checkable(a) && a.condition !== 'missing').sort((a, b) => a.id.localeCompare(b.id));
+  const shuffled = pool.map((a) => ({ a, r: rand() })).sort((x, y) => x.r - y.r).map((x) => x.a);
+  const costly = shuffled.filter(checkNeedsPhoto).slice(0, 2);
+  return [...costly, ...shuffled.filter((a) => !costly.includes(a))].slice(0, n);
 }

@@ -47,6 +47,8 @@ const SAUCES: Record<string, string> = {
   hotGarlicSauce: 'Hot garlic sauce', spicyKoreanSauce: 'Spicy Korean sauce', chilliChickenSauce: 'Chilli chicken sauce',
   tandooriSauce: 'Tandoori sauce', soupPremix: 'Soup premix',
 };
+// Sauces and chutneys are made in litres, soup premix in kg (owner, 29 Oct 2026).
+const SAUCE_UNIT = (key: string) => (key === 'soupPremix' ? 'kg' : 'L');
 const HISTORY_DAYS = 60;
 const AI_DAYS = 14;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
@@ -156,15 +158,16 @@ export async function reviewProduction(deps: ProductionReviewDeps, key: string, 
     }
     if (perKg.length) findings.push({ kind: 'perKg', title: 'Pieces and stuffing don\'t match', message: perKg.join('. ') + '.' });
 
-    // Sauce weights: a slip of the decimal point.
+    // Sauce amounts: a slip of the decimal point. Sauces and chutneys are litres, soup premix kg.
     const sauceSlips: string[] = [];
     for (const [s, label] of Object.entries(SAUCES)) {
       const v = Number(item?.sauces?.[s]) || 0;
       if (v <= 0) continue;
+      const unit = SAUCE_UNIT(s);
       const usual = median(past.map((r: any) => Number(r?.sauces?.[s]) || 0).filter((x: number) => x > 0));
-      if (v > 30 || (usual >= 0.5 && v >= usual * 8)) sauceSlips.push(`${label} ${n1(v)} kg${usual > 0 ? ` (usually about ${n1(usual)} kg)` : ''}`);
+      if (v > 30 || (usual >= 0.5 && v >= usual * 8)) sauceSlips.push(`${label} ${n1(v)} ${unit}${usual > 0 ? ` (usually about ${n1(usual)} ${unit})` : ''}`);
     }
-    if (sauceSlips.length) findings.push({ kind: 'sauce', title: 'Sauce weight looks wrong', message: `${sauceSlips.join('; ')}. Check the decimal point - weights are in kg.` });
+    if (sauceSlips.length) findings.push({ kind: 'sauce', title: 'Sauce amount looks wrong', message: `${sauceSlips.join('; ')}. Check the decimal point - sauces and chutneys are in litres, soup premix in kg.` });
 
     // Written off (the wastage notes) against what was prepared that day. The entry's own wastage
     // fields copy the ledger's day figure, which is everything used, not what was thrown away.
@@ -193,12 +196,12 @@ export async function reviewProduction(deps: ProductionReviewDeps, key: string, 
             date: String(r.date).slice(0, 10),
             pieces: Object.fromEntries(Object.entries(piecesOf(r)).filter(([, v]) => v > 0).map(([t, v]) => [TYPES[t], v])),
             stuffingKg: Object.fromEntries(Object.keys(TYPES).map((t) => [TYPES[t], Math.round(stuffingFor(r, t) * 10) / 10]).filter(([, v]) => (v as number) > 0)),
-            saucesKg: Object.fromEntries(Object.entries(r.sauces || {}).filter(([, v]) => Number(v) > 0).map(([s, v]) => [SAUCES[s] || s, v])),
+            sauces: Object.fromEntries(Object.entries(r.sauces || {}).filter(([, v]) => Number(v) > 0).map(([s, v]) => [`${SAUCES[s] || s} (${SAUCE_UNIT(s)})`, v])),
           });
           const { data } = await askClaudeForJson(deps.kv as any, {
             purpose: 'production-review',
             user: { id: 'production-review', isOwner: true },
-            system: 'You check the daily production entry of a small momo kitchen in West Bengal, India, against its last two weeks. Pieces are finished momos by type; stuffing is kg prepared that day (it can carry over a day); sauces are kg. Report only clear anomalies in the numbers that the rule checks already listed do not cover - for example a type made in a very different amount from its pattern, kurkure pieces with no batter or coating, a sauce made far more often or in far bigger amounts than usual, or numbers that look made up or copied. Quote the numbers in each finding. Plain short English, no names. Return an empty list when nothing is clearly wrong; at most two findings.',
+            system: 'You check the daily production entry of a small momo kitchen in West Bengal, India, against its last two weeks. Pieces are finished momos by type; stuffing is kg prepared that day (it can carry over a day); sauces and chutneys are litres, soup premix is kg. Report only clear anomalies in the numbers that the rule checks already listed do not cover - for example a type made in a very different amount from its pattern, kurkure pieces with no batter or coating, a sauce made far more often or in far bigger amounts than usual, or numbers that look made up or copied. Quote the numbers in each finding. Plain short English, no names. Return an empty list when nothing is clearly wrong; at most two findings.',
             prompt: JSON.stringify({ today: row(item), lastTwoWeeks: recent.map(row), alreadyFlagged: findings.map((f) => f.title) }),
             schema: {
               type: 'object', additionalProperties: false, required: ['findings'],
@@ -294,7 +297,9 @@ async function tellPeople(deps: ProductionReviewDeps, item: any, house: string, 
     || (p.designation === 'production_incharge' && (p.storeId === house || (p.assignedProductionHouseIds || []).includes(house)))
   )).forEach((p: any) => to.set(p.authUserId, p));
   const title = flags.length === 1 ? flags[0].title : 'Check a production entry';
-  const message = `Production for ${dayLabel(item.date)}: ${flags.map((f) => f.title.toLowerCase()).join(', ')}.`;
+  const message = flags.length === 1
+    ? `Production for ${dayLabel(item.date)}: ${flags[0].message}`.slice(0, 600)
+    : `Production for ${dayLabel(item.date)}: ${flags.map((f) => f.title.toLowerCase()).join(', ')}.`;
   for (const authUserId of to.keys()) {
     await deps.notifyUser(authUserId, 'production_flag', title, message, item.id, item.date).catch(() => undefined);
   }

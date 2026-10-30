@@ -127,16 +127,16 @@ export function buildOutput(productionData: any[], matches: (p: any) => boolean,
   return { currentDates, outputSeries, previousOutputSeries, outputChartData, periodMix, hasAnyOutput };
 }
 
-// ---- Sauces and chutneys (litres a day) ---------------------------------------------------------
+// ---- Sauces and chutneys (litres a day; soup premix in kg, kept out of the litres) ---------------
 export const SAUCE_TYPES = [
-  { key: 'panfriedSauce', label: 'Panfried Sauce' },
-  { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce' },
-  { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce' },
-  { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce' },
-  { key: 'tandooriSauce', label: 'Tandoori Sauce' },
-  { key: 'soupPremix', label: 'Soup Premix' },
-  { key: 'greenMayoChutney', label: 'Green Mayo Chutney' },
-  { key: 'spicyRedChutney', label: 'Spicy Red Chutney' },
+  { key: 'panfriedSauce', label: 'Panfried Sauce', unit: 'L' },
+  { key: 'chilliChickenSauce', label: 'Chilli Chicken Sauce', unit: 'L' },
+  { key: 'spicyKoreanSauce', label: 'Spicy Korean Sauce', unit: 'L' },
+  { key: 'hotGarlicSauce', label: 'Hot Garlic Sauce', unit: 'L' },
+  { key: 'tandooriSauce', label: 'Tandoori Sauce', unit: 'L' },
+  { key: 'soupPremix', label: 'Soup Premix', unit: 'kg' },
+  { key: 'greenMayoChutney', label: 'Green Mayo Chutney', unit: 'L' },
+  { key: 'spicyRedChutney', label: 'Spicy Red Chutney', unit: 'L' },
 ] as const;
 
 export function buildSauces(productionData: any[], matches: (p: any) => boolean, range: Range, previousRange: Range, zipPrev: ZipPrev, pctChange: (c: number, p: number) => number | null) {
@@ -145,9 +145,9 @@ export function buildSauces(productionData: any[], matches: (p: any) => boolean,
     const row: any = { date, label: formatDateIST(date) };
     let total = 0;
     SAUCE_TYPES.forEach((s) => {
-      const litres = dayRecords.reduce((sum, p) => sum + (p.sauces?.[s.key] || 0), 0);
-      row[s.key] = Math.round(litres * 100) / 100;
-      total += litres;
+      const amount = dayRecords.reduce((sum, p) => sum + (p.sauces?.[s.key] || 0), 0);
+      row[s.key] = Math.round(amount * 100) / 100;
+      if (s.unit === 'L') total += amount;
     });
     row.totalSauce = Math.round(total * 100) / 100;
     return row;
@@ -162,6 +162,7 @@ export function buildSauces(productionData: any[], matches: (p: any) => boolean,
   const periodTotals = SAUCE_TYPES.map((s) => ({
     key: s.key,
     name: s.label,
+    unit: s.unit as string,
     value: Math.round(sauceSeries.reduce((sum, r) => sum + (r[s.key] || 0), 0) * 100) / 100,
   }));
   const previousPeriodTotals = SAUCE_TYPES.map((s) => ({
@@ -175,8 +176,9 @@ export function buildSauces(productionData: any[], matches: (p: any) => boolean,
       const prevValue = previousPeriodTotals.find((p) => p.key === t.key)?.value || 0;
       return { ...t, prevValue, change: pctChange(t.value, prevValue) };
     });
-  const totalLitres = Math.round(periodTotals.reduce((s, t) => s + t.value, 0) * 100) / 100;
-  return { currentDates, sauceChartData, rows, hasAnySauce, totalLitres };
+  const totalLitres = Math.round(periodTotals.filter((t) => t.unit === 'L').reduce((s, t) => s + t.value, 0) * 100) / 100;
+  const premixKg = periodTotals.find((t) => t.key === 'soupPremix')?.value || 0;
+  return { currentDates, sauceChartData, rows, hasAnySauce, totalLitres, premixKg };
 }
 
 // ---- Day of the week ------------------------------------------------------------------------------

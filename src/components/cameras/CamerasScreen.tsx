@@ -188,7 +188,8 @@ function CameraSheet({ camera, onClose, onSaved }: { camera: api.Camera | null; 
           <Field label="Working hours from"><Input type="time" value={d.from} onChange={(e) => setD({ ...d, from: e.target.value })} /></Field>
           <Field label="to"><Input type="time" value={d.to} onChange={(e) => setD({ ...d, to: e.target.value })} /></Field>
         </div>
-        <Field label="Check every (minutes)">
+        <Field label={camera?.activity ? 'Wait between bursts (minutes)' : 'Check every (minutes)'}
+          helper={camera?.activity ? 'Kitchen activity camera: each check is a burst of 20 frames, 15 seconds apart (5 minutes), then it waits this long.' : undefined}>
           <Input type="number" inputMode="numeric" min={5} max={240} value={String(d.everyMin)} onChange={(e) => setD({ ...d, everyMin: Number(e.target.value) || 30 })} />
         </Field>
         <label className="flex min-h-11 items-start gap-3 text-body-md text-text">

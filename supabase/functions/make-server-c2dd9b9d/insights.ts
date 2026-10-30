@@ -1201,6 +1201,119 @@ ${JSON.stringify({
     } catch (err) { return fail(c, err); }
   });
 
+  // ---- Growing the business (owner, 30 Oct 2026: menu engineering + combos, the apps' own
+  // reports, weather) ----
+
+  // POST /ai/menu-ideas {storeId, lang, facts} - Bunny's menu, price and combo ideas from the
+  // menu numbers the Items tab works out (menuMath.ts). Same numbers, same ideas: kept for a day.
+  app.post(`${P}/ai/menu-ideas`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const lang = ['bn', 'hi'].includes(body.lang) ? body.lang : 'en';
+      const facts = JSON.stringify(body.facts || {}).slice(0, 6000);
+      const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${lang}|${facts}`)))).slice(0, 10).map((b) => b.toString(16).padStart(2, '0')).join('');
+      const key = `menu-ideas:${String(body.storeId || 'all').slice(0, 60)}:${hash}`;
+      const cached = await deps.kv.get<any>(key);
+      if (cached?.ideas) return c.json({ ideas: cached.ideas, cached: true });
+      const schema = {
+        type: 'object', additionalProperties: false, required: ['ideas'],
+        properties: { ideas: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['kind', 'title', 'why', 'action'], properties: {
+          kind: { type: 'string', enum: ['combo', 'price', 'promote', 'drop', 'upsell', 'other'] },
+          title: { type: 'string' }, why: { type: 'string' }, action: { type: 'string' },
+        } } } },
+      };
+      const res = await callClaude(deps, {
+        purpose: 'menu-ideas', user: aiUser(g.actor!), effort: 'low', noThinking: /haiku/.test(AI_MODEL), maxTokens: 1500,
+        format: { type: 'json_schema', schema },
+        system: `You advise the owner of Bunny Momos, a small momo shop in Burdwan, West Bengal (counter plus Zomato and Swiggy). You get the menu numbers for a period: dishes with plates sold, sales, share through the apps and change against the period before; preparation styles; the long tail of dishes that hardly sell; how often orders include a drink or soup; which kinds are bought together and how much more often than chance (lift). Give 3 to 5 ideas that would raise sales or profit, each tied to the numbers: combos to make (with a sensible price), dishes to push or to take off the menu (a shorter menu means less waste and faster cooking), upsells at the counter, price tests. Food cost per plate is not known yet, so never claim a margin. Quote the numbers you use. Plain, short sentences. Write in ${lang === 'bn' ? 'simple Bengali' : lang === 'hi' ? 'simple Hindi' : 'plain English'}; dish names may stay in English.`,
+        messages: [{ role: 'user', content: `Menu numbers:\n${facts}` }],
+      });
+      let parsed: any = null;
+      try { parsed = JSON.parse(textOf(res)); } catch { /* handled below */ }
+      const ideas = (Array.isArray(parsed?.ideas) ? parsed.ideas : []).slice(0, 5).map((x: any) => ({
+        kind: String(x?.kind || 'other').slice(0, 10), title: String(x?.title || '').slice(0, 120), why: String(x?.why || '').slice(0, 400), action: String(x?.action || '').slice(0, 300),
+      })).filter((x: any) => x.title);
+      if (!ideas.length) throw new AiError('Bunny had no menu ideas this time - try again.', 502);
+      await deps.kv.set(key, { ideas, at: new Date().toISOString() });
+      return c.json({ ideas });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // POST /ai/app-report {storeId, dataUrl} - Bunny reads a screenshot of the Zomato or Swiggy
+  // partner app's report (rating, orders, menu-to-order conversion, kitchen prep time, rejected
+  // and delayed orders, complaints) and keeps it per store, app and period; GET /app-reports lists
+  // them for the Revenue tab. The apps share none of this any other way.
+  app.post(`${P}/ai/app-report`, async (c: any) => {
+    const g = await guard(c, 'manage'); if (g.error) return g.error;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const m = typeof body.dataUrl === 'string' ? body.dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/) : null;
+      if (!m) return c.json({ error: 'Send the screenshot as a JPEG, PNG or WebP image' }, 400);
+      if (m[2].length > 5_000_000) return c.json({ error: 'The screenshot is too large' }, 400);
+      const num = { type: 'number', description: '-1 if not shown' };
+      const schema = {
+        type: 'object', additionalProperties: false,
+        required: ['readable', 'platform', 'periodStart', 'periodEnd', 'rating', 'ratingCount', 'orders', 'sales', 'menuOpens', 'menuToOrderPct', 'impressions', 'prepMinutes', 'rejectedOrders', 'delayedOrdersPct', 'complaints', 'adSpend', 'note'],
+        properties: {
+          readable: { type: 'boolean', description: 'false if this is not a Zomato or Swiggy partner report' },
+          platform: { type: 'string', enum: ['zomato', 'swiggy', 'unknown'] },
+          periodStart: { type: 'string', description: 'YYYY-MM-DD, "" if not shown' }, periodEnd: { type: 'string', description: 'YYYY-MM-DD, "" if not shown' },
+          rating: num, ratingCount: num, orders: num, sales: num, menuOpens: num,
+          menuToOrderPct: { type: 'number', description: 'menu opens to orders, %; -1 if not shown' },
+          impressions: num, prepMinutes: { type: 'number', description: 'average kitchen preparation time in minutes; -1 if not shown' },
+          rejectedOrders: num, delayedOrdersPct: num, complaints: num, adSpend: num,
+          note: { type: 'string', description: 'anything else on the screen worth the owner knowing, one sentence' },
+        },
+      };
+      const res = await callClaude(deps, {
+        purpose: 'app-report', user: aiUser(g.actor!), effort: 'low', maxTokens: 1200,
+        format: { type: 'json_schema', schema },
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
+          { type: 'text', text: `This is a screenshot from the Zomato or Swiggy restaurant partner app of a momo shop. Read the report numbers exactly as shown (rupees and counts as plain numbers, ratings to one decimal). Use -1 for anything not on the screen - never guess. Today is ${deps.getTodayIST()}.` },
+        ] }],
+      });
+      let r: any = null;
+      try { r = JSON.parse(textOf(res)); } catch { /* handled below */ }
+      if (!r || !r.readable || r.platform === 'unknown') return c.json({ error: 'That does not look like a Zomato or Swiggy report - take a screenshot of the report screen' }, 400);
+      const storeId = String(body.storeId || '').slice(0, 60) || 'all';
+      const end = /^\d{4}-\d{2}-\d{2}$/.test(r.periodEnd) ? r.periodEnd : deps.getTodayIST();
+      const report = { ...r, storeId, periodEnd: end, savedAt: new Date().toISOString(), savedBy: g.actor!.name };
+      await deps.kv.set(`app-report:${storeId}:${r.platform}:${end}`, report);
+      return c.json({ report });
+    } catch (err) { return fail(c, err); }
+  });
+  app.get(`${P}/app-reports`, async (c: any) => {
+    const g = await guard(c, 'view'); if (g.error) return g.error;
+    try {
+      const storeId = c.req.query('storeId') || '';
+      const rows = (await allRows(deps, 'app-report:')).filter((r: any) => r?.platform && (!storeId || r.storeId === storeId || r.storeId === 'all'));
+      rows.sort((a: any, b: any) => String(b.periodEnd).localeCompare(String(a.periodEnd)));
+      return c.json({ reports: rows.slice(0, 40) });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // GET /insights/weather - daily rain and temperature for Burdwan: the last 92 days and the next
+  // 7 (Open-Meteo, free, no key), kept 3 hours.
+  app.get(`${P}/insights/weather`, async (c: any) => {
+    const g = await guard(c, 'view'); if (g.error) return g.error;
+    try {
+      const cached = await deps.kv.get<any>('weather-cache');
+      if (cached?.at && Date.now() - Date.parse(cached.at) < 3 * 3600000) return c.json({ days: cached.days, cached: true });
+      const url = 'https://api.open-meteo.com/v1/forecast?latitude=23.2324&longitude=87.8615&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max&past_days=92&forecast_days=8&timezone=Asia%2FKolkata';
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`weather ${res.status}`);
+      const j: any = await res.json();
+      const d = j?.daily || {};
+      const days = (d.time || []).map((date: string, i: number) => ({
+        date, rainMm: Number(d.precipitation_sum?.[i] ?? 0), rainChance: d.precipitation_probability_max?.[i] ?? null, maxC: d.temperature_2m_max?.[i] ?? null,
+      }));
+      await deps.kv.set('weather-cache', { at: new Date().toISOString(), days });
+      return c.json({ days });
+    } catch (err) { return fail(c, err); }
+  });
+
   // "Ask Bunny": a question answered from the app's data. Claude can only read, never change.
   // Ask Bunny - the chat behind the floating Bunny button on every screen. Answers in the person's
   // chosen language, about the screen they're looking at (its visible text comes with the
@@ -1379,6 +1492,119 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
     top: String(p?.top || 'other').slice(0, 20), activity: String(p?.activity || 'other').slice(0, 20), phone: String(p?.phone || 'unclear').slice(0, 20),
   }));
   return { peopleCount: Math.max(people.length, Math.min(30, Math.round(parsed.peopleCount))), people, note: String(parsed.note || '').slice(0, 200) };
+}
+
+// Bunny's word for the production incharge (index.ts coach route, owner 29 Oct 2026: "revamp it
+// for easy understanding with AI integration for proper handholding of the production incharge").
+// The screen works the numbers out; this only puts them in plain words, in the reader's language.
+const COACH_SYSTEM = `You are Bunny, the helper inside Bunny Momos' kitchen app. You talk to the production incharge of a small momo kitchen in West Bengal (or to the owner, for a summary). You get the day's kitchen stock as JSON: for each item (dough, batter, each stuffing) what was weighed in the morning, what was made, how many momos it is worth, today's plan, what should be left and what was counted at night.
+- Use ONLY the numbers given. Never invent a number. Round to one decimal.
+- Write 2 to 5 short lines, each a plain sentence a busy cook understands at a glance. No greetings, no lists of every item - only what matters today.
+- morning: say what is already in the kitchen and covers today's plan (so it must not be made), and how much of each item to make. If an item was last weighed days ago, say to weigh it first. Frozen stuffing (frozenThawHours) takes that many hours to thaw: say to take it out now, make freshForMorningKg fresh for the folding until then and use the thawed stuffing after; if frozenLeftAgainTonightKg is set, say that much will be left again tonight and that tonight tomorrow's share should go in the fridge to thaw so it is ready in the morning.
+- night: say which counts look wrong against what should be left, and what to check (weigh again, waste not logged, momos not entered). If everything matches, say so in one line.
+- summary: for the owner - what was started with, made, used and left, the biggest gap or overproduction, in 2-4 lines.
+- Language: write in the language asked for (bn = simple everyday Bengali in Bengali script, hi = simple Hindi in Devanagari, en = plain English). Item names may stay in English.`;
+
+export async function aiProductionCoach(kv: Kv, o: { stage: string; lang: string; facts: string }): Promise<string> {
+  const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
+  const res = await callClaude(deps, {
+    purpose: 'production-coach',
+    system: COACH_SYSTEM,
+    effort: 'low',
+    noThinking: true,
+    maxTokens: 600,
+    messages: [{ role: 'user', content: `Stage: ${o.stage}. Language: ${o.lang}.\nKitchen stock:\n${o.facts}` }],
+  });
+  const text = textOf(res).trim();
+  if (!text) throw new AiError('Bunny had nothing to say.', 502);
+  return text.slice(0, 900);
+}
+
+// A burst from a kitchen-activity camera (cctv.ts, owner 29 Oct 2026 "for better detection"):
+// 20 frames 15 seconds apart, looked at together so each person is followed through the minutes
+// and what they do is judged from the movement across frames, not one frozen moment.
+const BURST_SYSTEM = `You watch a short burst of CCTV frames from a momo kitchen in India: the same camera, frames in order, a fixed number of seconds apart.
+- List each distinct person seen in any frame once, following them from frame to frame by their clothes and where they are. Not people in posters, screens or reflections.
+- top: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet).
+- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking; away = not in this frame).
+- phoneFrames: the frame numbers (1 = first) where a phone is in their hand or at their ear.
+- cap (head covering: cap, hairnet or bandana), gloves (on both visible hands), apron: judged across the frames. "no" only when the item is clearly missing in most frames where the person is clearly visible; "yes" when clearly worn; otherwise "unclear".
+- bestFrame: the frame number where this person is seen most clearly.
+- evidenceFrame: the frame number that best shows someone without a cap, gloves or apron; if nobody is missing anything, the clearest frame.
+- peopleCount: the most people in any one frame.`;
+const burstSchema = {
+  type: 'object',
+  properties: {
+    peopleCount: { type: 'integer', description: 'The most people in any one frame' },
+    people: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          where: { type: 'string', description: 'Where they mostly are in the frame, a few words' },
+          top: cameraSchema.properties.people.items.properties.top,
+          cap: yesNo, gloves: yesNo, apron: yesNo,
+          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
+          phoneFrames: { type: 'array', items: { type: 'integer' } },
+          bestFrame: { type: 'integer' },
+        },
+        required: ['where', 'top', 'cap', 'gloves', 'apron', 'activities', 'phoneFrames', 'bestFrame'],
+        additionalProperties: false,
+      },
+    },
+    evidenceFrame: { type: 'integer' },
+    note: { type: 'string', description: 'One short sentence on what the burst shows' },
+  },
+  required: ['peopleCount', 'people', 'evidenceFrame', 'note'],
+  additionalProperties: false,
+};
+export type BurstLook = {
+  peopleCount: number;
+  people: { where: string; top: string; cap: string; gloves: string; apron: string; activities: string[]; phoneFrames: number[]; bestFrame: number }[];
+  evidenceFrame: number;
+  note: string;
+};
+
+export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string }): Promise<BurstLook> {
+  const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
+  const n = burst.frames.length;
+  const content: any[] = [];
+  burst.frames.forEach((data, i) => {
+    content.push({ type: 'text', text: `Frame ${i + 1}` });
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
+  });
+  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}. ${n} frames, ${burst.gapSec} seconds apart: give each person exactly ${n} activities.` });
+  const res = await callClaude(deps, {
+    purpose: 'camera',
+    system: BURST_SYSTEM,
+    effort: 'low',
+    noThinking: true,
+    maxTokens: 4000,
+    format: { type: 'json_schema', schema: burstSchema },
+    messages: [{ role: 'user', content }],
+  });
+  let parsed: any = null;
+  try { parsed = JSON.parse(textOf(res)); } catch { /* handled below */ }
+  if (!parsed || typeof parsed.peopleCount !== 'number') throw new AiError('The camera check returned nothing.', 502);
+  const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
+  const frameNo = (v: any, fallback: number) => (Number.isInteger(v) && v >= 1 && v <= n ? v : fallback);
+  const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => {
+    const acts = (Array.isArray(p?.activities) ? p.activities : []).slice(0, n).map((a: any) => String(a || 'away').slice(0, 20));
+    while (acts.length < n) acts.push('away');
+    const firstSeen = acts.findIndex((a: string) => a !== 'away') + 1 || 1;
+    return {
+      where: String(p?.where || '').slice(0, 60), top: String(p?.top || 'other').slice(0, 20), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
+      activities: acts,
+      phoneFrames: [...new Set((Array.isArray(p?.phoneFrames) ? p.phoneFrames : []).filter((f: any) => Number.isInteger(f) && f >= 1 && f <= n))] as number[],
+      bestFrame: frameNo(p?.bestFrame, firstSeen),
+    };
+  });
+  return {
+    peopleCount: Math.max(people.length ? 1 : 0, Math.min(30, Math.round(parsed.peopleCount))),
+    people,
+    evidenceFrame: frameNo(parsed.evidenceFrame, people[0]?.bestFrame || 1),
+    note: String(parsed.note || '').slice(0, 200),
+  };
 }
 
 export async function aiScorePhoto(

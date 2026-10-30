@@ -24,13 +24,20 @@ type Props = {
   // Staff check-ins and machines for the leftover reasons, and the reasons already saved.
   dayContext?: LedgerDayContext | null;
   savedReport?: LeftoverReport | null;
+  // Who closed the day and when ("Vijay Das, 30 Oct 1:23 am"), shown with "Day closed".
+  closedBy?: string | null;
+  // The owner looks without counting (owner, 29 Oct 2026: "what about todays leftover").
+  readOnly?: boolean;
+  // What each item should have left from the morning weigh-in, what was made and the momos entered
+  // (the guided day, kitchenDayMath.ts) - shown next to the count so a wrong one stands out.
+  expectedLeft?: Record<string, number>;
   onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport) => void | Promise<void>;
 };
 const LEFTOVER_REASON_MIN_KG = 0.5; // the server says the same (minKg)
 
 // The directly-reported leftover snapshot per pool - counted/weighed at day's end, not
 // computed from a yield formula (confirmed requirement).
-export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, onSubmit }: Props) {
+export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, closedBy, readOnly, expectedLeft = {}, onSubmit }: Props) {
   const { t, lang } = useT();
   const [leftover, setLeftover] = useState<LeftoverDraft>(emptyLeftoverDraft);
   const [closingInputs, setClosingInputs] = useState<Record<string, string>>({});
@@ -74,6 +81,13 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
 
   const handleSubmit = () => {
     if (grams) return;
+    // Every item needs its count (0 when none is left): a blank one carried into tomorrow as if
+    // none of it was used (29 Oct: dough, veg and cheese corn stuffing left blank).
+    const uncounted = relevantPoolIds.filter((id) => (closingInputs[id] ?? '').trim() === '');
+    if (uncounted.length) {
+      toast.error(t('stock.prod.countEvery', { items: uncounted.map((id) => getPoolLabel(id)).join(', ') }));
+      return;
+    }
     const problem = needsReason ? leftoverProblem(leftover, t, dayContext || null) : null;
     if (problem) {
       toast.error(problem);
@@ -99,6 +113,10 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
     }
     onSubmit(closingActuals, manualOpeningOverride, wastageOverrides, needsReason ? leftoverPayload(leftover, dayContext || null) : undefined);
   };
+
+  if (readOnly && !closed) {
+    return <p className="text-body-sm text-text-2" lang={lang}>{t('stock.prod.notCountedYet')}</p>;
+  }
 
   return (
     <section className="flex flex-col gap-3" lang={lang}>
@@ -127,6 +145,11 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
                     {t('stock.prod.preparedKg', { n: pool.prepared.toFixed(2) })} · <span className="font-semibold text-text">{t('stock.prod.startingKg', { n: startingStock.toFixed(2) })}</span>
                   </span>
                 </div>
+                {typeof expectedLeft[id] === 'number' && (
+                  <p className={`num text-label ${closingRaw !== '' && !isNaN(closingValue) && Math.abs(closingValue - expectedLeft[id]) > Math.max(0.5, expectedLeft[id] * 0.15) ? 'font-semibold text-warning' : 'text-text-2'}`}>
+                    {t('kd.shouldBeAbout', { kg: expectedLeft[id].toFixed(2) })}
+                  </p>
+                )}
                 <div className={`grid gap-3 ${isFirstEverDay && !closed ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   {isFirstEverDay && !closed && (
                     <Field label={t('stock.prod.alreadyThere')} error={looksLikeGrams(openingOverrideInputs[id]) ? t('stock.prod.looksLikeGrams') : undefined}>
@@ -134,7 +157,7 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
                     </Field>
                   )}
                   <Field label={t('stock.prod.closingCount')} error={looksLikeGrams(closingRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
-                    <Input type="text" inputMode="decimal" className="num" value={closingRaw} onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled || closed} placeholder="0.00" />
+                    <Input type="text" inputMode="decimal" className="num" value={closingRaw} onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.]/g, '') }))} disabled={disabled || closed} placeholder={closed ? t('stock.prod.notCounted') : t('stock.prod.weighIt')} />
                   </Field>
                   <Field label={t('stock.prod.wastageKg')} error={looksLikeGrams(wastageRaw) ? t('stock.prod.looksLikeGrams') : undefined}>
                     <Input type="text" inputMode="decimal" className="num" value={wastageRaw} onChange={(e) => setWastageInputs((prev) => ({ ...prev, [id]: e.target.value.replace(/[^\d.-]/g, '') }))} disabled={disabled || closed} placeholder="-" />
@@ -154,12 +177,12 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
       {needsReason && <LeftoverReasons leftoverKg={leftoverKg} ctx={dayContext || null} value={leftover} onChange={setLeftover} disabled={disabled || submitting} />}
       {closed && savedReport?.reasons?.length ? <LeftoverReportView report={savedReport} /> : null}
 
-      {!closed && relevantPoolIds.length > 0 && (
+      {!closed && !readOnly && relevantPoolIds.length > 0 && (
         <Button variant="secondary" className="self-start" leadingIcon={<Lock />} loading={submitting} disabled={disabled || grams} onClick={handleSubmit}>
           {t('stock.prod.closeDay')}
         </Button>
       )}
-      {closed && <Callout tone="success" icon={CheckCircle2} title={t('stock.prod.dayClosed')} />}
+      {closed && <Callout tone="success" icon={CheckCircle2} title={t('stock.prod.dayClosed')}>{closedBy || undefined}</Callout>}
     </section>
   );
 }

@@ -78,6 +78,26 @@ export const deleteAsset = (id: string) =>
 export const uploadAssetPhoto = (id: string, image: string) =>
   call<{ asset: AssetRow }>(`/assets/${encodeURIComponent(id)}/photo`, post({ image })).then((r) => r.asset);
 
+// Lost equipment and the 3-monthly check (owner, 30 Oct 2026; server assets.ts).
+export interface MissingReport { count?: number; lastSeen?: string; where: string; note: string; policeRef?: string }
+export const reportMissing = (id: string, r: MissingReport) =>
+  call<{ asset: AssetRow }>(`/assets/${encodeURIComponent(id)}/missing`, post(r)).then((x) => x.asset);
+export const markFound = (id: string, note?: string) =>
+  call<{ asset: AssetRow }>(`/assets/${encodeURIComponent(id)}/found`, post({ note })).then((x) => x.asset);
+export const writeOffAsset = (id: string, note: string) =>
+  call<{ asset: AssetRow }>(`/assets/${encodeURIComponent(id)}/write-off`, post({ note })).then((x) => x.asset);
+
+export type CheckStatus = 'seen' | 'not_found' | 'broken';
+export interface EquipmentCheck {
+  open: boolean; period: string; done: boolean; canCheck: boolean;
+  record: { period: string; at: string; by: string; items: number; notFound: string[]; short: string[]; broken: string[] } | null;
+  items: (AssetRow & { needsPhoto: boolean })[];
+}
+export const getEquipmentCheck = (locationKind: string, locationId: string) =>
+  call<EquipmentCheck>(`/assets/check?locationKind=${encodeURIComponent(locationKind)}&locationId=${encodeURIComponent(locationId)}`);
+export const submitEquipmentCheck = (body: { locationKind: string; locationId: string; results: Record<string, { status?: CheckStatus; counted?: number }> }) =>
+  call<{ record: EquipmentCheck['record'] }>('/assets/check', post(body));
+
 export const importPastPurchases = (fromDate: string) =>
   call<ImportResult>('/assets/import', post({ fromDate }));
 

@@ -55,7 +55,7 @@ const asset = (id: string, name: string, category: string, loc: string, qty: num
 const ASSETS = [
   asset('A1', 'Momo steamer (5 tier)', 'cooking_equipment', 'store:STORE-1', 2, 9000, { atEvents: [{ eventId: 'E1', eventName: 'Winter Fair', quantity: 1, since: daysAgo(2) }] }),
   asset('A2', 'Deep freezer 300 L', 'refrigeration', 'production_house:PH-1', 1, 28500),
-  asset('A3', 'Steel container 20 L', 'storage_bins', 'production_house:PH-1', 6, 3600),
+  asset('A3', 'Steel container 20 L', 'storage_bins', 'production_house:PH-1', 6, 3600, { missing: { reportedAt: `${today}T05:00:00Z`, by: 'Kitchen Incharge Demo', count: 2, lastSeen: daysAgo(3), where: 'Rack by the back door', note: 'Two missing after the Sunday wash', policeRef: '', source: 'report', prevCondition: 'good' } }),
   asset('A4', 'Kadai large', 'utensils_pans', 'production_house:PH-1', 3, 2400, { condition: 'needs_repair' }),
   asset('A5', 'Counter table', 'furniture', 'store:STORE-1', 1, null),
   asset('A6', 'Tube light', 'electrical_lighting', 'store:STORE-1', 4, 1200),
@@ -75,6 +75,15 @@ const ROUTES: [RegExp, (m: RegExpMatchArray, url: URL, init?: RequestInit) => un
       : { canEditAll: false, editableLocations: ['store:STORE-1'], canDelete: false, canImport: false },
     lastReconcile: { at: `${today}T03:10:00Z`, added: 1 },
   })],
+  // Lost equipment and the 3-monthly check (assets.ts, owner 30 Oct 2026).
+  [/^\/assets\/check$/, (_m, url, init) => (init?.method === 'POST'
+    ? { success: true, record: { period: '2026-10', at: `${today}T10:00:00Z`, by: 'Owner Demo', items: 4, notFound: [], short: [], broken: [] } }
+    : { open: true, period: '2026-10', done: false, canCheck: true, record: null,
+      items: ASSETS.filter((a: any) => a.locationKind === url.searchParams.get('locationKind') && a.locationId === url.searchParams.get('locationId') && !a.needsReview)
+        .map((a: any) => ({ ...a, needsPhoto: (a.unitCost ?? 0) > 2000 })) })],
+  [/^\/assets\/([^/]+)\/missing$/, (m, _url, init) => { const a: any = ASSETS.find((x) => x.id === m[1]); const r = JSON.parse(String(init?.body || '{}')); return { asset: { ...a, missing: { ...r, reportedAt: new Date().toISOString(), by: 'Owner Demo', source: 'report', prevCondition: a.condition, count: r.count || a.quantity }, condition: (r.count || a.quantity) >= a.quantity ? 'missing' : a.condition } }; }],
+  [/^\/assets\/([^/]+)\/(found|write-off)$/, (m) => ({ asset: { ...ASSETS.find((x) => x.id === m[1]), missing: null } })],
+  [/^\/assets\/([^/]+)\/photo$/, (m) => ({ asset: { ...ASSETS.find((x) => x.id === m[1]), photo: { path: 'x', uploadedAt: new Date().toISOString() } } })],
   [/^\/stores$/, () => ({ stores: STORES })],
   [/^\/production-houses$/, () => ({ productionHouses: HOUSES })],
   [/^\/employees$/, () => ({ employees: EMPLOYEES })],

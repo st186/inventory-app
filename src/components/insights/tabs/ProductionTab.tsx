@@ -264,7 +264,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
         <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
           <ChartCard
             title={t('wp8.prod.sauces')}
-            caption={`${(Math.round(sauces.totalLitres * 100) / 100).toLocaleString()} L prepared · ${period}`}
+            caption={`${(Math.round(sauces.totalLitres * 100) / 100).toLocaleString()} L of sauces and chutneys${sauces.premixKg ? `, ${sauces.premixKg.toLocaleString()} kg soup premix` : ''} · ${period}`}
             legend={legendFor([
               { key: 'totalSauce', name: 'Litres prepared', color: CHART_SERIES[1], kind: 'bar' },
               { key: 'prev', name: '', color: CHART_COLORS.previous, dashed: true },
@@ -279,7 +279,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
                 { key: 'totalSauce', name: 'Litres prepared', color: CHART_SERIES[1], kind: 'bar' },
                 { key: 'prev_totalSauce', name: t('insights.lastPeriod'), color: CHART_COLORS.previous, dashed: true },
               ]}
-              ariaLabel="Litres of sauces and chutneys prepared a day"
+              ariaLabel="Litres of sauces and chutneys prepared a day (soup premix, in kg, not included)"
             />
           </ChartCard>
           <ListGroup title="By sauce" meta={prevLabel}>
@@ -290,7 +290,7 @@ export function ProductionTab({ d }: { d: AnalyticsData }) {
                 title={s.name}
                 trailing={
                   <span className="flex items-center gap-2">
-                    <span className="num text-body-md font-semibold text-text">{s.value.toLocaleString()} L</span>
+                    <span className="num text-body-md font-semibold text-text">{s.value.toLocaleString()} {s.unit}</span>
                     {s.change !== null && (
                       <StatusChip tone={s.change >= 0 ? 'success' : 'danger'}>
                         <span className="num">{s.change >= 0 ? '+' : ''}{s.change.toFixed(0)}%</span>

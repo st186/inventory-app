@@ -135,6 +135,58 @@ export function ChartLegendChips({ items, className }: { items: LegendChip[]; cl
   );
 }
 
+/**
+ * This period against the last, one row each: a coloured bar for now and a grey one under it for
+ * the last period, on the same scale, with both numbers and the change (owner, 30 Oct 2026: a day by
+ * day stack hid the comparison).
+ */
+export function CompareBars({
+  items,
+  format = (n: number) => String(n),
+  thisLabel = "This period",
+  lastLabel = "Last period",
+  className,
+}: {
+  items: { label: React.ReactNode; now: number; last: number | null; color: string }[];
+  format?: (n: number) => string;
+  thisLabel?: string;
+  lastLabel?: string;
+  className?: string;
+}) {
+  const max = Math.max(1, ...items.flatMap((i) => [i.now, i.last ?? 0]));
+  return (
+    <div className={cn("flex flex-col gap-4", className)}>
+      {items.map((item, i) => {
+        const change = item.last ? Math.round(((item.now - item.last) / item.last) * 100) : null;
+        return (
+          <div key={i} className="flex flex-col gap-1.5">
+            <div className="flex items-baseline justify-between gap-3 text-body-sm">
+              <span className="font-medium text-text">{item.label}</span>
+              <span className="num text-text-2">
+                <span className="font-semibold text-text">{format(item.now)}</span>
+                {item.last !== null && <> · {lastLabel.toLowerCase()} {format(item.last)}</>}
+                {change !== null && change !== 0 && (
+                  <span className={cn("ml-1.5 font-semibold", change > 0 ? "text-success" : "text-danger")}>{change > 0 ? "+" : ""}{change}%</span>
+                )}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1" role="img" aria-label={`${typeof item.label === "string" ? item.label : ""} ${thisLabel} ${format(item.now)}${item.last !== null ? `, ${lastLabel} ${format(item.last)}` : ""}`}>
+              <div className="h-3 overflow-hidden rounded-full bg-surface-2">
+                <div className="h-full rounded-full" style={{ width: `${(Math.max(0, item.now) / max) * 100}%`, backgroundColor: item.color }} />
+              </div>
+              {item.last !== null && (
+                <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+                  <div className="h-full rounded-full bg-text-3/60" style={{ width: `${(Math.max(0, item.last) / max) * 100}%` }} />
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Horizontal share bars (channel mix): label, ₹ and % above a 10 px track. */
 export function ShareBars({
   items,

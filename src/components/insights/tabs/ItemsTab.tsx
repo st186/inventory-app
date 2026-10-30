@@ -13,11 +13,12 @@ import { useT } from '../../../utils/i18n';
 import { type AnalyticsData } from '../useAnalyticsData';
 import { CHART_COLORS, ChartCard, ChartEmpty, TrendChart, deltaOf, inr, legendFor, pct, shortPrevLabel, periodText, type SeriesSpec } from './shared';
 
+const MenuInsights = lazy(() => import('../MenuInsights').then((m) => ({ default: m.MenuInsights })));
 const SalesDataComponent = lazy(() => import('../../SalesData').then((m) => ({ default: m.SalesData })));
 
 export const ItemsTab = memo(function ItemsTab({ d }: { d: AnalyticsData }) {
   const { t, lang } = useT();
-  const { context, effectiveStoreId, salesSubView, setSalesSubView, getPeriodLabel, metrics, itemPerformanceData, decliningItems, salesChartData, profitChartData, previousPeriodMetrics, realizedProfit } = d;
+  const { context, effectiveStoreId, salesSubView, setSalesSubView, getPeriodLabel, metrics, itemPerformanceData, decliningItems, salesChartData, profitChartData, previousPeriodMetrics, realizedProfit, orderItemDetail, previousOrderItemDetail, itemPerfDateRange, canManageInsights } = d;
   const prevLabel = shortPrevLabel(d, lang);
   const [sub, setSub] = useState<'category' | 'revenue'>(salesSubView);
   const choose = (v: 'category' | 'revenue') => {
@@ -94,6 +95,15 @@ export const ItemsTab = memo(function ItemsTab({ d }: { d: AnalyticsData }) {
               ))}
             </ListGroup>
           )}
+
+          {/* The menu: best sellers, what sells together, what hardly sells, run-outs, Bunny's ideas (owner, 30 Oct 2026). */}
+          <Suspense fallback={<SectionSkeleton />}>
+            <MenuInsights
+              accessToken={context.user?.accessToken || ''} storeId={effectiveStoreId || null}
+              storeIds={effectiveStoreId ? [effectiveStoreId] : (context.stores || []).map((s) => s.id)}
+              range={itemPerfDateRange} orders={orderItemDetail} previousOrders={previousOrderItemDetail} canManage={canManageInsights}
+            />
+          </Suspense>
 
           <Suspense fallback={<SectionSkeleton />}>
             <SalesDataComponent context={context} selectedStoreId={effectiveStoreId} />

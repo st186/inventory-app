@@ -33,6 +33,9 @@ export interface ExpenseCandidate {
   category: string;
   entity: ExpenseEntity;
   bengali?: string;
+  // The category's own name ("Kitchen Equipment (spread over 3 years)"), not an item: the form
+  // then asks which item it was.
+  generic?: boolean;
 }
 
 // Real descriptions seen in this store's own data that don't match their category's
@@ -164,7 +167,7 @@ export function buildExpenseCandidates(customItems: CustomItem[]): ExpenseCandid
   for (const category of SELECTABLE_OVERHEAD_CATEGORY_KEYS) {
     const meta = OVERHEAD_CATEGORY_META[category];
     const entity: ExpenseEntity = STORE_OVERHEAD_CATEGORY_KEYS.includes(category) ? 'both' : 'production_house';
-    candidates.push({ label: stripEmoji(meta.label), entryType: 'overhead', category, entity });
+    candidates.push({ label: stripEmoji(meta.label), entryType: 'overhead', category, entity, generic: true });
   }
   for (const synonym of OVERHEAD_SYNONYMS) {
     candidates.push({ label: synonym.label, entryType: 'overhead', category: synonym.category, entity: synonym.entity, bengali: BUILT_IN_ITEM_BENGALI[synonym.label] });

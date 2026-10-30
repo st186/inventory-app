@@ -2,7 +2,8 @@
 
 Runs on a PC on the same Wi-Fi (2.4 GHz) as a Tapo camera and talks to the Bunny server (cctv.ts):
   - in working hours: one still every N minutes (the server's setting), checked for cap, gloves
-    and apron;
+    and apron; a kitchen-activity camera instead takes a burst - 20 frames 15 seconds apart, sent
+    together - then waits N minutes;
   - outside them: watches the camera's small stream for movement and sends a still when something
     moves; the server's AI says whether anyone is there and raises the "after hours" alert.
 The server keeps the schedule, the working hours and the AI budget; this only grabs pictures.
@@ -89,7 +90,7 @@ def load_settings():
     return cams
 
 
-def call(s, path, body=None):
+def call(s, path, body=None, timeout=90):
     req = urllib.request.Request(
         s["server"] + path,
         data=json.dumps(body).encode() if body is not None else None,
@@ -97,7 +98,7 @@ def call(s, path, body=None):
         headers={"Content-Type": "application/json", "X-Camera-Id": s["id"], "X-Camera-Key": s["key"]},
     )
     try:
-        with urllib.request.urlopen(req, timeout=90) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         try:
@@ -136,30 +137,96 @@ def grab_still(s):
         cap.release()
 
 
+def faces_in(s, frame):
+    """Names of the staff recognised in a full-size frame (the face numbers never leave this PC)."""
+    if face_book is None:
+        return None
+    try:
+        with _face_lock:
+            return face_book.identify(frame)
+    except Exception as e:  # noqa: BLE001
+        log(f"face check failed: {type(e).__name__}", s)
+        return None
+
+
+def log_faces(s, seen):
+    if seen and (seen["names"] or seen["unknown"]):
+        known = ", ".join(seen["names"]) or "none known"
+        extra = f" + {seen['unknown']} unknown" if seen["unknown"] else ""
+        log(f"faces: {known}{extra}", s)
+
+
 def send_still(s, kind):
     image, frame = grab_still(s)
     if not image:
         return None
     body = {"kind": kind, "image": image}
-    # Names of the staff recognised in the full-size frame (the face numbers never leave this PC).
-    if face_book is not None:
-        try:
-            with _face_lock:
-                seen = face_book.identify(frame)
-            if seen is not None:
-                body["faces"] = seen
-                if seen["names"] or seen["unknown"]:
-                    known = ", ".join(seen["names"]) or "none known"
-                    extra = f" + {seen['unknown']} unknown" if seen["unknown"] else ""
-                    log(f"faces: {known}{extra}", s)
-        except Exception as e:  # noqa: BLE001
-            log(f"face check failed: {type(e).__name__}", s)
+    seen = faces_in(s, frame)
+    if seen is not None:
+        body["faces"] = seen
+        log_faces(s, seen)
     res = call(s, "/cctv/frame", body)
     if res:
         if res.get("skipped"):
             log(f"{kind} still skipped: {res['skipped']}", s)
         else:
             log(f"{kind} still checked: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
+    return res
+
+
+def jpeg(frame, width=1280, quality=65):
+    h, w = frame.shape[:2]
+    small = cv2.resize(frame, (width, int(h * width / w))) if w > width else frame
+    ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(jpg.tobytes()).decode() if ok else None
+
+
+def send_burst(s, frames, gap):
+    """A burst: `frames` pictures `gap` seconds apart from the full stream, sent together."""
+    images, names, unknown = [], set(), 0
+    cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
+    try:
+        if not cap.isOpened():
+            log("camera not reachable (check the Wi-Fi band, the address and the camera account)", s)
+            return None
+        start = time.time() + 2  # let the stream settle
+        for i in range(frames):
+            due = start + i * gap
+            # Keep reading so the picture taken is current, not an old one waiting in the stream.
+            while time.time() < due:
+                if not cap.grab():
+                    cap.release()
+                    time.sleep(1)
+                    cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
+            ok, frame = cap.read()
+            if not ok:
+                cap.release()
+                cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
+                ok, frame = cap.read()
+            if not ok:
+                continue
+            image = jpeg(frame)
+            if image:
+                images.append(image)
+            seen = faces_in(s, frame)
+            if seen:
+                names.update(seen["names"])
+                unknown = max(unknown, seen["unknown"])
+    finally:
+        cap.release()
+    if len(images) < 2:
+        log(f"burst failed: only {len(images)} of {frames} frames", s)
+        return None
+    body = {"kind": "scheduled", "images": images}
+    if face_book is not None:
+        body["faces"] = {"names": sorted(names), "unknown": unknown}
+        log_faces(s, body["faces"])
+    res = call(s, "/cctv/frame", body, timeout=240)
+    if res:
+        if res.get("skipped"):
+            log(f"burst skipped: {res['skipped']}", s)
+        else:
+            log(f"burst of {len(images)} checked: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
     return res
 
 
@@ -222,7 +289,8 @@ def run_camera(s):
                 time.sleep(min(wait, CONFIG_EVERY_S))
                 plan = None  # ask again: hours or settings may have changed
                 continue
-            res = send_still(s, "scheduled")
+            burst = plan.get("burst")
+            res = send_burst(s, int(burst["frames"]), int(burst["gapSec"])) if burst else send_still(s, "scheduled")
             plan, plan_at = (res, time.time()) if res and "working" in res else (None, 0.0)
             if not res:
                 time.sleep(120)

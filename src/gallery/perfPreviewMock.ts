@@ -35,7 +35,7 @@ const people = [
 
 // Cameras (server cctv.ts): one kitchen camera, two alerts (photo: the app logo stands in).
 const cameras = [
-  { id: 'cam-kitchen1', name: 'Kitchen camera', placeKind: 'production', placeId: 'PH-1', place: 'Main Production House', checks: ['cap', 'gloves', 'apron'], from: '07:00', to: '21:00', everyMin: 30, active: true, afterHours: true, keyHint: 'ab12', online: true, lastSeenAt: '2026-10-29T13:05:25Z', week: { checks: 8, alerts: 2, falseAlarms: 0, unmarked: 2 }, lastCheck: null },
+  { id: 'cam-kitchen1', name: 'Kitchen camera', placeKind: 'production', placeId: 'PH-1', place: 'Main Production House', checks: ['cap', 'gloves', 'apron'], from: '07:00', to: '21:00', everyMin: 30, active: true, afterHours: true, activity: true, keyHint: 'ab12', online: true, lastSeenAt: '2026-10-29T13:05:25Z', week: { checks: 8, alerts: 2, falseAlarms: 0, unmarked: 2 }, lastCheck: null },
   { id: 'cam-store-door', name: 'Entrance door', placeKind: 'store', placeId: 'S-1', place: 'Bunny Momos 1', checks: [], from: '09:00', to: '23:30', everyMin: 30, active: false, afterHours: false, keyHint: 'cd34', online: false, week: { checks: 0, alerts: 0, falseAlarms: 0, unmarked: 0 }, lastCheck: null },
 ];
 const alerts = [
@@ -52,12 +52,12 @@ const activity = {
   from: '2026-10-30', to: '2026-10-30',
   labels: { folding: 'Folding momos', machine: 'At the machine / dough', filling: 'Making filling', cooking: 'Steaming / frying', packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other' },
   cameras: [{
-    camera: { id: 'cam-kitchen1', name: 'Kitchen camera', everyMin: 5, place: 'Main Production House' },
+    camera: { id: 'cam-kitchen1', name: 'Kitchen camera', everyMin: 30, burst: { frames: 20, gapSec: 15 }, place: 'Main Production House' },
     people: [
       person('teal', 'Vijay Das', { folding: 95, machine: 120, cooking: 40, cleaning: 15, phone: 20, idle: 25 }, 30, 4, 82, '09:10', '16:40'),
       person('red', null, { folding: 210, packing: 45, idle: 15, phone: 10 }, 10, 2, 95, '10:05', '16:30'),
     ],
-    kitchen: { foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 92 },
+    kitchen: { foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 240, bursts: 12 },
     perDay: [],
   }],
 };

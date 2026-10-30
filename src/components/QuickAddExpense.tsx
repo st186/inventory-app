@@ -118,6 +118,10 @@ export function QuickAddExpense({
   const { t, lang } = useT();
   const [pickedStoreId, setPickedStoreId] = useState(effectiveStoreId || storeOptions?.[0]?.id || '');
   const [query, setQuery] = useState('');
+  // Picking an equipment category itself ("Kitchen Equipment (spread over 3 years)") says what kind
+  // of thing, not which: the item's name is asked for and saved as the description, so the
+  // equipment register and the books say "Momo moktu" (owner, 30 Oct 2026).
+  const [itemName, setItemName] = useState('');
   const [customItems, setCustomItems] = useState<api.CustomItem[]>([]);
   const [matched, setMatched] = useState<ExpenseSuggestion | null>(null);
   const [entity, setEntity] = useState<'store' | 'production_house'>(defaultEntity);
@@ -212,6 +216,9 @@ export function QuickAddExpense({
       setQuantity('1');
     }
   };
+
+  const needsItemName = !!matched?.generic && /^asset_|^equipments$/.test(matched.category);
+  const whatText = needsItemName ? itemName.trim() : query.trim();
 
   const resetMatchIfTyping = (value: string) => {
     setQuery(value);
@@ -379,6 +386,10 @@ export function QuickAddExpense({
       toast.error(t('exp.enterWhat'));
       return;
     }
+    if (needsItemName && itemName.trim().length < 2) {
+      toast.error(t('exp.whichItemErr'));
+      return;
+    }
     if (paidFrom === 'both' && Math.abs((parseFloat(splitCash) || 0) + (parseFloat(splitOnline) || 0) - amt) > 0.01) {
       toast.error(t('exp.splitMustMatch', { amount: formatINR(amt) }));
       return;
@@ -482,7 +493,7 @@ export function QuickAddExpense({
         await onSubmitOverhead({
           date: entryDate,
           category,
-          description: query.trim(),
+          description: whatText,
           amount: amt,
           ...paymentFieldsFor(amt),
           ...paperworkFields,
@@ -516,6 +527,7 @@ export function QuickAddExpense({
   const resetForAnother = () => {
     setAmount('');
     setQuery('');
+    setItemName('');
     setMatched(null);
     setQuantity('1');
     setUnit('pcs');
@@ -628,7 +640,12 @@ export function QuickAddExpense({
             ))}
           </div>
         )}
-        <AssetHint name={query} category={currentCategory} source={currentEntryType} date={entryDate} />
+        {needsItemName && (
+          <Field label={t('exp.whichItem')} required helper={t('exp.whichItemHint')}>
+            <Input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder={t('exp.whichItemPh')} autoComplete="off" autoFocus maxLength={80} />
+          </Field>
+        )}
+        <AssetHint name={needsItemName ? itemName : query} category={currentCategory} source={currentEntryType} date={entryDate} />
 
         {isNewItem && (
           <div className="flex flex-col gap-3 rounded-lg border border-warning-border bg-warning-soft p-3">
