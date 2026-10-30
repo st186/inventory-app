@@ -335,6 +335,31 @@ def _():
         server.server_close()
 
 
+@test("movement report: heatmap pictures, time per area, a walk between two stops")
+def _():
+    from kai import heatmap
+    from kai.look import Person
+    st = Store(os.path.join(TMP, "ds-heat"))
+    crop = np.zeros((40, 20, 3), np.uint8)
+    frame = np.full((720, 1280, 3), 90, np.uint8)
+    spots = [("Folding table", (0.2, 0.5, 0.3, 0.85))] * 4 + [("Freezers", (0.8, 0.4, 0.9, 0.75))] * 3 + [("Freezers", (0.81, 0.4, 0.91, 0.75))]
+    for i, (zone, box) in enumerate(spots):
+        p = Person(box=box, score=0.9, top="red", zone=zone, phone=False, motion=None, moving=None, feat=np.zeros(384, np.float32), crop=crop)
+        st.add_frame("cam-k", f"2026-10-31T10:00:{i * 5:02d}", "rec", frame, [p])  # 5 s apart: one walk
+    pic = os.path.join(TMP, "kitchen.jpg")
+    cv2.imwrite(pic, frame)
+    path = heatmap.build(st, "cam-k", ["2026-10-31"], pic, os.path.join(TMP, "zones"), os.path.join(TMP, "heat"), step_s=10)
+    page = open(path, encoding="utf-8").read()
+    # placed in the zones as drawn now (the test's: a folding table inside the whole kitchen)
+    assert "Folding table → Kitchen</td><td>1<" in page, page[page.find("Walks"):page.find("Walks") + 600]
+    assert os.path.exists(os.path.join(TMP, "heat", "heatmap-2026-10-31.jpg")) and os.path.exists(os.path.join(TMP, "heat", "heatmap-2026-10-31-10.jpg"))
+    per_zone, _, crowd = heatmap.summary(heatmap.samples(st, "cam-k", ["2026-10-31"]), 10)
+    assert round(per_zone["Folding table"], 2) == round(4 * 10 / 60, 2) and crowd["Freezers"][0] == 1
+    assert heatmap.build(st, "cam-k", ["2026-11-01"], pic, os.path.join(TMP, "zones"), os.path.join(TMP, "heat")) is None
+    g = heatmap.density([(0.5, 0.5)] * 3)
+    assert g.max() == 1.0 and g[54, 96] == 1.0
+
+
 @test("overlapping boxes: the surer one kept")
 def _():
     b = np.array([[0, 0, 10, 10], [1, 1, 10, 10], [20, 20, 30, 30]], np.float32)

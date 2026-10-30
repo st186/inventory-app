@@ -143,6 +143,44 @@ def cmd_day(s, a):
         webbrowser.open(path)
 
 
+DOCS_HEATMAPS = os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop", "Bunny Momos", "Bunny Momos Docs",
+                             "3 Projects", "Kitchen Fit-out", "Movement heatmaps")
+
+
+def _heatmaps(s, store, cam, dates, say=print):
+    """The movement report for those days, kept in <root>\\reports\\heatmaps and copied to the Docs
+    folder (Kitchen Fit-out) so it opens on the phone too."""
+    import glob
+    import shutil
+    from kai import heatmap
+    pic = os.path.join(s.zones, f"{cam}.jpg")
+    if not os.path.exists(pic):
+        pic = os.path.join(s.recordings, cam, dates[-1], "still.jpg")
+    out = os.path.join(s.reports, "heatmaps")
+    path = heatmap.build(store, cam, dates, pic, s.zones, out, s.step_sec)
+    if not path:
+        say(f"no movement recorded for {dates[0]}..{dates[-1]}")
+        return None
+    if os.path.isdir(os.path.dirname(DOCS_HEATMAPS)):
+        os.makedirs(DOCS_HEATMAPS, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        for f in glob.glob(os.path.join(out, stem + "*")):
+            shutil.copy2(f, DOCS_HEATMAPS)
+    say(f"movement report: {path}")
+    return path
+
+
+def cmd_heatmap(s, a):
+    cam = s.camera(a.camera)["id"]
+    first = a.date or Date.today().isoformat()
+    last = a.to or first
+    days = [d for d in sorted(os.listdir(os.path.join(s.recordings, cam))) if first <= d <= last] if os.path.isdir(os.path.join(s.recordings, cam)) else []
+    path = _heatmaps(s, _store(s), cam, days or [first])
+    if path and not a.no_browser:
+        import webbrowser
+        webbrowser.open(path)
+
+
 def cmd_run(s, a):
     from kai import jobs
     c = s.camera(a.camera)
@@ -178,6 +216,11 @@ def cmd_nightly(s, a):
             jobs.harvest(s, store, looker, cam, d, say=say)
         jobs.prelabel(s, store, looker, cam, None, say=say)
         jobs.rezone(s, store, cam, say=say)
+        days = sorted(os.listdir(rec)) if os.path.isdir(rec) else []
+        if Date.today().isoformat() in days:
+            _heatmaps(s, store, cam, [Date.today().isoformat()], say=say)
+        if len(days) > 1:
+            _heatmaps(s, store, cam, days, say=say)  # every recorded day together
         trained = len(store.training_rows()) >= NIGHTLY_TRAIN_FROM
         if trained:
             _train(s, store, say=say)
@@ -214,10 +257,14 @@ def main(argv=None):
     x = sub.add_parser("run")
     x.add_argument("--minutes", type=float)
     sub.add_parser("nightly")
+    x = sub.add_parser("heatmap")
+    x.add_argument("date", nargs="?")
+    x.add_argument("--to", help="last day (YYYY-MM-DD) for several days together")
+    x.add_argument("--no-browser", action="store_true")
     a = p.parse_args(argv)
     s = config.load(root=a.root)
     {"status": cmd_status, "setup": cmd_setup, "harvest": cmd_harvest, "prelabel": cmd_prelabel, "label": cmd_label,
-     "train": cmd_train, "day": cmd_day, "run": cmd_run, "nightly": cmd_nightly}[a.cmd](s, a)
+     "train": cmd_train, "day": cmd_day, "run": cmd_run, "nightly": cmd_nightly, "heatmap": cmd_heatmap}[a.cmd](s, a)
 
 
 if __name__ == "__main__":
