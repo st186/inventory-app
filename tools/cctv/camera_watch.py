@@ -74,6 +74,9 @@ def load_settings():
     sections = [sec for sec in cp.sections() if sec == "camera" or sec.startswith("camera:")]
     if not sections:
         sys.exit(f"No [camera] section in {CONFIG}")
+    # Bursts are kept next to the recordings for the kitchen model (tools/kitchen-ai).
+    rec = cp.get("record", "folder", fallback="").strip()
+    bursts = os.path.join(os.path.dirname(rec.rstrip("\\/")), "bursts") if rec else None
     cams = []
     for sec in sections:
         cam = {
@@ -83,6 +86,7 @@ def load_settings():
             "still_url": cp.get(sec, "still_url"),
             "watch_url": cp.get(sec, "watch_url"),
             "many": len(sections) > 1,
+            "bursts": bursts,
         }
         if any(x in cam["still_url"] + cam["watch_url"] for x in ("PASSWORD", "CAMERA-IP")):
             sys.exit(f"Fill in the camera account and address for {cam['id']} in {CONFIG}")
@@ -183,7 +187,7 @@ def jpeg(frame, width=1280, quality=65):
 
 def send_burst(s, frames, gap):
     """A burst: `frames` pictures `gap` seconds apart from the full stream, sent together."""
-    images, names, unknown = [], set(), 0
+    images, times, names, unknown = [], [], set(), 0
     cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
@@ -208,6 +212,7 @@ def send_burst(s, frames, gap):
             image = jpeg(frame)
             if image:
                 images.append(image)
+                times.append(datetime.now())
             seen = faces_in(s, frame)
             if seen:
                 names.update(seen["names"])
@@ -227,7 +232,28 @@ def send_burst(s, frames, gap):
             log(f"burst skipped: {res['skipped']}", s)
         else:
             log(f"burst of {len(images)} checked: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
+            keep_burst(s, images, times, gap, res)
     return res
+
+
+def keep_burst(s, images, times, gap, res):
+    """A burst with people in it, kept on the PC with the server's reading of each frame: the first
+    labels for the kitchen model (tools/kitchen-ai). <bursts>\\<camera>\\<date>\\HH-MM-SS\\01.jpg...
+    plus look.json (frame times, and per person: top colour, where, an activity per frame)."""
+    if not s.get("bursts") or not res.get("peopleCount"):
+        return
+    try:
+        folder = os.path.join(s["bursts"], s["id"], times[0].strftime("%Y-%m-%d"), times[0].strftime("%H-%M-%S"))
+        os.makedirs(folder, exist_ok=True)
+        for i, image in enumerate(images, 1):
+            with open(os.path.join(folder, f"{i:02d}.jpg"), "wb") as f:
+                f.write(base64.b64decode(image))
+        look = {"camera": s["id"], "times": [t.isoformat(timespec="seconds") for t in times], "gapSec": gap,
+                "peopleCount": res.get("peopleCount"), "people": (res.get("look") or {}).get("people")}
+        with open(os.path.join(folder, "look.json"), "w", encoding="utf-8") as f:
+            json.dump(look, f, indent=1)
+    except OSError as e:
+        log(f"burst not kept on the PC: {e}", s)
 
 
 def watch_for_movement(s, seconds):

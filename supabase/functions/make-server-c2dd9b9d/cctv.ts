@@ -341,7 +341,10 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         }
         cleanup(cam.id).catch(() => undefined);
       }
-      return c.json({ ok: true, peopleCount: look.peopleCount, missing: d.missing, alert: alert?.kind || null, ...plan((await deps.kv.get<Camera>(`cctv-camera:${cam.id}`)) || cam) });
+      // A burst's per-frame reading goes back to the camera PC, which keeps it with the frames as
+      // first labels for the kitchen model it trains (tools/kitchen-ai; owner, 30 Oct 2026).
+      const labels = burst ? { people: burst.people.map((p) => ({ where: p.where, top: p.top, activities: p.activities, phoneFrames: p.phoneFrames })) } : undefined;
+      return c.json({ ok: true, peopleCount: look.peopleCount, missing: d.missing, alert: alert?.kind || null, ...(labels ? { look: labels } : {}), ...plan((await deps.kv.get<Camera>(`cctv-camera:${cam.id}`)) || cam) });
     } catch (err) { return fail(c, err); }
   });
 

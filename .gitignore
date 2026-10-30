@@ -21,3 +21,6 @@ android/app/google-services.json
 
 # Built APKs are shared directly, not through git
 BunnyMomos-*.apk
+
+# Python caches (tools/cctv, tools/kitchen-ai)
+__pycache__/

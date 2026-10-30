@@ -42,3 +42,10 @@ then agree on where someone is, and a person seen there by both is counted once.
 in `%LOCALAPPDATA%\BunnyCamera\zones\<camera>.json`, with points as fractions of the picture, and
 `zones\place.json` lists which cameras see each zone. To add a camera, add a `[camera:<id>]`
 section; the recorder picks it up when it starts again (blank `cameras =` means all of them).
+
+### Bursts kept for the kitchen model
+
+Every kitchen-activity burst with people in it is also kept on the PC, next to the recordings:
+`D:\BunnyCamera\bursts\<camera>\<date>\HH-MM-SS\` (the 20 frames as sent, and `look.json` with the frame
+times and the server's reading of each frame: top colour, where, an activity per frame). These are the
+first labels for the kitchen model in `tools/kitchen-ai`, which trains and runs on this PC.
