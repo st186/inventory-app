@@ -185,7 +185,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     await deps.kv.set(key, day);
     const pKey = `cctv-activity-photos:${cam.id}:${date}`;
     const photos: Record<string, string> = (await deps.kv.get<Record<string, string>>(pKey)) || {};
-    const keys = slotKeys(look.people.map((p) => p.top));
+    const keys = slotKeys(look.people, Object.keys(before?.slots || {})); // as addBurst keyed them
     const byFrame = new Map<number, string[]>();
     keys.forEach((slot, i) => {
       if (!day.slots[slot] || photos[slot]) return;
@@ -343,7 +343,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       }
       // A burst's per-frame reading goes back to the camera PC, which keeps it with the frames as
       // first labels for the kitchen model it trains (tools/kitchen-ai; owner, 30 Oct 2026).
-      const labels = burst ? { people: burst.people.map((p) => ({ where: p.where, top: p.top, activities: p.activities, phoneFrames: p.phoneFrames })) } : undefined;
+      const labels = burst ? { people: burst.people.map((p) => ({ where: p.where, top: p.top, bottom: p.bottom, activities: p.activities, phoneFrames: p.phoneFrames })) } : undefined;
       return c.json({ ok: true, peopleCount: look.peopleCount, missing: d.missing, alert: alert?.kind || null, ...(labels ? { look: labels } : {}), ...plan((await deps.kv.get<Camera>(`cctv-camera:${cam.id}`)) || cam) });
     } catch (err) { return fail(c, err); }
   });

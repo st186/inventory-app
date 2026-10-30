@@ -1,7 +1,7 @@
 // Tests for activityRules.ts. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/activityRules.test.ts
 import assert from 'node:assert/strict';
-import { addBurst, addStill, summarise, type ActivityDay } from './activityRules.ts';
+import { addBurst, addStill, slotKeys, summarise, type ActivityDay } from './activityRules.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -98,6 +98,19 @@ test('a burst: each frame a person is in counts its share of the cycle; phone ru
   assert.equal(red.foldingMinutes, 44); // 43.75 shown whole
   assert.equal(s.kitchen.bursts, 2);
   assert.equal(s.kitchen.stills, 8);
+});
+
+test('two people in the same top are told apart by their trousers; trousers unseen go to the one known', () => {
+  assert.deepEqual(slotKeys([{ top: 'red', bottom: 'blue' }, { top: 'red', bottom: 'black' }]), ['red~blue', 'red~black']);
+  assert.deepEqual(slotKeys([{ top: 'red', bottom: 'unseen' }], ['red~blue', 'yellow~grey']), ['red~blue']);
+  assert.deepEqual(slotKeys([{ top: 'red', bottom: 'unseen' }], ['red~blue', 'red~black']), ['red']); // which of the two: can't say
+  assert.deepEqual(slotKeys([{ top: 'red' }, { top: 'red' }]), ['red', 'red-2']);
+  let d = addBurst(null, { date: '2026-10-30', cameraId: 'cam', from: '09:19', to: '09:24', frames: 2, minutesPerFrame: 1.75, checks: [],
+    people: [{ top: 'red', bottom: 'blue', activities: ['prep', 'prep'], phoneFrames: [] }, { top: 'red', bottom: 'black', activities: ['machine', 'idle'], phoneFrames: [] }] });
+  d = addBurst(d, { date: '2026-10-30', cameraId: 'cam', from: '09:54', to: '09:59', frames: 1, minutesPerFrame: 1.75, checks: [],
+    people: [{ top: 'red', bottom: 'blue', activities: ['folding'], phoneFrames: [] }] });
+  assert.deepEqual(d.slots['red~blue'].minutes, { prep: 3.5, folding: 1.75 });
+  assert.deepEqual(d.slots['red~black'].minutes, { machine: 1.75, idle: 1.75 });
 });
 
 console.log(`activityRules: ${passed} tests passed`);

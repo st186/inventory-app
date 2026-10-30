@@ -2,7 +2,9 @@
 // actually and whos talking on phone - total phone usage and other key metrics"). Work sampling:
 // every still (one every few minutes) says what each person in view is doing; each sighting stands
 // for the minutes since the last still. The camera sees no faces, so a person is a "slot" by the
-// colour of their top for the day, and someone at the place taps the real name once a day.
+// colour of their top for the day, and someone at the place taps the real name once a day. Two
+// people in the same top are told apart by their trousers (owner, 30 Oct 2026: Vijay and Rudra both
+// came in red): the slot is "red~blue"; trousers not seen goes to the one person known in that top.
 // Bursts (owner, 29 Oct 2026, "for better detection"): 20 frames 15 seconds apart, looked at
 // together so the AI follows each person through the 5 minutes, then 30 minutes without; each
 // frame a person is in stands for its share of the whole cycle (35 / 20 = 1.75 minutes).
@@ -19,7 +21,7 @@ export const ACTIVITY_LABEL: Record<Activity, string> = {
   packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other',
 };
 
-export type Sighting = { top: string; activity: string; phone: string; cap?: string; gloves?: string; apron?: string };
+export type Sighting = { top: string; bottom?: string; activity: string; phone: string; cap?: string; gloves?: string; apron?: string };
 export type Slot = {
   minutes: Partial<Record<Activity, number>>;
   phoneMinutes: number;
@@ -36,13 +38,23 @@ const onPhone = (p: Sighting) => p.phone === 'in_hand' || p.phone === 'at_ear' |
 const topOf = (t: string): Top => ((TOPS as readonly string[]).includes(t) ? t as Top : 'other');
 const activityOf = (a: string): Activity => ((ACTIVITIES as readonly string[]).includes(a) ? a as Activity : 'other');
 
-/** Slot keys for the people in one look: two people in the same colour get "red", "red-2". */
-export function slotKeys(tops: string[]): string[] {
+/**
+ * Slot keys for the people in one look: top and trousers ("red~blue"). Trousers not seen: the one
+ * person already known today in that top, else the top alone. The same again in one look gets "-2".
+ * `known` = the day's slot keys before this look.
+ */
+export function slotKeys(people: { top: string; bottom?: string }[], known: string[] = []): string[] {
   const used: Record<string, number> = {};
-  return tops.map((t) => {
-    const top = topOf(t);
-    used[top] = (used[top] || 0) + 1;
-    return used[top] === 1 ? top : `${top}-${used[top]}`;
+  return people.map((p) => {
+    const top = topOf(p.top);
+    const bottom = p.bottom && p.bottom !== 'other' && (TOPS as readonly string[]).includes(p.bottom) ? p.bottom : '';
+    let base = bottom ? `${top}~${bottom}` : top;
+    if (!bottom) {
+      const same = known.filter((k) => !/-\d+$/.test(k) && k.split('~')[0] === top);
+      if (same.length === 1) base = same[0];
+    }
+    used[base] = (used[base] || 0) + 1;
+    return used[base] === 1 ? base : `${base}-${used[base]}`;
   });
 }
 const newSlot = (clock: string): Slot => ({ minutes: {}, phoneMinutes: 0, phoneTimes: 0, onPhone: false, samples: 0, first: clock, last: clock, ppe: { judged: 0, ok: 0 } });
@@ -62,7 +74,7 @@ export function addStill(day: ActivityDay | null, o: {
   const d: ActivityDay = day && day.date === o.date ? day : { date: o.date, cameraId: o.cameraId, stills: 0, slots: {} };
   d.stills += 1;
   const seen = new Set<string>();
-  const keys = slotKeys(o.people.map((p) => p.top));
+  const keys = slotKeys(o.people, Object.keys(d.slots));
   for (const [i, p] of o.people.entries()) {
     const key = keys[i];
     seen.add(key);
@@ -86,7 +98,7 @@ export function addStill(day: ActivityDay | null, o: {
 }
 
 /** One person followed through a burst: what they were doing in each frame ("away" = not in view). */
-export type BurstPerson = { top: string; activities: string[]; phoneFrames: number[]; cap?: string; gloves?: string; apron?: string };
+export type BurstPerson = { top: string; bottom?: string; activities: string[]; phoneFrames: number[]; cap?: string; gloves?: string; apron?: string };
 
 /**
  * Adds a burst to the day: every frame a person is in counts `minutesPerFrame` of what they were
@@ -99,7 +111,7 @@ export function addBurst(day: ActivityDay | null, o: {
   const d: ActivityDay = day && day.date === o.date ? day : { date: o.date, cameraId: o.cameraId, stills: 0, slots: {} };
   d.stills += o.frames;
   d.bursts = (d.bursts || 0) + 1;
-  const keys = slotKeys(o.people.map((p) => p.top));
+  const keys = slotKeys(o.people, Object.keys(d.slots));
   for (const s of Object.values(d.slots)) s.onPhone = false;
   for (const [i, p] of o.people.entries()) {
     const frames = p.activities.slice(0, o.frames);

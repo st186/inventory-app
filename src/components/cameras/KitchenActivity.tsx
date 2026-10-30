@@ -25,12 +25,15 @@ export const SOMEONE_ELSE = 'Someone else';
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60 ? `${min % 60} min` : ''}`.trim() : `${min} min`);
 
-/** "Red top", from the colour slot ("red", "red-2"). */
+/** "Red top, blue trousers", from the slot ("red", "red~blue", "red-2"): the server tells two people
+ *  in the same top apart by their trousers (owner, 30 Oct 2026). */
 export function useTopName() {
   const { t } = useT();
   return (slot: string) => {
-    const [colour, n] = slot.split('-');
-    const name = t(`cam.top.${colour}` as I18nKey) || colour;
+    const [clothes, n] = slot.split('-');
+    const [top, bottom] = clothes.split('~');
+    let name = t(`cam.top.${top}` as I18nKey) || top;
+    if (bottom) name = `${name}, ${t('cam.trousers', { colour: t(`cam.colour.${bottom}` as I18nKey) || bottom })}`;
     return n ? `${name} (${n})` : name;
   };
 }
