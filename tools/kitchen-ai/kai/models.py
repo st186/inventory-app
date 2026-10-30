@@ -25,7 +25,7 @@ class File:
 
 FINDER = File("object_detection_yolox_2022nov.onnx",
               "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/object_detection_yolox/object_detection_yolox_2022nov.onnx",
-              35858002, "")
+              35858002, "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063")
 READER = File("dinov2_small.onnx", "https://huggingface.co/onnx-community/dinov2-small/resolve/main/onnx/model.onnx",
               88532934, "f22797eabf810a75e41de68d378541ebea372122b25c4ce3ef25ff618250c20a")
 ALL = (FINDER, READER)
@@ -97,7 +97,7 @@ class Finder:
     SIZE = 640
     STRIDES = (8, 16, 32)
 
-    def __init__(self, path, rgb=True):
+    def __init__(self, path, rgb=False):  # YOLOX was trained on OpenCV's BGR order, plain 0-255 pixels
         self.sess = _session(path)
         self.inp = self.sess.get_inputs()[0].name
         self.rgb = rgb
