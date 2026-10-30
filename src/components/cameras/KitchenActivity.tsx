@@ -17,6 +17,10 @@ import { NativeSelect } from '../ui/select';
 import { StatTile } from '../ui/stat-tile';
 import * as api from './camerasApi';
 
+// The name for a visitor, delivery person or technician (owner, 30 Oct 2026: "it could be someone
+// else"); their minutes add up under this one name, apart from the staff's.
+export const SOMEONE_ELSE = 'Someone else';
+
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60 ? `${min % 60} min` : ''}`.trim() : `${min} min`);
 
@@ -59,6 +63,7 @@ export function WhoIsWho() {
             <NativeSelect value={s.name || ''} onChange={(e) => save(c.cameraId, s.slot, e.target.value)}>
               <option value="">{t('cam.whoPick')}</option>
               {data.staff.map((n) => <option key={n} value={n}>{n}</option>)}
+              <option value={SOMEONE_ELSE}>{t('cam.whoSomeoneElse')}</option>
             </NativeSelect>
           </label>
         </div>
