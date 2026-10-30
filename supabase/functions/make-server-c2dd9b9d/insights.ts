@@ -1572,29 +1572,85 @@ const burstSchema = {
   required: ['peopleCount', 'people', 'evidenceFrame', 'note'],
   additionalProperties: false,
 };
+// The numbered burst (owner, 30 Oct 2026: two men in red were one person, and trouser colours in words
+// didn't hold): the camera PC finds the people and draws a numbered box round each (numbers hold
+// within the burst); Bunny gets reference photos of the people seen earlier today and says which of
+// them each box is - so a person's minutes stay theirs all day - and what each is doing.
+const NUMBERED_SYSTEM = `You watch a short burst of CCTV frames from a momo kitchen in India: the same camera, frames in order, a fixed number of seconds apart. Each person has been found and marked with a coloured box with a number in its corner; the same number is the same person all through this burst.
+- List each numbered box that holds a real person once, by its number (box). Leave out a box round an object, and people in posters, screens or reflections.
+- Someone clearly in the kitchen in these frames who never got a box (seated far back, cut off by the edge): list them too, with box 0.
+- known: which of today's known people this is (their reference photos come first, each with its number), judged by clothes, cap or hairnet, build and anything printed on the top; 0 if it is none of them (someone new today). Two boxes may be the same known person if the boxing lost them for a while. Don't guess: 0 is better than the wrong person.
+- top: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet).
+- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (${ACTIVITY_GUIDE}). If the box missed them in a frame where they are still clearly there, still say what they are doing; away = not in the frame at all.
+- phoneFrames: the frame numbers (1 = first) where a phone is in their hand or at their ear.
+- cap (head covering: cap, hairnet or bandana), gloves (on both visible hands), apron: judged across the frames. "no" only when the item is clearly missing in most frames where the person is clearly visible; "yes" when clearly worn; otherwise "unclear".
+- bestFrame: the frame number where this person is seen most clearly.
+- evidenceFrame: the frame number that best shows someone without a cap, gloves or apron; if nobody is missing anything, the clearest frame.
+- peopleCount: the most boxed people in any one frame.`;
+const numberedSchema = {
+  type: 'object',
+  properties: {
+    peopleCount: { type: 'integer' },
+    people: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          box: { type: 'integer', description: 'The number on their box; 0 if they never got one' },
+          known: { type: 'integer', description: "Today's known person this is, or 0 if new" },
+          where: { type: 'string', description: 'Where they mostly are in the frame, a few words' },
+          top: cameraSchema.properties.people.items.properties.top,
+          cap: yesNo, gloves: yesNo, apron: yesNo,
+          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
+          phoneFrames: { type: 'array', items: { type: 'integer' } },
+          bestFrame: { type: 'integer' },
+        },
+        required: ['box', 'known', 'where', 'top', 'cap', 'gloves', 'apron', 'activities', 'phoneFrames', 'bestFrame'],
+        additionalProperties: false,
+      },
+    },
+    evidenceFrame: { type: 'integer' },
+    note: { type: 'string', description: 'One short sentence on what the burst shows' },
+  },
+  required: ['peopleCount', 'people', 'evidenceFrame', 'note'],
+  additionalProperties: false,
+};
+
 export type BurstLook = {
   peopleCount: number;
-  people: { where: string; top: string; bottom: string; cap: string; gloves: string; apron: string; activities: string[]; phoneFrames: number[]; bestFrame: number }[];
+  people: { where: string; top: string; bottom: string; cap: string; gloves: string; apron: string; activities: string[]; phoneFrames: number[]; bestFrame: number; box?: number; known?: number }[];
   evidenceFrame: number;
   note: string;
 };
+export type BurstNumbered = {
+  boxes: number[][]; // per frame, the box numbers drawn on it
+  known: { id: number; images: string[] }[]; // today's people so far: reference photos (base64 JPEG)
+};
 
-export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string; notes?: string }): Promise<BurstLook> {
+export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string; notes?: string; numbered?: BurstNumbered }): Promise<BurstLook> {
   const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
   const n = burst.frames.length;
+  const num = burst.numbered;
   const content: any[] = [];
+  if (num?.known.length) {
+    content.push({ type: 'text', text: "Today's known people so far (reference photos):" });
+    for (const k of num.known) {
+      content.push({ type: 'text', text: `Known person ${k.id}` });
+      for (const data of k.images) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
+    }
+  }
   burst.frames.forEach((data, i) => {
-    content.push({ type: 'text', text: `Frame ${i + 1}` });
+    content.push({ type: 'text', text: num ? `Frame ${i + 1} (boxes: ${(num.boxes[i] || []).join(', ') || 'none'})` : `Frame ${i + 1}` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
   });
-  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}.${burst.notes ? ` About this kitchen: ${burst.notes.slice(0, 400)}` : ''} ${n} frames, ${burst.gapSec} seconds apart: give each person exactly ${n} activities.` });
+  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}.${burst.notes ? ` About this kitchen: ${burst.notes.slice(0, 400)}` : ''} ${n} frames, ${burst.gapSec} seconds apart: give each ${num ? 'numbered box' : 'person'} exactly ${n} activities.${num && !num.known.length ? ' Nobody is known yet today: every box is known 0.' : ''}` });
   const res = await callClaude(deps, {
     purpose: 'camera',
-    system: BURST_SYSTEM,
+    system: num ? NUMBERED_SYSTEM : BURST_SYSTEM,
     effort: 'low',
     noThinking: true,
     maxTokens: 4000,
-    format: { type: 'json_schema', schema: burstSchema },
+    format: { type: 'json_schema', schema: num ? numberedSchema : burstSchema },
     messages: [{ role: 'user', content }],
   });
   let parsed: any = null;
@@ -1602,6 +1658,8 @@ export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: n
   if (!parsed || typeof parsed.peopleCount !== 'number') throw new AiError('The camera check returned nothing.', 502);
   const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
   const frameNo = (v: any, fallback: number) => (Number.isInteger(v) && v >= 1 && v <= n ? v : fallback);
+  const boxNumbers = new Set((num?.boxes || []).flat());
+  const knownIds = new Set((num?.known || []).map((k) => k.id));
   const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => {
     const acts = (Array.isArray(p?.activities) ? p.activities : []).slice(0, n).map((a: any) => String(a || 'away').slice(0, 20));
     while (acts.length < n) acts.push('away');
@@ -1611,8 +1669,10 @@ export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: n
       activities: acts,
       phoneFrames: [...new Set((Array.isArray(p?.phoneFrames) ? p.phoneFrames : []).filter((f: any) => Number.isInteger(f) && f >= 1 && f <= n))] as number[],
       bestFrame: frameNo(p?.bestFrame, firstSeen),
+      ...(num ? { box: Number(p?.box), known: knownIds.has(Number(p?.known)) ? Number(p.known) : 0 } : {}),
     };
-  });
+  // A box that wasn't drawn, or listed twice: dropped (box 0 = someone the boxing never caught).
+  }).filter((p: any, i: number, all: any[]) => !num || p.box === 0 || (boxNumbers.has(p.box) && all.findIndex((q: any) => q.box === p.box) === i));
   return {
     peopleCount: Math.max(people.length ? 1 : 0, Math.min(30, Math.round(parsed.peopleCount))),
     people,

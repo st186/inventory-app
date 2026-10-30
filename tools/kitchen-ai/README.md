@@ -17,6 +17,13 @@ the camera watcher's are. Nothing here is built into the app or the website.
    Bunny's 0.4. The score is checked on hours the model never trained on.
 5. People are followed from look to look and named by the colour of their top, the same colours
    Bunny uses, so the app's Who is who card can put a name to each.
+6. **Numbered people for the app** (`kai/people.py` BurstNumbers, used by `tools/cctv/camera_watch.py`,
+   owner 30 Oct 2026): every burst's people are found here and a numbered box is drawn round each
+   before the burst goes to the server, with a small crop and a Who-is-who photo per number. Bunny
+   compares the boxes with the crops of the people seen earlier that day and keeps each person under
+   one day number ("Person 3") - two people in the same colour are no longer mixed up. The burst kept
+   on the PC (`bursts\...\look.json`) gets the boxes and each box's day number: free who-is-who
+   labels for the model. If the models aren't set up, bursts go the old way.
 
 The two ready-made models run with onnxruntime on the CPU (fast enough); the RTX 3050 is used if
 `onnxruntime-directml` is installed instead.

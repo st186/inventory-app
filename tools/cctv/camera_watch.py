@@ -7,6 +7,9 @@ Runs on a PC on the same Wi-Fi (2.4 GHz) as a Tapo camera and talks to the Bunny
   - outside them: watches the camera's small stream for movement and sends a still when something
     moves; the server's AI says whether anyone is there and raises the "after hours" alert.
 The server keeps the schedule, the working hours and the AI budget; this only grabs pictures.
+With the kitchen model set up (tools/kitchen-ai, owner 30 Oct 2026), a burst's people are found here
+and a numbered box drawn round each before it goes, with a small crop and a photo of each: the server
+then keeps everyone under one number all day. Without it, bursts go as before.
 
 Settings: %LOCALAPPDATA%\\BunnyCamera\\camera_watch.ini (never in the project folder - it holds
 the camera's password and key): a [server] section, then one [camera] section, or several named
@@ -32,6 +35,7 @@ except Exception:  # noqa: BLE001
     face_book = None
 
 HOME = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "BunnyCamera")
+KITCHEN_AI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kitchen-ai")
 CONFIG = os.path.join(HOME, "camera_watch.ini")
 LOG = os.path.join(HOME, "camera_watch.log")
 
@@ -43,6 +47,8 @@ CONFIG_EVERY_S = 900      # ask the server what to do at least this often
 
 _log_lock = threading.Lock()
 _face_lock = threading.Lock()  # one face model, shared by the camera threads
+_numbers_lock = threading.Lock()  # one person finder too
+_numbers = None  # kitchen-ai's BurstNumbers, loaded on first use; False when it can't be
 
 
 def log(msg, cam=None):
@@ -185,9 +191,56 @@ def jpeg(frame, width=1280, quality=65):
     return base64.b64encode(jpg.tobytes()).decode() if ok else None
 
 
+def numberer(s):
+    """The person finder from tools/kitchen-ai, or None when its models aren't set up."""
+    global _numbers
+    with _numbers_lock:
+        if _numbers is None:
+            try:
+                if KITCHEN_AI not in sys.path:
+                    sys.path.insert(0, KITCHEN_AI)
+                from kai import config as kai_config, models as kai_models
+                from kai.people import BurstNumbers
+                ks = kai_config.load()
+                _numbers = BurstNumbers(kai_models.Finder(kai_models.path_of(ks.models, kai_models.FINDER)),
+                                        kai_models.Reader(kai_models.path_of(ks.models, kai_models.READER)))
+                log("people in bursts will be numbered (kitchen model ready)", s)
+            except Exception as e:  # noqa: BLE001
+                _numbers = False
+                log(f"people not numbered - kitchen model not ready ({type(e).__name__}: {e})", s)
+        return _numbers or None
+
+
+def number_people(s, frames):
+    """The burst's people found and boxed: (the frames with numbered boxes as JPEGs, the body's
+    "people": per-frame boxes, a crop and a Who-is-who photo per number), or (None, None)."""
+    bn = numberer(s)
+    if bn is None:
+        return None, None
+    try:
+        from kai.people import crop_of, draw_numbers, who_photo
+        with _numbers_lock:
+            fitted, per_frame, best = bn.number(frames)
+        images = [jpeg(draw_numbers(f, boxes)) for f, boxes in zip(fitted, per_frame)]
+        if not all(images):
+            return None, None
+        crops, photos = {}, {}
+        for n, (fi, box) in best.items():
+            h, w = fitted[fi].shape[:2]
+            crop = crop_of(fitted[fi], box)
+            if crop.size:
+                crops[n] = jpeg(crop, width=256, quality=80)
+            photos[n] = jpeg(who_photo(fitted[fi], {"n": n, "box": [box[0] / w, box[1] / h, box[2] / w, box[3] / h]}), width=640, quality=75)
+        return images, {"frames": per_frame, "crops": crops, "photos": photos}
+    except Exception as e:  # noqa: BLE001
+        log(f"people not numbered this burst ({type(e).__name__}: {e})", s)
+        return None, None
+
+
 def send_burst(s, frames, gap):
     """A burst: `frames` pictures `gap` seconds apart from the full stream, sent together."""
     images, times, names, unknown = [], [], set(), 0
+    kept = []  # the frames at 1280 wide, for numbering the people
     cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
@@ -213,6 +266,8 @@ def send_burst(s, frames, gap):
             if image:
                 images.append(image)
                 times.append(datetime.now())
+                h, w = frame.shape[:2]
+                kept.append(cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame)
             seen = faces_in(s, frame)
             if seen:
                 names.update(seen["names"])
@@ -222,7 +277,10 @@ def send_burst(s, frames, gap):
     if len(images) < 2:
         log(f"burst failed: only {len(images)} of {frames} frames", s)
         return None
-    body = {"kind": "scheduled", "images": images}
+    boxed, people = number_people(s, kept)
+    body = {"kind": "scheduled", "images": boxed or images}
+    if people:
+        body["people"] = people
     if face_book is not None:
         body["faces"] = {"names": sorted(names), "unknown": unknown}
         log_faces(s, body["faces"])
@@ -231,15 +289,16 @@ def send_burst(s, frames, gap):
         if res.get("skipped"):
             log(f"burst skipped: {res['skipped']}", s)
         else:
-            log(f"burst of {len(images)} checked: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
-            keep_burst(s, images, times, gap, res)
+            log(f"burst of {len(images)} checked{' (numbered)' if people else ''}: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
+            keep_burst(s, images, times, gap, res, people)
     return res
 
 
-def keep_burst(s, images, times, gap, res):
+def keep_burst(s, images, times, gap, res, people=None):
     """A burst with people in it, kept on the PC with the server's reading of each frame: the first
     labels for the kitchen model (tools/kitchen-ai). <bursts>\\<camera>\\<date>\\HH-MM-SS\\01.jpg...
-    plus look.json (frame times, and per person: top colour, where, an activity per frame)."""
+    (without boxes) plus look.json (frame times, and per person: top colour, where, an activity per
+    frame; numbered: the boxes per frame, and each box's day number - the same person all day)."""
     if not s.get("bursts") or not res.get("peopleCount"):
         return
     try:
@@ -250,6 +309,8 @@ def keep_burst(s, images, times, gap, res):
                 f.write(base64.b64decode(image))
         look = {"camera": s["id"], "times": [t.isoformat(timespec="seconds") for t in times], "gapSec": gap,
                 "peopleCount": res.get("peopleCount"), "people": (res.get("look") or {}).get("people")}
+        if people:
+            look["boxes"] = people["frames"]
         with open(os.path.join(folder, "look.json"), "w", encoding="utf-8") as f:
             json.dump(look, f, indent=1)
     except OSError as e:

@@ -25,11 +25,15 @@ export const SOMEONE_ELSE = 'Someone else';
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60 ? `${min % 60} min` : ''}`.trim() : `${min} min`);
 
+// A day number from the camera PC's boxes (owner, 30 Oct 2026): "p3" is Person 3 all day.
+const isNumbered = (slot: string) => /^p\d+$/.test(slot);
+
 /** "Red top, blue trousers", from the slot ("red", "red~blue", "red-2"): the server tells two people
- *  in the same top apart by their trousers (owner, 30 Oct 2026). */
+ *  in the same top apart by their trousers (owner, 30 Oct 2026). "Person 3" for a numbered one. */
 export function useTopName() {
   const { t } = useT();
   return (slot: string) => {
+    if (isNumbered(slot)) return t('cam.personN', { n: slot.slice(1) });
     const [clothes, n] = slot.split('-');
     const [top, bottom] = clothes.split('~');
     let name = t(`cam.top.${top}` as I18nKey) || top;
@@ -74,13 +78,13 @@ export function WhoIsWho() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <h2 className="text-body-md font-semibold text-text">{t('cam.whoTitle')}</h2>
-          <p className="text-body-sm text-text-2">{t('cam.whoBody')}</p>
+          <p className="text-body-sm text-text-2">{t(slots.some((s) => isNumbered(s.slot)) ? 'cam.whoBodyBox' : 'cam.whoBody')}</p>
         </div>
         {changing && <Button size="sm" variant="secondary" onClick={() => setChanging(false)}>{t('cam.whoFinished')}</Button>}
       </div>
       {data.cameras.map((c) => c.slots.map((s) => (
         <div key={`${c.cameraId}-${s.slot}`} className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
-          {s.photoUrl && <img src={s.photoUrl} alt={t('cam.whoPhoto', { top: topName(s.slot) })} className="max-h-72 w-full rounded-md bg-surface-2 object-contain" loading="lazy" />}
+          {s.photoUrl && <img src={s.photoUrl} alt={t(isNumbered(s.slot) ? 'cam.whoPhotoBox' : 'cam.whoPhoto', { top: topName(s.slot) })} className="max-h-72 w-full rounded-md bg-surface-2 object-contain" loading="lazy" />}
           <label className="flex flex-col gap-1">
             <span className="text-body-sm font-medium text-text">{t('cam.whoPerson', { top: topName(s.slot), from: s.first, to: s.last })}</span>
             <NativeSelect value={s.name || ''} onChange={(e) => save(c.cameraId, s.slot, e.target.value)}>

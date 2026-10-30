@@ -55,9 +55,10 @@ const activityOf = (a: string): Activity => ((ACTIVITIES as readonly string[]).i
  * person already known today in that top, else the top alone. The same again in one look gets "-2".
  * `known` = the day's slot keys before this look.
  */
-export function slotKeys(people: { top: string; bottom?: string }[], known: string[] = []): string[] {
+export function slotKeys(people: { top: string; bottom?: string; key?: string }[], known: string[] = []): string[] {
   const used: Record<string, number> = {};
   return people.map((p) => {
+    if (p.key) return p.key; // a numbered burst: the day's person number ("p3"), from the camera PC's boxes
     const top = topOf(p.top);
     const bottom = p.bottom && p.bottom !== 'other' && (TOPS as readonly string[]).includes(p.bottom) ? p.bottom : '';
     let base = bottom ? `${top}~${bottom}` : top;
@@ -116,7 +117,7 @@ export function addStill(day: ActivityDay | null, o: {
 }
 
 /** One person followed through a burst: what they were doing in each frame ("away" = not in view). */
-export type BurstPerson = { top: string; bottom?: string; activities: string[]; phoneFrames: number[]; cap?: string; gloves?: string; apron?: string };
+export type BurstPerson = { top: string; bottom?: string; key?: string; activities: string[]; phoneFrames: number[]; cap?: string; gloves?: string; apron?: string };
 
 /**
  * Adds a burst to the day: every frame a person is in counts `minutesPerFrame` of what they were
@@ -203,11 +204,31 @@ export type PersonRow = {
   foldingMinutes: number; phoneMinutes: number; phoneTimes: number; idleMinutes: number; ppePercent: number | null; first: string; last: string;
 };
 
+/** Two slots of one person (two numbers or colours given the same name) as one. */
+export function mergeSlots(a: Slot, b: Slot): Slot {
+  const minutes = { ...a.minutes };
+  for (const [k, m] of Object.entries(b.minutes)) minutes[k as Activity] = (minutes[k as Activity] || 0) + (m || 0);
+  return {
+    minutes, phoneMinutes: a.phoneMinutes + b.phoneMinutes, phoneTimes: a.phoneTimes + b.phoneTimes, onPhone: a.onPhone || b.onPhone, samples: a.samples + b.samples,
+    first: a.first < b.first ? a.first : b.first, last: a.last > b.last ? a.last : b.last, ppe: { judged: a.ppe.judged + b.ppe.judged, ok: a.ppe.ok + b.ppe.ok },
+    at: [...(a.at || []), ...(b.at || [])].sort((x, y) => x - y),
+  };
+}
+
 /** Per person (named where someone tapped the name) and the kitchen as a whole, for one or more days. */
 export function summarise(days: ActivityDay[], names: Record<string, Record<string, string>>, piecesMade: number) {
   const rows = new Map<string, PersonRow>();
   for (const d of days) {
+    // The day's slots of one named person together first, so time under one number isn't counted
+    // as away from the other.
+    const merged = new Map<string, [string, Slot]>();
     for (const [slot, s] of Object.entries(d.slots)) {
+      const name = names[d.date]?.[slot];
+      const k = name ? `name:${name}` : `slot:${slot}`;
+      const had = merged.get(k);
+      merged.set(k, had ? [had[0], mergeSlots(had[1], s)] : [slot, s]);
+    }
+    for (const [slot, s] of merged.values()) {
       const name = names[d.date]?.[slot] || null;
       // A named person adds up across days; an unnamed colour stays that day's colour.
       const key = name ? `name:${name}` : `${d.date}:${slot}`;

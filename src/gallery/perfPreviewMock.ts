@@ -55,7 +55,7 @@ const activity = {
     camera: { id: 'cam-kitchen1', name: 'Kitchen camera', everyMin: 30, burst: { frames: 20, gapSec: 15 }, place: 'Main Production House' },
     people: [
       { ...person('teal', 'Vijay Das', { folding: 95, machine: 120, cooking: 40, cleaning: 15, phone: 20, idle: 25 }, 30, 4, 82, '09:10', '16:40'), notInKitchenMinutes: 35, away: [{ date: '2026-10-30', from: '13:24', to: '14:29', minutes: 35 }] },
-      person('red', null, { folding: 210, packing: 45, idle: 15, phone: 10 }, 10, 2, 95, '10:05', '16:30'),
+      person('p3', null, { folding: 210, packing: 45, idle: 15, phone: 10 }, 10, 2, 95, '10:05', '16:30'),
     ],
     kitchen: { foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 240, bursts: 12, folding: { from: '10:35', to: '16:20', mostPeople: 3 } },
     perDay: [{ date: '2026-10-30', foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 240, bursts: 12, folding: { from: '10:35', to: '16:20', mostPeople: 3 } }],
@@ -65,7 +65,7 @@ const whois = {
   date: '2026-10-30', staff: ['Aniket Prasad', 'Nabendu', 'Rider 1', 'Rohan Rajbanshi', 'Rudra Mahato', 'Saniya Parvin', 'Vijay Das'],
   cameras: [{ cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', date: '2026-10-30', slots: [
     { slot: 'teal', name: 'Vijay Das', first: '09:10', last: '16:40', photoUrl: '/bunny-logo.png' },
-    { slot: 'red', name: null, first: '10:05', last: '16:30', photoUrl: '/bunny-logo.png' },
+    { slot: 'p3', name: null, first: '10:05', last: '16:30', photoUrl: '/bunny-logo.png' },
   ] }],
 };
 

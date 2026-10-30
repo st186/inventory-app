@@ -130,4 +130,22 @@ test('not in the kitchen: a whole burst missed counts, a moment out of view does
   assert.equal(summarise([d, d], {}, 0).kitchen.folding, null);
 });
 
+test('numbered people: the day number is the slot; two numbers named the same are one person, not away', () => {
+  const b = (d: ActivityDay | null, from: string, people: { top: string; key?: string; activities: string[]; phoneFrames: number[] }[]) =>
+    addBurst(d, { date: '2026-10-30', cameraId: 'cam', from, to: from, frames: 4, minutesPerFrame: 8.75, checks: [], gapSec: 15, people });
+  assert.deepEqual(slotKeys([{ top: 'red', key: 'p1' }, { top: 'red', key: 'p2' }, { top: 'red' }]), ['p1', 'p2', 'red']);
+  let d = b(null, '10:00', [{ top: 'red', key: 'p1', activities: ['folding', 'folding', 'folding', 'folding'], phoneFrames: [] }]);
+  d = b(d, '10:35', [{ top: 'red', key: 'p3', activities: ['folding', 'folding', 'folding', 'folding'], phoneFrames: [] }]); // lost, came back as a new number
+  d = b(d, '11:10', [{ top: 'red', key: 'p1', activities: ['folding', 'folding', 'folding', 'folding'], phoneFrames: [] }]);
+  assert.deepEqual(Object.keys(d.slots).sort(), ['p1', 'p3']);
+  const unnamed = summarise([d], {}, 0);
+  assert.equal(unnamed.people.find((x) => x.slot === 'p1')!.notInKitchenMinutes, 35); // 10:35 burst missed
+  const named = summarise([d], { '2026-10-30': { p1: 'Vijay Das', p3: 'Vijay Das' } }, 0);
+  assert.equal(named.people.length, 1);
+  assert.equal(named.people[0].name, 'Vijay Das');
+  assert.equal(named.people[0].minutes.folding, 105);
+  assert.equal(named.people[0].notInKitchenMinutes, 0);
+  assert.deepEqual(named.people[0].away, []);
+});
+
 console.log(`activityRules: ${passed} tests passed`);
