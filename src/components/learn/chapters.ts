@@ -92,7 +92,7 @@ const STORE_INCHARGE: Chapter[] = [
     about: two('Check what came from production and confirm it.', 'প্রোডাকশন থেকে যা এল মিলিয়ে কনফার্ম।'),
     steps: [
       { id: 'row', go: 'stock/requests', find: button('On the way'), act: 'tap', title: two('A delivery on the way', 'রাস্তায় আছে এমন ডেলিভারি'), body: two('Stock › Requests lists your recent requests. When the rider brings one, tap it.', 'Stock › Requests-এ সাম্প্রতিক রিকোয়েস্ট থাকে। রাইডার মাল আনলে সেটায় চাপুন।') },
-      { id: 'lines', find: text('short', sheet), title: two('Count against the list', 'লিস্ট মিলিয়ে গুনুন'), body: two('Each line shows what was sent. Short items are marked: here Veg came 20 short.', 'প্রতিটা লাইনে কত পাঠানো হয়েছে লেখা। কম এলে দাগানো থাকে: এখানে Veg ২০টা কম।') },
+      { id: 'lines', find: text('short', sheet), title: two('Count against the list', 'লিস্ট মিলিয়ে গুনুন'), body: two('Each line shows what was sent. Short items are marked: here Veg came 50 short.', 'প্রতিটা লাইনে কত পাঠানো হয়েছে লেখা। কম এলে দাগানো থাকে: এখানে Veg ৫০টা কম।') },
       { id: 'confirm', find: button('Confirm delivery', sheet), act: 'tap', title: two('Tap Confirm delivery', 'Confirm delivery চাপুন'), body: two('Once you have counted it. The store\'s stock is wrong until every delivery is confirmed.', 'গোনা হয়ে গেলে। প্রতিটা ডেলিভারি কনফার্ম না হলে দোকানের স্টক ভুল থাকে।') },
       { id: 'done', find: text('Received', sheet), title: two('Received', 'রিসিভ হয়ে গেল'), body: two('Missed one? Home shows "A delivery to check" until it is confirmed.', 'কোনোটা বাকি থাকলে Home-এ "A delivery to check" দেখাবে, কনফার্ম না করা পর্যন্ত।') },
     ],
@@ -164,7 +164,7 @@ const STORE_INCHARGE: Chapter[] = [
     about: two('Send it by midnight: let Bunny fill it, check, send.', 'রাত ১২টার মধ্যে: বানি ভরে দেবে, মিলিয়ে পাঠান।'),
     steps: [
       { id: 'due', go: 'stock/requests', find: text('Send by midnight'), title: two('Due by midnight', 'রাত ১২টার মধ্যে'), body: two('Reminders start at 9:30 PM and turn urgent at 11:15 PM. Late requests count against your KPI.', 'রাত ৯:৩০ থেকে মনে করানো শুরু, ১১:১৫-য় জরুরি। দেরি হলে KPI-তে কাটে।') },
-      { id: 'fill', find: button('Fill in for me'), act: 'tap', title: two('Tap Fill in for me', 'Fill in for me চাপুন'), body: two('Bunny fills it from tomorrow\'s expected sales plus 15%, less what is left from the last delivery.', 'কালকের আন্দাজি বিক্রি আর ১৫% বেশি, শেষ ডেলিভারির বাকি মাল বাদ দিয়ে বানি ভরে দেয়।') },
+      { id: 'fill', find: button('Fill in for me'), act: 'tap', title: two('Tap Fill in for me', 'Fill in for me চাপুন'), body: two('Bunny fills the momos from what the store still has and tomorrow\'s expected sales, in bags of 50, and adds the sauces and supplies you usually ask for by now.', 'দোকানে যা আছে আর কালকের আন্দাজি বিক্রি দেখে বানি মোমো ভরে দেয়, ৫০-এর ব্যাগে, আর সাধারণত এই সময়ে যে সস আর জিনিসপত্র চান সেগুলোও যোগ করে।') },
       { id: 'left', find: text('Left now'), title: two('Check against the freezer', 'ফ্রিজারের সঙ্গে মেলান'), body: two('"Left now" is what the app thinks is left. Look in the freezer before you send.', '"Left now" মানে অ্যাপের হিসাবে কত বাকি। পাঠানোর আগে ফ্রিজার দেখে নিন।') },
       { id: 'more', find: button('More Chicken', { exact: true }), act: 'tap', title: two('Change a number', 'সংখ্যা বদলান'), body: two('Tap + for one more bag of Chicken, − for one less.', 'চিকেন এক ব্যাগ বেশি চাইলে +, কম চাইলে −।') },
       { id: 'sauce', find: button('Pan-Fried Sauce'), act: 'tap', title: two('Sauces', 'সস'), body: two('Tap each sauce you need, e.g. Pan-Fried Sauce.', 'যে যে সস লাগবে চাপুন, যেমন Pan-Fried Sauce।') },
@@ -251,11 +251,11 @@ const PRODUCTION_INCHARGE: Chapter[] = [
       { id: 'pack', find: button('Start packing', sheet), act: 'tap', title: two('Tap Start packing', 'Start packing চাপুন'), body: two('When you start filling the bags.', 'ব্যাগ ভরা শুরু করলে।') },
       { id: 'packed', find: button('Mark packed', sheet), act: 'tap', title: two('Tap Mark packed', 'Mark packed চাপুন'), body: two('Every bag packed and labelled.', 'সব ব্যাগ প্যাক করে লেবেল লাগানো হয়ে গেলে।') },
       { id: 'ship', find: button('Ship', { ...sheet, exact: true }), act: 'tap', title: two('Tap Ship', 'Ship চাপুন'), body: two('You check what is really going, bag by bag.', 'ব্যাগ ধরে ধরে কী যাচ্ছে মিলিয়ে নিন।') },
-      { id: 'less', find: button('Less Veg', sheet), act: 'tap', title: two('Short of something?', 'কিছু কম?'), body: two('Say only 4 bags of Veg are ready: tap − once.', 'ধরুন Veg মাত্র ৪ ব্যাগ তৈরি: একবার − চাপুন।') },
+      { id: 'less', find: button('Less Veg', sheet), act: 'tap', title: two('Short of something?', 'কিছু কম?'), body: two('Say only 1 bag of Veg is ready: tap − once.', 'ধরুন Veg মাত্র ১ ব্যাগ তৈরি: একবার − চাপুন।') },
       { id: 'why', find: field('Why is it different?', sheet), act: 'do', ready: filled('Why is it different?', sheet), title: two('Write why', 'কারণ লিখুন'), body: two('Anything different needs a reason, e.g. Not enough in stock. The store sees it.', 'আলাদা হলে কারণ লাগে, যেমন Not enough in stock। দোকান দেখতে পায়।') },
       { id: 'checked', find: button('I am sending these', sheet), act: 'tap', title: two('You checked it', 'মিলিয়ে নিয়েছেন'), body: two('Tick: I am sending these and have checked the quantities.', 'টিক দিন: যা পাঠাচ্ছি মিলিয়ে নিয়েছি।') },
       { id: 'send', find: button('Ship', { ...sheet, exact: true }), act: 'tap', title: two('Ship it', 'পাঠিয়ে দিন'), body: two('Tap Ship.', 'Ship চাপুন।') },
-      { id: 'way', find: text('20 short', sheet), title: two('On the way', 'রওনা হয়ে গেল'), body: two('The store sees Veg 20 short with your reason. Shipped by 3 PM counts as on time for your KPI.', 'দোকান দেখবে Veg ২০টা কম, আপনার কারণসহ। দুপুর ৩টের মধ্যে পাঠালে KPI-তে সময়মতো ধরা হয়।') },
+      { id: 'way', find: text('50 short', sheet), title: two('On the way', 'রওনা হয়ে গেল'), body: two('The store sees Veg 50 short with your reason. Shipped by 3 PM counts as on time for your KPI.', 'দোকান দেখবে Veg ৫০টা কম, আপনার কারণসহ। দুপুর ৩টের মধ্যে পাঠালে KPI-তে সময়মতো ধরা হয়।') },
     ],
   },
   {
@@ -276,7 +276,7 @@ const PRODUCTION_INCHARGE: Chapter[] = [
     title: two('Log today\'s production', 'আজকের প্রোডাকশন লেখা'),
     about: two('Each batch as it is made, then send the day.', 'প্রতিটা ব্যাচ বানানোর সঙ্গে সঙ্গে, তারপর দিনটা পাঠান।'),
     steps: [
-      { id: 'plan', go: 'production/batches', find: text('planned pieces'), title: two('Today\'s plan', 'আজকের প্ল্যান'), body: two('Tomorrow\'s expected sales plus 15%, in bags, for each momo.', 'প্রতিটা মোমোর জন্য কালকের আন্দাজি বিক্রি আর ১৫% বেশি, ব্যাগে।') },
+      { id: 'plan', go: 'production/batches', find: text('planned pieces'), title: two('Today\'s plan', 'আজকের প্ল্যান'), body: two('What the store asked for tomorrow, or what its freezer will run short of, in bags of 50.', 'কালকের জন্য দোকান যা চেয়েছে, নইলে ওদের ফ্রিজারে যা কম পড়বে, ৫০-এর ব্যাগে।') },
       { id: 'open', find: button('Stuffing and coating'), act: 'tap', title: two('Log a batch', 'ব্যাচ লিখুন'), body: two('Tap Stuffing and coating each time a batch is made.', 'প্রতিবার ব্যাচ বানালে Stuffing and coating চাপুন।') },
       { id: 'kg', find: field('Stuffing (kg)'), act: 'do', ready: filled('Stuffing (kg)'), title: two('How much stuffing', 'কত স্টাফিং'), body: two('Pick the momo type above, then type the kg, e.g. 5.', 'ওপরে মোমোর ধরন বেছে kg লিখুন, যেমন 5।') },
       { id: 'add', find: button('Add to today\'s batches'), act: 'tap', title: two('Tap Add to today\'s batches', 'Add to today\'s batches চাপুন'), body: two('It joins today\'s list with the time.', 'সময়সহ আজকের লিস্টে উঠে যায়।') },

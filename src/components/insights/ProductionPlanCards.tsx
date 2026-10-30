@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ClipboardList, ShoppingBasket } from 'lucide-react';
-import { FORECAST_TYPES, purchaseList, roundUpToBag, type ForecastDay, type MomoKey } from '../../utils/forecast';
+import { FORECAST_TYPES, purchaseList, type ForecastDay, type MomoKey } from '../../utils/forecast';
+import { housePlan, loadStorePlanData, type StorePlanData } from '../../utils/requestPlanLoad';
 import { useT } from '../../utils/i18n';
 import { ErrorState } from '../ui/error-state';
 import { SkeletonListRows } from '../ui/skeleton';
@@ -9,15 +10,16 @@ import { useHomeData } from '../home/homeData';
 import { EFFECT_CHIP } from './ForecastCard';
 import { fmtDay, rupees } from './useInsightsOverview';
 
-const BUFFER = 0.15;
-
-/** Bags each store is expected to need per day (forecast + 15%, rounded up to whole bags). */
-export function planFromForecast(days: ForecastDay[]) {
-  return days.map((d) => {
-    const need = {} as Record<MomoKey, number>;
-    for (const ft of FORECAST_TYPES) need[ft.key] = roundUpToBag(Math.round(d.pieces[ft.key] * (1 + BUFFER)), ft.bag);
-    return { day: d, need };
-  });
+/**
+ * Bags for each day of the forecast, the stores added up: what they asked for where they have,
+ * else what their freezers will need (utils/requestPlan.ts - bags of 50, a bag every few days for
+ * a slow type).
+ */
+export function weekPlan(stores: StorePlanData[]) {
+  const days = sumForecasts(stores.map((s) => s.overview));
+  if (!days.length) return [];
+  const byDate = new Map(housePlan(stores, days[0].date, days[days.length - 1].date).map((d) => [d.date, d.need]));
+  return days.map((day) => ({ day, need: (byDate.get(day.date) || {}) as Record<MomoKey, number> }));
 }
 
 /** Adds the stores' forecasts day by day. */
@@ -52,7 +54,7 @@ function Card({ icon: Icon, title, hint, className, children }: { icon: typeof C
 export function ProductionPlanCards({ accessToken, storeIds }: { accessToken: string; storeIds: string[] }) {
   const { t } = useT();
   const data = useHomeData();
-  const [days, setDays] = useState<ForecastDay[] | null>(null);
+  const [stores, setStores] = useState<StorePlanData[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const key = storeIds.join(',');
@@ -61,14 +63,14 @@ export function ProductionPlanCards({ accessToken, storeIds }: { accessToken: st
     if (!storeIds.length) return;
     let cancelled = false;
     setError(null);
-    Promise.all(storeIds.map((id) => data.getInsightsOverview(accessToken, id)))
-      .then((list) => { if (!cancelled) setDays(sumForecasts(list)); })
+    loadStorePlanData(accessToken, storeIds, { getOverview: data.getInsightsOverview })
+      .then((list) => { if (!cancelled) setStores(list); })
       .catch((e) => { if (!cancelled) setError(e?.message || t('plan.loadFailed')); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, key, data, attempt]);
 
-  const plan = useMemo(() => planFromForecast(days || []), [days]);
+  const plan = useMemo(() => weekPlan(stores || []), [stores]);
   const tomorrow = plan[1];
   const shopping = useMemo(() => (tomorrow ? purchaseList(tomorrow.need) : []), [tomorrow]);
   const shoppingTotal = shopping.reduce((sum, r) => sum + r.amount, 0);
@@ -76,7 +78,7 @@ export function ProductionPlanCards({ accessToken, storeIds }: { accessToken: st
 
   if (!storeIds.length) return null;
   if (error) return <ErrorState body={error} onRetry={() => setAttempt((n) => n + 1)} />;
-  if (!days) {
+  if (!stores) {
     return (
       <Card icon={ClipboardList} title={t('plan.title')}>
         <SkeletonListRows count={4} leading="none" />

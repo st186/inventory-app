@@ -1,10 +1,10 @@
 // Bags, batch codes and waste reasons for the production -> store momo flow (SOP manual,
-// "Momo journey": momos travel in zip bags of 50 chicken or 20 of every other type, one
-// type and one batch per bag). Request and stock keys here are the camelCase finished-
+// "Momo journey": momos travel in zip bags, one type and one batch per bag). A bag is 50 of every
+// type since 30 Oct 2026 (owner; it was 50 chicken and 20 of the others). Request and stock keys here are the camelCase finished-
 // product keys (`chicken`, `chickenCheese`, ...) - MOMO_TYPES' `inventoryKey`.
 
 export const CHICKEN_BAG_SIZE = 50;
-export const OTHER_BAG_SIZE = 20;
+export const OTHER_BAG_SIZE = 50;
 
 export function bagSize(inventoryKey: string): number {
   return inventoryKey === 'chicken' ? CHICKEN_BAG_SIZE : OTHER_BAG_SIZE;

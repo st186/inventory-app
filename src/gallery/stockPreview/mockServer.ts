@@ -31,15 +31,22 @@ let requests: any[] = [];
 export function seedRequests(variant: string) {
   requests = [
     // Production queue
-    { id: 'a1f3c9d2-new', storeId: 'STORE-1', storeName: 'Bidhan Nagar', requestedBy: 'BM001', requestedByName: 'Nabendu', status: 'pending', requestDate: tomorrow, createdAt: at(today, '08:42'), updatedAt: at(today, '08:42'), ...momos({ chicken: 300, chickenCheese: 120, veg: 100, cheeseCorn: 60, paneer: 60, vegKurkure: 40, chickenKurkure: 80 }), sauces: { 'Red Sauce': true, 'Korean Sauce': true }, kitchenUtilities: { Butter: { quantity: 2, unit: 'pkt' } }, notes: 'Saturday rush expected' },
-    { id: 'b7e1aa40-pack', storeId: 'STORE-2', storeName: 'City Centre', requestedBy: 'BM007', requestedByName: 'Rupa', status: 'in-preparation', requestDate: tomorrow, createdAt: at(today, '08:10'), updatedAt: at(today, '09:30'), acceptedAt: at(today, '09:00'), ...momos({ chicken: 200, veg: 80, paneer: 40, chickenKurkure: 60 }) },
-    { id: 'c03d77e1-event', storeId: 'EVENT-1', storeName: 'Durgapur Winter Fair', eventId: 'EVENT-1', productionHouseId: 'PH-1', parentStoreId: 'STORE-1', requestedBy: 'BM011', requestedByName: 'Arif', status: 'prepared', requestDate: today, createdAt: at(yesterday, '19:05'), updatedAt: at(today, '07:50'), acceptedAt: at(yesterday, '20:00'), preparedAt: at(today, '07:50'), ...momos({ chicken: 150, chickenCheese: 60, veg: 40 }) },
-    { id: 'd52b9f10-sent', storeId: 'STORE-1', storeName: 'Bidhan Nagar', requestedBy: 'BM001', requestedByName: 'Nabendu', status: 'shipped', requestDate: variant === 'sent' ? today : yesterday, createdAt: at(variant === 'sent' ? today : yesterday, '08:30'), updatedAt: at(variant === 'sent' ? today : yesterday, '14:10'), acceptedAt: at(variant === 'sent' ? today : yesterday, '09:00'), preparedAt: at(variant === 'sent' ? today : yesterday, '12:40'), shippedAt: at(variant === 'sent' ? today : yesterday, '14:10'), ...momos({ chicken: 250, chickenCheese: 100, veg: 100, paneer: 40, chickenKurkure: 60 }), sauces: { 'Red Sauce': true, 'Green Sauce': true }, shippedSauces: { 'Red Sauce': true, 'Green Sauce': false }, shippingQuantities: undefined, shippedQuantities: { chicken: 250, chickenCheese: 100, veg: 80, paneer: 40, chickenKurkure: 60 }, shippingNotes: { veg: 'Batch ran short', 'sauce_Green Sauce': 'Not made today' }, dispatch: { bags: { chicken: 5, chickenCheese: 5, veg: 4, paneer: 2, chickenKurkure: 3 }, batches: { chicken: [{ code: '0511-CHK-B2', pieces: 250 }] }, boxes: 2, containerNumbers: 'Box 1-2', packedBy: 'Sohel', checkedBy: 'Mitali', packedAt: at(variant === 'sent' ? today : yesterday, '13:55') } },
-    { id: 'e9a01c55-done', storeId: 'STORE-2', storeName: 'City Centre', requestedBy: 'BM007', requestedByName: 'Rupa', status: 'delivered', requestDate: yesterday, createdAt: at(yesterday, '08:20'), updatedAt: at(yesterday, '17:00'), shippedAt: at(yesterday, '13:00'), deliveredAt: at(yesterday, '16:50'), ...momos({ chicken: 200, veg: 60 }), shippedQuantities: { chicken: 200, veg: 60 }, receipt: { lines: { chicken: { shipped: 200, received: 200, damaged: 0 }, veg: { shipped: 60, received: 58, damaged: 2, damageReason: 'crushed' } }, saucesMissing: [], boxesReceived: 1, hardFrozen: true, receivedBy: 'u7', receivedByName: 'Rupa', receivedAt: at(yesterday, '16:50'), photoIds: [] } },
+    { id: 'a1f3c9d2-new', storeId: 'STORE-1', storeName: 'Bidhan Nagar', requestedBy: 'BM001', requestedByName: 'Nabendu', status: 'pending', requestDate: tomorrow, createdAt: at(today, '08:42'), updatedAt: at(today, '08:42'), ...momos({ chicken: 300, chickenCheese: 100, veg: 100, cheeseCorn: 50, paneer: 50, vegKurkure: 50, chickenKurkure: 100 }), sauces: { 'Red Sauce': true, 'Korean Sauce': true }, kitchenUtilities: { Butter: { quantity: 2, unit: 'pkt' } }, notes: 'Saturday rush expected' },
+    { id: 'b7e1aa40-pack', storeId: 'STORE-2', storeName: 'City Centre', requestedBy: 'BM007', requestedByName: 'Rupa', status: 'in-preparation', requestDate: tomorrow, createdAt: at(today, '08:10'), updatedAt: at(today, '09:30'), acceptedAt: at(today, '09:00'), ...momos({ chicken: 200, veg: 100, paneer: 50, chickenKurkure: 50 }) },
+    { id: 'c03d77e1-event', storeId: 'EVENT-1', storeName: 'Durgapur Winter Fair', eventId: 'EVENT-1', productionHouseId: 'PH-1', parentStoreId: 'STORE-1', requestedBy: 'BM011', requestedByName: 'Arif', status: 'prepared', requestDate: today, createdAt: at(yesterday, '19:05'), updatedAt: at(today, '07:50'), acceptedAt: at(yesterday, '20:00'), preparedAt: at(today, '07:50'), ...momos({ chicken: 150, chickenCheese: 50, veg: 50 }) },
+    { id: 'd52b9f10-sent', storeId: 'STORE-1', storeName: 'Bidhan Nagar', requestedBy: 'BM001', requestedByName: 'Nabendu', status: 'shipped', requestDate: variant === 'sent' ? today : yesterday, createdAt: at(variant === 'sent' ? today : yesterday, '08:30'), updatedAt: at(variant === 'sent' ? today : yesterday, '14:10'), acceptedAt: at(variant === 'sent' ? today : yesterday, '09:00'), preparedAt: at(variant === 'sent' ? today : yesterday, '12:40'), shippedAt: at(variant === 'sent' ? today : yesterday, '14:10'), ...momos({ chicken: 250, chickenCheese: 100, veg: 100, paneer: 50, chickenKurkure: 50 }), sauces: { 'Red Sauce': true, 'Green Sauce': true }, shippedSauces: { 'Red Sauce': true, 'Green Sauce': false }, shippingQuantities: undefined, shippedQuantities: { chicken: 250, chickenCheese: 100, veg: 50, paneer: 50, chickenKurkure: 50 }, shippingNotes: { veg: 'Batch ran short', 'sauce_Green Sauce': 'Not made today' }, dispatch: { bags: { chicken: 5, chickenCheese: 2, veg: 1, paneer: 1, chickenKurkure: 1 }, batches: { chicken: [{ code: '0511-CHK-B2', pieces: 250 }] }, boxes: 2, containerNumbers: 'Box 1-2', packedBy: 'Sohel', checkedBy: 'Mitali', packedAt: at(variant === 'sent' ? today : yesterday, '13:55') } },
+    { id: 'e9a01c55-done', storeId: 'STORE-2', storeName: 'City Centre', requestedBy: 'BM007', requestedByName: 'Rupa', status: 'delivered', requestDate: yesterday, createdAt: at(yesterday, '08:20'), updatedAt: at(yesterday, '17:00'), shippedAt: at(yesterday, '13:00'), deliveredAt: at(yesterday, '16:50'), ...momos({ chicken: 200, veg: 50 }), shippedQuantities: { chicken: 200, veg: 50 }, receipt: { lines: { chicken: { shipped: 200, received: 200, damaged: 0 }, veg: { shipped: 50, received: 48, damaged: 2, damageReason: 'crushed' } }, saucesMissing: [], boxesReceived: 1, hardFrozen: true, receivedBy: 'u7', receivedByName: 'Rupa', receivedAt: at(yesterday, '16:50'), photoIds: [] } },
   ];
   for (let i = 2; i <= 9; i++) {
     const d = addDays(today, -i);
-    requests.push({ id: `old-${i}-store1`, storeId: 'STORE-1', storeName: 'Bidhan Nagar', requestedBy: 'BM001', requestedByName: 'Nabendu', status: 'delivered', requestDate: d, createdAt: at(d, '08:35'), updatedAt: at(d, '17:00'), shippedAt: at(d, '13:00'), deliveredAt: at(d, '16:30'), ...momos({ chicken: 200 + i * 10, chickenCheese: 80, veg: 80, cheeseCorn: 40, paneer: 40, vegKurkure: 20, chickenKurkure: 60 }), shippedQuantities: momos({ chicken: 200 + i * 10, chickenCheese: 80, veg: 80, cheeseCorn: 40, paneer: 40, vegKurkure: 20, chickenKurkure: 60 }) });
+    const sent = { chicken: 250, chickenCheese: 50, veg: 100, cheeseCorn: 50, paneer: i % 3 === 0 ? 50 : 0, vegKurkure: i === 6 ? 50 : 0, chickenKurkure: 50 };
+    requests.push({
+      id: `old-${i}-store1`, storeId: 'STORE-1', storeName: 'Bidhan Nagar', requestedBy: 'BM001', requestedByName: 'Nabendu', status: 'delivered', requestDate: d, createdAt: at(d, '08:35'), updatedAt: at(d, '17:00'), shippedAt: at(d, '13:00'), deliveredAt: at(d, '16:30'),
+      ...momos(sent), shippedQuantities: momos(sent),
+      kitchenUtilities: { Coriander: { quantity: 1, unit: 'bundle' }, ...(i % 2 === 0 ? { Oil: { quantity: 2, unit: 'litre' } } : {}) },
+      sauces: i % 2 === 0 ? { 'Soup Premix': true } : {},
+      utilities: i % 3 === 0 ? { 'Table Box': 100 } : {},
+    });
   }
   return requests;
 }
@@ -66,14 +73,6 @@ let stockOuts: any[] = [
   { id: 'so3', storeId: 'STORE-1', item: 'Paneer Momo', category: 'momo', reason: 'sold_out', startAt: at(yesterday, '20:10'), endAt: at(yesterday, '21:30'), offOnline: true, backOnline: true, createdByName: 'Raju', createdAt: at(yesterday, '20:11') },
 ];
 
-function forecast() {
-  const days = Array.from({ length: 7 }, (_, i) => addDays(today, i));
-  return days.map((date, i) => ({
-    date, weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${date}T00:00:00`).getDay()], revenue: 9800 + i * 300, revenueLow: 8000, revenueHigh: 12000,
-    pieces: { chicken: 210 + i * 5, chickenCheese: 80, veg: 70, cheeseCorn: 35, paneer: 35, vegKurkure: 22, chickenKurkure: 55 }, vegPieces: 162, nonVegPieces: 345, basis: 'last 8 same weekdays',
-  }));
-}
-
 const firstOfMonth = `${today.slice(0, 7)}-01`;
 let morningWeighIn: any = null;
 
@@ -89,7 +88,7 @@ export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, 
   { method: 'GET', re: /\/stock-recalibration\/history\//, reply: () => ({ history: [{ id: 'rc1', date: `${firstOfMonth}T09:00:00`, status: 'approved', locationName: 'Bidhan Nagar', items: inventoryItems.map((it, i) => ({ itemId: it.name, itemName: it.displayName, actualQuantity: 60 + i * 10, systemQuantity: 60 + i * 10, unit: 'pcs', difference: 0 })) }] }) },
   { method: 'GET', re: /\/stock-recalibration\/latest\//, reply: () => ({ record: { date: `${firstOfMonth}T09:00:00`, isOpeningBalance: true, status: 'approved', items: inventoryItems.map((it, i) => ({ itemId: it.name, actualQuantity: 60 + i * 10 })) }, lastRecalibration: `${firstOfMonth}T09:00:00` }) },
   { method: 'GET', re: /\/stock-recalibration\/pending-approval$/, reply: () => ({ recalibrations: [{ id: 'rc9', date: at(yesterday, '21:00'), locationName: 'Bidhan Nagar', locationType: 'store', status: 'pending', performedBy: 'someone-else', performedByName: 'Nabendu', items: [{ itemName: 'Chicken Momo', systemQuantity: 120, actualQuantity: 104, difference: -16, unit: 'pcs', adjustmentType: 'wastage', notes: 'Soft bag' }, { itemName: 'Veg Momo', systemQuantity: 60, actualQuantity: 64, difference: 4, unit: 'pcs', adjustmentType: 'counting_error' }] }] }) },
-  { method: 'GET', re: /\/insights\/overview/, reply: () => ({ today, storeId: 'STORE-1', history: [], events: [], forecast: forecast(), learned: {} }) },
+  { method: 'GET', re: /\/insights\/overview/, reply: () => overview() },
   { method: 'GET', re: /\/events\/momo-returns/, reply: (_m, _b, url) => ({ returns: url.searchParams.get('status') === 'sent' ? [{ id: 'mr1', eventId: 'EVENT-1', eventName: 'Durgapur Winter Fair', productionHouseId: 'PH-1', date: yesterday, returned: { chicken: 40, veg: 20 }, wasted: {}, returnedPieces: 60, wastedPieces: 0, wasteReason: null, status: 'sent' }] : [] }) },
   // The guided production day (KitchenDay.tsx): last night's counts, cheese corn last weighed weeks
   // ago, and the morning weigh-in once saved (it becomes the day's opening).
@@ -119,9 +118,22 @@ export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, 
   { method: 'GET', re: /\/stock-outs$/, reply: () => ({ entries: stockOuts }) },
   { method: 'POST', re: /\/stock-outs$/, reply: (_m, body) => { const e = { ...body, id: `so-${Date.now()}`, createdByName: 'Tumpa' }; stockOuts = [e, ...stockOuts]; return { entry: e }; } },
   { method: 'PUT', re: /\/stock-outs\/[^/]+\/([^/]+)$/, reply: (m, body) => { const e = stockOuts.find((x) => x.id === m[1]); Object.assign(e, body); return { entry: e }; } },
-  { method: 'GET', re: /\/stock-wastage$/, reply: () => ({ entry: null }) },
+  { method: 'GET', re: /\/stock-wastage$/, reply: (_m, _b, url) => (url.searchParams.get('from') ? { entries: [] } : { entry: null }) },
+  { method: 'GET', re: /\/supply-alerts$/, reply: () => ({ canManage: false, myPlace: { kind: 'store', id: 'STORE-1', name: 'Bidhan Nagar' }, alerts: [{ id: 'al1', placeKind: 'store', placeId: 'STORE-1', placeName: 'Bidhan Nagar', item: 'Parcel box', level: 'low', raisedBy: [{ id: 'u5', name: 'Tumpa', at: at(today, '18:10') }], status: 'open', createdAt: at(today, '18:10'), updatedAt: at(today, '18:10'), canClose: false, mine: false }] }) },
   { method: 'GET', re: /\/utilities-consumption$/, reply: () => ({ success: true, startDate: '2026-07-19', endDate: yesterday, daysWithData: 108, boxesUsed: 8240, traysUsed: 3110, unattributedOrders: 4, beverageConsumption: { 'Coke 250ml': 410, 'Sprite 250ml': 230 } }) },
 ];
+
+// Momos sold a day and the coming week, for Bunny's fill: chicken sells well, paneer about 15 a day,
+// veg kurkure about 9 (too slow for a bag of 50 in 4 days), chicken cheese about 11 (slow).
+function overview() {
+  const pieces = { chicken: 230, chickenCheese: 11, veg: 85, cheeseCorn: 40, paneer: 15, vegKurkure: 5, chickenKurkure: 45 };
+  const history = Array.from({ length: 20 }, (_, i) => ({ date: addDays(today, -20 + i), revenue: 12000, pieces }));
+  const forecast = Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(today, i);
+    return { date, weekday: new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }), revenue: 12500, revenueLow: 10000, revenueHigh: 15000, pieces, vegPieces: 145, nonVegPieces: 286, basis: 'sample' };
+  });
+  return { today, storeId: 'STORE-1', history, events: [], forecast, yesterday: { date: yesterday, actual: 12000, actualPieces: pieces, expected: forecast[0] }, learned: {} };
+}
 
 export function installMockServer() {
   const realFetch = window.fetch.bind(window);

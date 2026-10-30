@@ -1,6 +1,6 @@
-// The store incharge's request form: Bunny's forecast fill, momos in pieces (whole bags from
-// Phase 1 go-live: 50 chicken, 20 of every other type), then sauces, kitchen supplies,
-// utilities and notes. Sending happens from the screen's sticky bar (ProductionRequests.tsx).
+// The store incharge's request form: Bunny's fill (momos from the store's freezer and the forecast,
+// sauces and supplies from how often they're asked for), momos in pieces (whole bags of 50 from
+// Phase 1 go-live), then sauces, kitchen supplies, utilities and notes. Sending happens from the screen's sticky bar (ProductionRequests.tsx).
 import * as React from 'react';
 import { Sparkles } from 'lucide-react';
 import { Button } from '../ui/button';
@@ -15,6 +15,8 @@ import { useT } from '../../utils/i18n';
 import { bagSize, isPhase1Live, roundUpToBags } from '../../utils/batches';
 import type { StockRequestsVM } from './useStockRequests';
 import { CollapsibleCard, MultiChips, QuantityStepper, bagsText, dayLabel, formatCount, momoName } from './stockShared';
+
+const oneDecimal = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 1 });
 
 export function StoreRequestForm({ vm }: { vm: StockRequestsVM }) {
   const { t, lang } = useT();
@@ -46,6 +48,7 @@ export function StoreRequestForm({ vm }: { vm: StockRequestsVM }) {
           action={<Button variant="link" size="sm" onClick={() => setHowOpen(true)}>{t('stock.req.howWorkedOut')}</Button>}
         >
           {t('stock.req.bunnyFilledBody')}
+          {suggestion.supplies.length > 0 && ` ${t('stock.req.bunnyFilledSupplies', { n: suggestion.supplies.length })}`}
         </Callout>
       ) : (
         <Callout
@@ -67,7 +70,13 @@ export function StoreRequestForm({ vm }: { vm: StockRequestsVM }) {
           const have = currentStockEstimate[camelKey] ?? 0;
           const step = wholeBags ? bagSize(camelKey) : camelKey === 'chicken' ? 30 : 15;
           const name = momoName(lang, camelKey, label);
-          const sub = [t('stock.req.leftNow', { n: formatCount(have) }), wholeBags ? (current > 0 ? bagsText(lang, current, camelKey) : t('stock.req.bagsOf', { n: step })) : null].filter(Boolean).join(' · ');
+          // After Bunny's fill: what the store has by Bunny's count, and why a slow type got no bag.
+          const row = suggestion?.rows.find((r) => r.key === camelKey);
+          const sub = [
+            row ? t('stock.req.storeHas', { n: formatCount(row.onHand) }) : t('stock.req.leftNow', { n: formatCount(have) }),
+            wholeBags ? (current > 0 ? bagsText(lang, current, camelKey) : t('stock.req.bagsOf', { n: step })) : null,
+            row?.tooSlow ? t('stock.req.leftOut', { n: formatCount(row.expected) }) : row?.slow && row.daysPerBag ? t('stock.req.bagLasts', { n: oneDecimal(row.daysPerBag) }) : null,
+          ].filter(Boolean).join(' · ');
           return (
             <ListRow
               key={camelKey}
@@ -177,19 +186,48 @@ export function StoreRequestForm({ vm }: { vm: StockRequestsVM }) {
               {suggestion.day.event && suggestion.day.event.effect !== 'normal' ? ` · ${suggestion.day.event.name}` : ''}
             </p>
             <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
-              {suggestion.rows.filter((r) => r.expected > 0 || r.pieces > 0).map((r) => (
-                <ListRow
-                  key={r.key}
-                  density="compact"
-                  title={momoName(lang, r.key, r.label)}
-                  subtitle={[
-                    t('stock.req.expectedLine', { n: formatCount(r.expected) }),
-                    r.carry ? t('stock.req.leftLine', { n: formatCount(r.carry), day: suggestion.carryFrom ? dayLabel(lang, suggestion.carryFrom) : '' }) : null,
-                  ].filter(Boolean).join(' · ')}
-                  trailing={<span className="num text-body-md font-semibold text-text">{formatCount(r.pieces)}</span>}
-                />
-              ))}
+              {suggestion.rows.filter((r) => r.expected > 0 || r.pieces > 0 || r.onHand > 0).map((r) => {
+                const label = finishedProducts.find((p) => p.camelKey === r.key)?.label || r.key;
+                // Why a type got fewer bags, or none: these run long, so they wrap instead of clipping.
+                const notes = [
+                  r.tooSlow ? t('stock.req.tooSlowLine', { n: formatCount(r.expected) }) : r.slow && r.daysPerBag ? t('stock.req.slowLine', { n: oneDecimal(r.daysPerBag) }) : null,
+                  r.goingOff > 0 ? t('stock.req.goingOff', { n: formatCount(r.goingOff) }) : null,
+                ].filter(Boolean);
+                return (
+                  <div key={r.key} className="flex items-start gap-3 px-4 py-3">
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="text-body-md font-medium text-text">{momoName(lang, r.key, label)}</span>
+                      <span className="text-label text-text-3">
+                        {t(r.slow ? 'stock.req.expectedPlain' : 'stock.req.expectedLine', { n: formatCount(r.expected) })} · {t('stock.req.storeHas', { n: formatCount(r.onHand) })}
+                      </span>
+                      {notes.map((n) => <span key={n} className="text-label text-text-2">{n}</span>)}
+                    </div>
+                    <span className="num text-body-md font-semibold text-text">{formatCount(r.pieces)}</span>
+                  </div>
+                );
+              })}
             </div>
+            {suggestion.supplies.length > 0 && (
+              <>
+                <p className="text-label font-semibold text-text-2">{t('stock.req.suppliesTitle')}</p>
+                <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+                  {suggestion.supplies.map((p) => {
+                    const why = p.why.kind === 'flag'
+                      ? (p.why.by ? t(p.why.level === 'out' ? 'stock.req.supplyOut' : 'stock.req.supplyLow', { name: p.why.by }) : t('stock.req.supplyFlagged'))
+                      : t(p.why.everyDays <= 1 ? 'stock.req.supplyDaily' : 'stock.req.supplyDue', { n: p.why.everyDays, day: dayLabel(lang, p.why.last) });
+                    return (
+                      <ListRow
+                        key={`${p.section}:${p.name}`}
+                        density="compact"
+                        title={p.name}
+                        subtitle={why}
+                        trailing={p.section === 'sauce' ? undefined : <span className="num text-body-md font-semibold text-text">{formatCount(p.quantity)} {p.unit}</span>}
+                      />
+                    );
+                  })}
+                </div>
+              </>
+            )}
             <p className="text-label text-text-3">{t('stock.req.countDiffers')}</p>
           </div>
         )}

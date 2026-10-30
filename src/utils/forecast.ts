@@ -24,12 +24,12 @@ export type MomoKey = 'chicken' | 'chickenCheese' | 'veg' | 'cheeseCorn' | 'pane
 
 export const FORECAST_TYPES: { key: MomoKey; label: string; salesKey: string; veg: boolean; bag: number }[] = [
   { key: 'chicken', label: 'Chicken', salesKey: 'Chicken Momos', veg: false, bag: 50 },
-  { key: 'chickenCheese', label: 'Chicken Cheese', salesKey: 'Chicken Cheese Momos', veg: false, bag: 20 },
-  { key: 'chickenKurkure', label: 'Chicken Kurkure', salesKey: 'Chicken Kurkure Momos', veg: false, bag: 20 },
-  { key: 'veg', label: 'Veg', salesKey: 'Veg Momos', veg: true, bag: 20 },
-  { key: 'cheeseCorn', label: 'Cheese Corn', salesKey: 'Corn Cheese Momos', veg: true, bag: 20 },
-  { key: 'paneer', label: 'Paneer', salesKey: 'Paneer Momos', veg: true, bag: 20 },
-  { key: 'vegKurkure', label: 'Veg Kurkure', salesKey: 'Veg Kurkure Momos', veg: true, bag: 20 },
+  { key: 'chickenCheese', label: 'Chicken Cheese', salesKey: 'Chicken Cheese Momos', veg: false, bag: 50 },
+  { key: 'chickenKurkure', label: 'Chicken Kurkure', salesKey: 'Chicken Kurkure Momos', veg: false, bag: 50 },
+  { key: 'veg', label: 'Veg', salesKey: 'Veg Momos', veg: true, bag: 50 },
+  { key: 'cheeseCorn', label: 'Cheese Corn', salesKey: 'Corn Cheese Momos', veg: true, bag: 50 },
+  { key: 'paneer', label: 'Paneer', salesKey: 'Paneer Momos', veg: true, bag: 50 },
+  { key: 'vegKurkure', label: 'Veg Kurkure', salesKey: 'Veg Kurkure Momos', veg: true, bag: 50 },
 ];
 
 export type DayEffect = 'normal' | 'closed' | 'low_nonveg' | 'busy' | 'quiet';
@@ -347,18 +347,6 @@ export function tuneSettings(days: DayRecord[], eventList: CalendarEvent[], asOf
 }
 
 export const roundUpToBag = (pieces: number, bag: number) => (pieces <= 0 ? 0 : Math.ceil(pieces / bag) * bag);
-
-// What to ask production for: the day's expected sales plus a buffer, less what is likely left
-// over from the last delivery, in whole bags.
-export function suggestRequest(day: ForecastDay, carryover: Partial<Record<MomoKey, number>>, buffer = 0.15) {
-  return FORECAST_TYPES.map((t) => {
-    const expected = day.pieces[t.key] || 0;
-    const carry = Math.max(0, Math.round(carryover[t.key] || 0));
-    const raw = expected * (1 + buffer) - carry;
-    const pieces = raw < 5 ? 0 : roundUpToBag(raw, t.bag);
-    return { key: t.key, label: t.label, expected, carry, pieces, bags: pieces / t.bag };
-  });
-}
 
 // Ingredients per momo (grams), from the SOP costing recipes (sop costing.json, 24 Oct 2026):
 // 10 g dough wrapper; fillings chicken 20 g, chicken cheese 20 g, veg 15 g, cheese corn 16 g,

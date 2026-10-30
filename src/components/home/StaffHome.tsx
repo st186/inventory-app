@@ -19,7 +19,7 @@ import { ShiftClockCard } from '../kpi/ShiftClockCard';
 import { useWorkplaceDue } from '../workplace/WorkplaceDueCard';
 import { fmt12 } from '../workplace/workplaceUtils';
 import { useProfileCompletion } from '../ProfileCompletionCard';
-import { planFromForecast, sumForecasts } from '../insights/ProductionPlanCards';
+import { housePlan, loadStorePlanData } from '../../utils/requestPlanLoad';
 import { getAssignedProductionHouseIds, getAssignedStoreIds } from '../../utils/entityAccess';
 import { countedCashInHand, isPlaceholderSale } from '../../utils/paytmRules';
 import type { StockOutEntry } from '../../utils/stockOuts';
@@ -106,9 +106,14 @@ function InchargeHome() {
   const timesheets = useTimesheetsWaiting(nav.perms.isEmployee && nav.perms.isAnyIncharge, user.employeeId);
   const stockOuts = useLoad(store ? () => data.getStockOuts(token, store, today, today) : null, [store, today, token, data]);
   const wastage = useLoad(store ? () => data.getStockWastageEntry(token, store, today) : null, [store, today, token, data]);
+  // Tomorrow's bags for the stores this kitchen supplies (utils/requestPlan.ts, same as the Production page).
   const plan = useLoad(isProduction && suppliedStoreIds.length
-    ? async () => planFromForecast(sumForecasts(await Promise.all(suppliedStoreIds.map((id) => data.getInsightsOverview(token, id)))))
-    : null, [isProduction, suppliedStoreIds.join(','), token, data]);
+    ? async () => {
+      const tomorrow = addDays(today, 1);
+      const list = await loadStorePlanData(token, suppliedStoreIds, { getOverview: data.getInsightsOverview, items: context.inventoryItems });
+      return housePlan(list, tomorrow, tomorrow)[0] || null;
+    }
+    : null, [isProduction, suppliedStoreIds.join(','), token, data, today]);
 
   const requests = context.productionRequests || [];
   const mine = requests.filter((r) => (isProduction ? suppliedStoreIds.includes(r.storeId) : r.storeId === store));
@@ -219,8 +224,7 @@ function InchargeHome() {
         count: toPack.length || undefined,
         onOpen: () => open('production/requests'),
       });
-      const tomorrow = plan.data?.[1];
-      const pieces = tomorrow ? Object.values(tomorrow.need).reduce((s, n) => s + n, 0) : 0;
+      const pieces = plan.data ? Object.values(plan.data.need).reduce((s, n) => s + n, 0) : 0;
       if (has('production/batches')) {
         list.push({
           key: 'plan', icon: ClipboardList, title: t('home.task.plan'), due: 660, status: 'none',

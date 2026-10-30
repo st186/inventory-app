@@ -178,6 +178,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     context.user?.accessToken,
     resolvedProductionHouseId ? (context.stores || []).filter((st) => st.productionHouseId === resolvedProductionHouseId).map((st) => st.id) : [],
     selectedDate,
+    context.inventoryItems,
   );
 
   const fetchLedger = async () => {
