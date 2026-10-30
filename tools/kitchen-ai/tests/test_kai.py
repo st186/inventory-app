@@ -118,6 +118,10 @@ def _():
     assert zones.zone_of(z, 0.8, 0.2) == "Kitchen"
     assert zones.zone_of([], 0.5, 0.5) == "" and zones.load(zdir, "nope") == []
     assert zones.names(z) == ["Folding table", "Kitchen"]
+    # standing beside the table: feet outside it, body reaching in
+    assert zones.touches(z, "Folding table", (0.45, 0.2, 0.7, 0.6))
+    assert not zones.touches(z, "Folding table", (0.7, 0.1, 0.9, 0.4))
+    assert not zones.touches(z, "Steamer", (0.45, 0.2, 0.7, 0.6))
 
 
 @test("top colour in Bunny's words, and near misses")

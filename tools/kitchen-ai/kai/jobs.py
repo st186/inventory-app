@@ -16,6 +16,7 @@ from .store import ACTIVITIES
 from .track import Tracker
 
 BURST_MINUTES_PER_FRAME = 1.75  # a burst every 35 minutes, 20 frames: what each burst frame stands for
+FOLDING_ZONE = "Folding table"  # owner, 30 Oct 2026: momos are folded only there (zone F)
 
 
 def _key(ts):
@@ -77,8 +78,11 @@ def prelabel(s, store, looker, cam, date=None, say=print):
             ids = store.add_frame(cam, ts, "burst", frame, people)
             seen = bursts.frame_labels(look, i)
             pairs = bursts.match([x[1] for x in seen], [((p.box[0] + p.box[2]) / 2, p.top, p.box[3]) for p in people])
+            has_table = any(n == FOLDING_ZONE for n, _ in looker.zones)
             for b, a in pairs.items():
                 act = seen[a][2] if seen[a][2] in ACTIVITIES else "other"
+                if act == "folding" and has_table and not zone_mod.touches(looker.zones, FOLDING_ZONE, people[b].box):
+                    continue  # Bunny said folding away from the folding table: not learned from
                 store.set_ai(ids[b], act, seen[a][3])
                 labelled += 1
             frames += 1
