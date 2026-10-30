@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { useT, type I18nKey } from '../../utils/i18n';
+import { Button } from '../ui/button';
 import { getTodayIST } from '../../utils/timezone';
 import { EmptyState } from '../ui/empty-state';
 import { ErrorState } from '../ui/error-state';
@@ -38,9 +39,25 @@ export function WhoIsWho() {
   const { t } = useT();
   const topName = useTopName();
   const [data, setData] = useState<api.WhoIs | null>(null);
+  const [changing, setChanging] = useState(false);
   const load = useCallback(() => { api.getWhoIs(getTodayIST()).then(setData).catch(() => setData(null)); }, []);
   useEffect(() => { load(); }, [load]);
   if (!data || !data.cameras.some((c) => c.slots.length)) return null;
+  // Everyone named: one line with the names (owner, 30 Oct 2026: the named card kept showing). Opens
+  // again by itself when the camera sees a new top colour; tomorrow's people start unnamed.
+  const slots = data.cameras.flatMap((c) => c.slots);
+  if (!changing && slots.every((s) => s.name)) {
+    return (
+      <section className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-surface p-4" aria-label={t('cam.whoTitle')}>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <h2 className="text-body-md font-semibold text-text">{t('cam.whoDone')}</h2>
+          <p className="text-body-sm text-text">{slots.map((s) => `${topName(s.slot)}: ${s.name === SOMEONE_ELSE ? t('cam.whoSomeoneElseShort') : s.name}`).join(' · ')}</p>
+          <p className="text-body-sm text-text-2">{t('cam.whoDoneNote')}</p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => setChanging(true)}>{t('cam.whoChange')}</Button>
+      </section>
+    );
+  }
   const save = async (cameraId: string, slot: string, name: string) => {
     try {
       await api.setWhoIs({ cameraId, date: data.date, slot, name });
@@ -51,9 +68,12 @@ export function WhoIsWho() {
   };
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" aria-label={t('cam.whoTitle')}>
-      <div className="flex flex-col gap-1">
-        <h2 className="text-body-md font-semibold text-text">{t('cam.whoTitle')}</h2>
-        <p className="text-body-sm text-text-2">{t('cam.whoBody')}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <h2 className="text-body-md font-semibold text-text">{t('cam.whoTitle')}</h2>
+          <p className="text-body-sm text-text-2">{t('cam.whoBody')}</p>
+        </div>
+        {changing && <Button size="sm" variant="secondary" onClick={() => setChanging(false)}>{t('cam.whoFinished')}</Button>}
       </div>
       {data.cameras.map((c) => c.slots.map((s) => (
         <div key={`${c.cameraId}-${s.slot}`} className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
