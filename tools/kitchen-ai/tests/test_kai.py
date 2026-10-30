@@ -149,8 +149,14 @@ def _():
     assert bursts.match([{"top": "red", "where": ""}], [(0.5, "green")]) == {0: 0}  # one and one always pair
     ai = [{"top": "black", "where": "left, folding"}, {"top": "blue", "where": "right by the steamer"}]
     assert bursts.match(ai, [(0.8, "navy"), (0.2, "black")]) == {1: 0, 0: 1}
-    assert bursts.match(ai, [(0.2, "green"), (0.8, "red")]) == {}
+    # our colour reading failed, but the same two people and the sides settle it
+    assert bursts.match(ai, [(0.2, "green"), (0.8, "red")]) == {0: 0, 1: 1}
+    # more boxes than Bunny's people: colour must agree
+    assert bursts.match(ai[:1], [(0.2, "green"), (0.8, "red")]) == {}
     assert bursts.match(ai[:1], [(0.2, "black"), (0.7, "white")]) == {0: 0}
+    # the doorway is the top of the picture: far
+    door = [{"top": "yellow", "where": "standing in doorway, top right"}, {"top": "red", "where": "seated at right by the stool"}]
+    assert bursts.match(door, [(0.78, "grey", 0.62), (0.81, "blue", 0.33)]) == {1: 0, 0: 1}
     assert bursts.side("Centre of the table") == (0.25, 0.75) and bursts.side("by the door") is None
     look = {"people": [{"top": "black", "where": "left", "activities": ["folding", "away", "phone"], "phoneFrames": [3]},
                        {"top": "blue", "where": "", "activities": ["idle", "packing", "away"], "phoneFrames": []}]}

@@ -54,7 +54,9 @@ def top_colour(frame, box):
     body below the head, not the hairnet or the legs."""
     x1, y1, x2, y2 = box
     w, h = x2 - x1, y2 - y1
-    a, b = int(y1 + 0.25 * h), int(y1 + 0.55 * h)
+    # Standing: the top is a quarter to half way down the box. Seated or bending (a squat box), it
+    # starts higher and the lap and what's on it fill the lower half.
+    a, b = (int(y1 + 0.25 * h), int(y1 + 0.55 * h)) if h >= 1.8 * w else (int(y1 + 0.12 * h), int(y1 + 0.42 * h))
     c, d = int(x1 + 0.25 * w), int(x2 - 0.25 * w)
     patch = frame[max(0, a):max(a + 1, b), max(0, c):max(c + 1, d)]
     if patch.size == 0:

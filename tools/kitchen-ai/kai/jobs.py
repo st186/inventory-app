@@ -76,7 +76,7 @@ def prelabel(s, store, looker, cam, date=None, say=print):
             frame, people = looker.look(frame, later)
             ids = store.add_frame(cam, ts, "burst", frame, people)
             seen = bursts.frame_labels(look, i)
-            pairs = bursts.match([x[1] for x in seen], [((p.box[0] + p.box[2]) / 2, p.top) for p in people])
+            pairs = bursts.match([x[1] for x in seen], [((p.box[0] + p.box[2]) / 2, p.top, p.box[3]) for p in people])
             for b, a in pairs.items():
                 act = seen[a][2] if seen[a][2] in ACTIVITIES else "other"
                 store.set_ai(ids[b], act, seen[a][3])
