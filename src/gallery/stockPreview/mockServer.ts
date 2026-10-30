@@ -120,7 +120,10 @@ export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, 
   { method: 'PUT', re: /\/stock-outs\/[^/]+\/([^/]+)$/, reply: (m, body) => { const e = stockOuts.find((x) => x.id === m[1]); Object.assign(e, body); return { entry: e }; } },
   { method: 'GET', re: /\/stock-wastage$/, reply: (_m, _b, url) => (url.searchParams.get('from') ? { entries: [] } : { entry: null }) },
   { method: 'GET', re: /\/supply-alerts$/, reply: () => ({ canManage: false, myPlace: { kind: 'store', id: 'STORE-1', name: 'Bidhan Nagar' }, alerts: [{ id: 'al1', placeKind: 'store', placeId: 'STORE-1', placeName: 'Bidhan Nagar', item: 'Parcel box', level: 'low', raisedBy: [{ id: 'u5', name: 'Tumpa', at: at(today, '18:10') }], status: 'open', createdAt: at(today, '18:10'), updatedAt: at(today, '18:10'), canClose: false, mine: false }] }) },
-  { method: 'GET', re: /\/utilities-consumption$/, reply: () => ({ success: true, startDate: '2026-07-19', endDate: yesterday, daysWithData: 108, boxesUsed: 8240, traysUsed: 3110, unattributedOrders: 4, beverageConsumption: { 'Coke 250ml': 410, 'Sprite 250ml': 230 } }) },
+  { method: 'GET', re: /\/utilities-consumption$/, reply: () => ({ success: true, startDate: '2026-07-19', endDate: yesterday, daysWithData: 108, boxesUsed: 8240, traysUsed: 3110, unattributedOrders: 4, beverageConsumption: { 'Coke 250ml': 410, 'Sprite 250ml': 230 },
+    burgers: { since: '2026-07-19', to: yesterday, bunsPerUnit: null, entries: 52, bought: 236, sold: { standalone: 290, mania: 88, combo: 95, total: 473 }, left: -237,
+      weeks: [{ from: '2026-10-24', to: '2026-10-30', bought: 16, sold: 25 }, { from: '2026-10-17', to: '2026-10-23', bought: 9, sold: 14 }, { from: '2026-10-10', to: '2026-10-16', bought: 8, sold: 9 }],
+      anomalies: [{ kind: 'odd-entry', days: 30, bought: 4, sold: 0, date: '2026-10-27', text: 'The burger bun purchase of 2026-10-27 is logged under "spices_seasonings": check it' }] } }) },
 ];
 
 // Momos sold a day and the coming week, for Bunny's fill: chicken sells well, paneer about 15 a day,

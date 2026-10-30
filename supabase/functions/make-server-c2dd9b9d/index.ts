@@ -13,6 +13,7 @@ import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { LEFTOVER_PLANS, OVER_PREPARED_CAUSES, checkNewReason, cleanWithLeftover, leftoverLines, piecesPerKg, poolLabel, reasonsText, uncountedPools, withLeftoverLines } from './leftoverRules.ts';
+import { checkBurgers, isBurgerPurchase, salesByDay } from './burgerCheck.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
 import { BENGALI_TITLE, BUNDLE_MINUTES, DEFAULT_PREFS, bundles, inQuietHours, notificationCategory } from './notificationRules.ts';
@@ -6901,12 +6902,71 @@ app.get('/make-server-c2dd9b9d/utilities-consumption', async (c) => {
       unattributedOrders,
       beverageConsumption,
       movedToEvents: toEvents,
+      burgers: await burgerCheckFor(records, storeId || undefined, startDate, endDate || getTodayIST()),
     });
   } catch (error) {
     console.log('Error computing utilities consumption:', error);
     return c.json({ error: 'Failed to compute utilities consumption' }, 500);
   }
 });
+
+// Burger buns bought (logged "Burger" purchases) against burgers sold (POS orders) over the same
+// days, and what doesn't add up - burgerCheck.ts (owner, 30 Oct 2026). A purchase with no store on
+// it (the early ones were logged against the production house) counts for every store: only Bunny
+// Momos 1 sells burgers.
+async function burgerCheckFor(records: any[], storeId: string | undefined, since: string, today: string) {
+  const settings = await kv.get('burger-settings').catch(() => null);
+  const purchases = (await getAllByPrefixWithRetry('inventory:'))
+    .filter((i: any) => isBurgerPurchase(i) && (!storeId || !i.storeId || i.storeId === storeId))
+    .map((i: any) => ({ date: String(i.date || '').slice(0, 10), quantity: Number(i.quantity) || 0, category: i.category, unit: i.unit }));
+  return checkBurgers({ purchases, sales: salesByDay(records), since, today, bunsPerUnit: Number(settings?.bunsPerUnit) || null });
+}
+
+// PUT /burger-settings {bunsPerUnit} - how many buns one logged "Burger" (a packet) holds. Owner or
+// operations managers. Until it's set the burger alerts stay off: every count would be off by it.
+app.put('/make-server-c2dd9b9d/burger-settings', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (role !== 'cluster_head' && !isOperationsManager) return c.json({ error: 'Only the owner or an operations manager sets this' }, 403);
+  const body = await c.req.json().catch(() => ({}));
+  const n = Number(body?.bunsPerUnit);
+  if (!Number.isInteger(n) || n < 1 || n > 24) return c.json({ error: 'How many buns are in one packet? 1 to 24' }, 400);
+  const settings = { bunsPerUnit: n, setBy: authResult.user.user_metadata?.name || authResult.user.email, setAt: new Date().toISOString() };
+  await kv.set('burger-settings', settings);
+  return c.json({ settings });
+});
+
+// After the nightly POS sync: the last 30 days' burger check for the burger store(s); anything that
+// doesn't add up goes to the owner, operations managers and store incharges, once a week per kind.
+async function sendBurgerAlerts(): Promise<number> {
+  const today = getTodayIST();
+  const since = new Date(Date.parse(`${today}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
+  const records = ((await kv.getByPrefix('order-item-detail:')) || []).filter((r: any) => r.date >= since && r.date <= today);
+  const check = await burgerCheckFor(records, undefined, since, today);
+  if (!check.anomalies.length) return 0;
+  const monday = new Date(Date.parse(`${today}T00:00:00Z`) - (((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7) * 86400000)).toISOString().slice(0, 10);
+  const people = new Map<string, any>();
+  const employees = await kv.getByPrefix('unified-employee:');
+  for (const p of [...(await getAllClusterHeads()), ...(await getOperationsManagers()), ...employees.filter((e: any) => e.designation === 'store_incharge' && e.status !== 'inactive')]) {
+    if (p?.authUserId) people.set(p.authUserId, p);
+  }
+  let sent = 0;
+  for (const a of check.anomalies) {
+    const key = `burger-alert:${a.kind}:${a.kind === 'odd-entry' ? a.date : monday}`;
+    if (await kv.get(key)) continue;
+    const title = a.kind === 'sold-more' ? 'Burgers: more sold than buns bought' : a.kind === 'bought-more' ? 'Burgers: buns bought, not sold' : 'Burgers: check a bun purchase';
+    const why = a.kind === 'sold-more' ? ' Buns bought and not logged, or the count is off.' : a.kind === 'bought-more' ? ' Buns going stale, or burgers made and not billed.' : '';
+    for (const p of people.values()) {
+      await notifyUser(p.authUserId, 'burger_check', `🍔 ${title}`, `${a.text}.${why} Stock on hand › Boxes.`, undefined, today).catch(() => undefined);
+    }
+    await kv.set(key, { at: new Date().toISOString(), ...a });
+    sent++;
+  }
+  return sent;
+}
 
 app.delete('/make-server-c2dd9b9d/aggregator-settlements/:id', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -16843,7 +16903,9 @@ app.post('/make-server-c2dd9b9d/pos-sync', async (c) => {
   }
 
   const result = await runPosSync();
-  return c.json(result, (result as any).status || 200);
+  // The day's orders are in: check burgers against buns bought (burgerCheck.ts). Never fails the sync.
+  const burgerAlerts = await sendBurgerAlerts().catch((e) => { console.log('Burger check failed:', e); return -1; });
+  return c.json({ ...(result as any), burgerAlerts }, (result as any).status || 200);
 });
 
 // Manual "Sync Now" button entrypoint - lets production head, operations manager, store

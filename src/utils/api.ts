@@ -1938,6 +1938,23 @@ export interface UtilitiesConsumption {
   traysUsed: number;
   unattributedOrders: number;
   beverageConsumption: Record<string, number>;
+  burgers?: BurgerCheck;
+}
+
+// Burger buns bought against burgers sold (server burgerCheck.ts, owner 30 Oct 2026).
+export type BurgerAnomaly = { kind: 'sold-more' | 'bought-more' | 'odd-entry'; days: number; bought: number; sold: number; date?: string; text: string };
+export interface BurgerCheck {
+  since: string; to: string;
+  bunsPerUnit: number | null; // buns in one logged "Burger" (a packet); null until the owner says
+  entries: number; bought: number;
+  sold: { standalone: number; mania: number; combo: number; total: number };
+  left: number;
+  weeks: { from: string; to: string; bought: number; sold: number }[];
+  anomalies: BurgerAnomaly[];
+}
+
+export async function setBurgerBunsPerUnit(accessToken: string, bunsPerUnit: number): Promise<{ settings: { bunsPerUnit: number } }> {
+  return await fetchWithAuth(`${API_BASE}/burger-settings`, accessToken, { method: 'PUT', body: JSON.stringify({ bunsPerUnit }) });
 }
 
 export async function getUtilitiesConsumption(accessToken: string, storeId?: string | null, startDate?: string, endDate?: string): Promise<UtilitiesConsumption> {

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { InventoryContextType } from '../App';
 import * as api from '../utils/api';
 import { Package } from 'lucide-react';
+import { Button } from './ui/button';
 import { Callout } from './ui/callout';
 import { EmptyState } from './ui/empty-state';
 import { ErrorState } from './ui/error-state';
@@ -15,6 +16,69 @@ type Props = {
   context: InventoryContextType;
   stores: api.Store[];
 };
+
+const n = (x: number) => x.toLocaleString('en-IN');
+const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+// Burgers (owner, 30 Oct 2026): buns bought (logged "Burger" purchases) against burgers sold in POS
+// orders - standalone, Mania combos (2 each) and other combos (1 each) - and what doesn't add up.
+// The server also sends these as notifications after the nightly POS sync (burgerCheck.ts).
+function BurgerSection({ data, canSet, onSet }: { data: api.BurgerCheck; canSet: boolean; onSet: (n: number) => Promise<void> }) {
+  const [saving, setSaving] = useState<number | null>(null);
+  const set = async (x: number) => {
+    setSaving(x);
+    try { await onSet(x); } finally { setSaving(null); }
+  };
+  return (
+    <section className="flex flex-col gap-3" aria-label="Burgers">
+      <div className="flex min-w-0 flex-col">
+        <h3 className="text-subtitle font-semibold text-text">Burgers</h3>
+        <p className="text-body-sm text-text-2">Buns bought (logged as "Burger") − burgers sold (POS orders), since {shortDay(data.since)}</p>
+      </div>
+      {!data.bunsPerUnit && (
+        <Callout tone="warning" title='How many buns are in one logged "Burger"?'>
+          Each entry costs ₹35–38, the same as the ones logged as packets, so it is probably a packet. Until this is set, each counts as 1 bun and the burger alerts stay off.
+          {canSet ? (
+            <span className="mt-2 flex flex-wrap gap-2">
+              {[1, 2, 4, 6].map((x) => (
+                <Button key={x} size="sm" variant="secondary" loading={saving === x} disabled={saving !== null} onClick={() => set(x)}>{x} bun{x === 1 ? '' : 's'}</Button>
+              ))}
+            </span>
+          ) : ' The owner sets this.'}
+        </Callout>
+      )}
+      {data.anomalies.map((a, i) => (
+        <Callout key={`${a.kind}-${i}`} tone={a.kind === 'sold-more' ? 'danger' : a.kind === 'bought-more' ? 'warning' : 'neutral'}
+          title={a.kind === 'sold-more' ? 'More burgers sold than buns bought' : a.kind === 'bought-more' ? 'Buns bought, not sold' : 'Check this purchase'}>
+          {a.text}.{a.kind === 'sold-more' ? ' Buns bought and not logged, or the count is off.' : a.kind === 'bought-more' ? ' Buns going stale, or burgers made and not billed.' : ''}
+        </Callout>
+      ))}
+      <StatGrid>
+        <StatTile
+          label="Burger buns left"
+          value={<span className="num">{n(data.left)}</span>}
+          caption={`Bought ${n(data.bought)} (${data.entries} entr${data.entries === 1 ? 'y' : 'ies'}${data.bunsPerUnit ? `, ${data.bunsPerUnit} a packet` : ''}) · sold ${n(data.sold.total)}`}
+          tone={data.left < 0 ? 'danger' : 'default'}
+        />
+        <StatTile
+          label="Burgers sold"
+          value={<span className="num">{n(data.sold.total)}</span>}
+          caption={`Standalone ${n(data.sold.standalone)} · Mania ${n(data.sold.mania)} · combos ${n(data.sold.combo)}`}
+        />
+      </StatGrid>
+      <ListGroup title="Week by week" footer="Mania combos count 2 burgers each, other combos 1; a combo's own line isn't counted again.">
+        {data.weeks.map((w) => {
+          const gap = w.bought - w.sold;
+          return (
+            <ListRow key={w.from} density="compact" title={`${shortDay(w.from)} – ${shortDay(w.to)}`}
+              subtitle={`Bought ${n(w.bought)} · sold ${n(w.sold)}`}
+              trailing={<span className={`num text-body-md font-semibold ${gap < 0 ? 'text-danger' : 'text-text'}`}>{gap > 0 ? '+' : ''}{n(gap)}</span>} />
+          );
+        })}
+      </ListGroup>
+    </section>
+  );
+}
 
 // Packaging (box/tray) and beverage stock, computed from real POS order data rather
 // than manually logged usage - see the /utilities-consumption endpoint for the full
@@ -112,6 +176,17 @@ export function UtilitiesStockStatus({ context, stores }: Props) {
               );
             })}
           </StatGrid>
+
+          {consumption.burgers && (
+            <BurgerSection
+              data={consumption.burgers}
+              canSet={context.user?.role === 'cluster_head' || (context.user?.role === 'manager' && !['store_incharge', 'production_incharge'].includes(context.user?.designation || ''))}
+              onSet={async (n) => {
+                await api.setBurgerBunsPerUnit(context.user!.accessToken, n);
+                setReloadKey((k) => k + 1);
+              }}
+            />
+          )}
 
           {(() => {
             const allNames = new Set([...Object.keys(purchasedBeverages), ...Object.keys(consumption.beverageConsumption)]);

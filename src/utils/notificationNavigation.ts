@@ -63,6 +63,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   expense_approval: { view: 'inventory' },
   expense_rejected: { view: 'inventory' },
   production_flag: { view: 'production' },
+  burger_check: { view: 'advanced-inventory' }, // Stock on hand › Boxes (burgerCheck.ts)
   repair_alert: { view: 'production' },
   rider_called: { view: 'riders' },
   rider_ready: { view: 'riders' },

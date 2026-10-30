@@ -28,6 +28,7 @@ const ACTION = new Set([
   'payslip_ready', 'performance_report', 'performance_due', // payslips and monthly performance notes (performance.ts)
   'cctv_ppe', // a camera saw someone without cap, gloves or apron (cctv.ts)
   'asset_missing', 'equipment_check_due', // lost equipment, and the 3-monthly equipment check (assets.ts)
+  'burger_check', // burger buns bought and burgers sold don't add up (burgerCheck.ts)
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
