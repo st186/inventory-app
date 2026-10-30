@@ -1948,7 +1948,9 @@ export interface BurgerCheck {
   bunsPerUnit: number | null; // buns in one logged "Burger" (a packet); null until the owner says
   entries: number; bought: number;
   sold: { standalone: number; mania: number; combo: number; total: number };
-  left: number;
+  left: number; // fresh buns in stock now (oldest used first)
+  stale?: number; // buns that went past their shelf life unsold
+  short?: number; // burgers sold with no bun bought for them
   weeks: { from: string; to: string; bought: number; sold: number }[];
   anomalies: BurgerAnomaly[];
 }

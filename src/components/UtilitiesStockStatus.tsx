@@ -20,8 +20,9 @@ type Props = {
 const n = (x: number) => x.toLocaleString('en-IN');
 const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-// Burgers (owner, 30 Oct 2026): buns bought (logged "Burger" purchases) against burgers sold in POS
-// orders - standalone, Mania combos (2 each) and other combos (1 each) - and what doesn't add up.
+// Burgers (owner, 30 Oct 2026): buns bought (logged "Burger" purchases, 4 buns a packet) against
+// burgers sold in POS orders - standalone, Mania combos (2 each) and momo meals (1 each) - and what
+// doesn't add up.
 // The server also sends these as notifications after the nightly POS sync (burgerCheck.ts).
 function BurgerSection({ data, canSet, onSet }: { data: api.BurgerCheck; canSet: boolean; onSet: (n: number) => Promise<void> }) {
   const [saving, setSaving] = useState<number | null>(null);
@@ -57,16 +58,16 @@ function BurgerSection({ data, canSet, onSet }: { data: api.BurgerCheck; canSet:
         <StatTile
           label="Burger buns left"
           value={<span className="num">{n(data.left)}</span>}
-          caption={`Bought ${n(data.bought)} (${data.entries} entr${data.entries === 1 ? 'y' : 'ies'}${data.bunsPerUnit ? `, ${data.bunsPerUnit} a packet` : ''}) · sold ${n(data.sold.total)}`}
+          caption={`Bought ${n(data.bought)} (${data.entries} entr${data.entries === 1 ? 'y' : 'ies'}${data.bunsPerUnit ? `, ${data.bunsPerUnit} a packet` : ''}) · used ${n(data.sold.total)}${data.stale ? ` · went stale ${n(data.stale)}` : ''}${data.short ? ` · sold without a bun logged ${n(data.short)}` : ''}`}
           tone={data.left < 0 ? 'danger' : 'default'}
         />
         <StatTile
           label="Burgers sold"
           value={<span className="num">{n(data.sold.total)}</span>}
-          caption={`Standalone ${n(data.sold.standalone)} · Mania ${n(data.sold.mania)} · combos ${n(data.sold.combo)}`}
+          caption={`Standalone ${n(data.sold.standalone)} · Mania ${n(data.sold.mania)} · meals ${n(data.sold.combo)}`}
         />
       </StatGrid>
-      <ListGroup title="Week by week" footer="Mania combos count 2 burgers each, other combos 1; a combo's own line isn't counted again.">
+      <ListGroup title="Week by week" footer="One bun a burger. Mania combos count 2 burgers each, momo meals 1 (online meals included, though they have no burger line of their own); a combo's own line isn't counted again.">
         {data.weeks.map((w) => {
           const gap = w.bought - w.sold;
           return (
