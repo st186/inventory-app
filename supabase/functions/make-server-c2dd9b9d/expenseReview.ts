@@ -133,7 +133,7 @@ const VAGUE = /^(repair(ing)?( cost| work)?|labou?r( charge| cost)?( \(.*\))?|le
 const DETAIL_CATEGORIES = ['repair', 'labour_charge', 'renovation', 'vehicle_maintenance', 'asset_kitchen_equipment', 'asset_electrical', 'asset_furniture'];
 
 // Categories Bunny may choose from for an unfamiliar item (the app's own list, short labels).
-const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
+export const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
   inventory: {
     meat: 'Meat', dairy: 'Dairy', fresh_produce: 'Vegetables', spices_seasonings: 'Grocery and spices', staples: 'Flour, oil and staples',
     bread_buns: 'Bread and buns', beverages: 'Drinks', packaging: 'Packaging (boxes, bags, foil)', cleaning_supplies: 'Cleaning supplies',
@@ -150,7 +150,7 @@ const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
   },
 };
 
-const catLabel = (key: any) => CATEGORY_CHOICES.overhead[key] || CATEGORY_CHOICES.inventory[key] || String(key || 'other').replace(/_/g, ' ');
+export const catLabel = (key: any) => CATEGORY_CHOICES.overhead[key] || CATEGORY_CHOICES.inventory[key] || String(key || 'other').replace(/_/g, ' ');
 
 /** Check one newly saved purchase or expense and save any flags. Never throws. */
 // loggedByRole: the owner's own entries need nobody's OK.

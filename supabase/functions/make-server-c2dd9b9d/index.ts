@@ -7,14 +7,16 @@ import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
-import { AiError, aiProductionCoach, registerInsightsRoutes } from './insights.ts';
-import { recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
+import { AiError, aiProductionCoach, askClaudeForJson, registerInsightsRoutes } from './insights.ts';
+import { CATEGORY_CHOICES, catLabel, recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { LEFTOVER_PLANS, OVER_PREPARED_CAUSES, checkNewReason, cleanWithLeftover, leftoverLines, piecesPerKg, poolLabel, reasonsText, uncountedPools, withLeftoverLines } from './leftoverRules.ts';
 import { checkBurgers, isBurgerPurchase, salesByDay } from './burgerCheck.ts';
-import { homeElsewhere, homeLabel, itemHomes, settleCategory } from './itemHome.ts';
+import { BUILT_IN, homeElsewhere, homeLabel, itemHomes, settleCategory } from './itemHome.ts';
+import { RUNNING_HOMES, decideName, itemLike, loadAliases, reviewNewName, settleName, type EntryType, type NameReviewDeps } from './itemNameReview.ts';
+import { matchName, nameKey, type KnownItem } from './itemNames.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
 import { BENGALI_TITLE, BUNDLE_MINUTES, DAILY_BUZZ_CAP, DEFAULT_PREFS, bundles, escalates, inQuietHours, loudness, notificationCategory, oneADay, oneRowPerRecord, ownerBuzzes } from './notificationRules.ts';
@@ -1187,6 +1189,10 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
 
     const item = await c.req.json();
     console.log('💾 [INVENTORY POST] Item data received:', { date: item.date, itemName: item.itemName, amount: item.amount });
+    // One item, one name (itemNameReview.ts): a known item typed another way is saved under its name.
+    const known = await knownNames();
+    const named = settleName(item.itemName, 'inventory', item.category, known.items, known.aliases);
+    if (named.typedAs) Object.assign(item, { itemName: named.name, typedAs: named.typedAs });
     // One item, one category (itemHome.ts): a known item goes under its own, whatever the form sent.
     const settled = settleCategory(item.itemName, item.category, await loadItemHomes());
     if (settled.moved) console.log(`[INVENTORY POST] ${item.itemName} sent under ${item.category}: saved under ${settled.category}, its own category`);
@@ -1254,6 +1260,8 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     await cascadeProductionCashForExpense(inventoryItem);
     // Checked for slips, odd categories and repeat buys, after the response (expenseReview.ts).
     await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'inventory', key, inventoryItem, userName || userEmail, role));
+    // A name the app doesn't know: Bunny reads it, else it waits for the owner (itemNameReview.ts).
+    if (!named.typedAs) await afterResponse('Item name check', () => reviewNewName(nameReviewDeps, { key, type: 'inventory', row: inventoryItem, by: userName || userEmail, byOwner: role === 'cluster_head' }));
 
     // Notify the production incharge (bill paid from production cash) and cluster heads about
     // the inventory data entry - after the response (afterResponse).
@@ -1447,7 +1455,14 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
     console.log('💰 Expense/Overhead item data received:', JSON.stringify(item, null, 2));
-    
+    // One item, one name and one category (itemNameReview.ts) - never into a category this person
+    // couldn't pick (fuel, write-offs) or one closed for the date (meals from November).
+    const known = await knownNames();
+    const named = settleName(item.description, 'overhead', item.category, known.items, known.aliases);
+    if (named.typedAs) Object.assign(item, { description: named.name, typedAs: named.typedAs });
+    const ownerOnly = ['fuel', 'losses_writeoffs', 'ai_credits'].includes(named.category) && role !== 'cluster_head';
+    if (named.category !== item.category && !ownerOnly && !mealsStopped(named.category, item?.date)) item.category = named.category;
+
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `overhead:${userId}:${itemId}`;
 
@@ -1496,6 +1511,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
     await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'overhead', key, overheadItem, authResult.user.user_metadata?.name || authResult.user.email, role));
+    if (!named.typedAs) await afterResponse('Item name check', () => reviewNewName(nameReviewDeps, { key, type: 'overhead', row: overheadItem, by: authResult.user.user_metadata?.name || authResult.user.email, byOwner: role === 'cluster_head' }));
 
     return c.json({ success: true, item: overheadItem });
   } catch (error) {
@@ -9960,6 +9976,157 @@ async function loadItemHomes(): Promise<Map<string, string[]>> {
   return homes;
 }
 
+// The names the app knows (itemNameReview.ts): the built-in items, running costs with a home, the
+// item list, and names used at least twice in the last 120 days (their usual spelling, no
+// category: "Toto" is both goods transport and travel). Plus the aliases the owner or Bunny decided.
+let knownCache: { at: number; items: KnownItem[]; aliases: Map<string, KnownItem> } | null = null;
+async function knownNames(): Promise<{ items: KnownItem[]; aliases: Map<string, KnownItem> }> {
+  if (knownCache && Date.now() - knownCache.at < 10 * 60_000) return knownCache;
+  const from = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+  const [custom, purchases, running, aliases] = await Promise.all([
+    kv.getByPrefix('custom-item:').catch(() => []),
+    getAllByPrefixWithRetry('inventory:', { from, field: 'date' }).catch(() => []),
+    getAllByPrefixWithRetry('overhead:', { from, field: 'date' }).catch(() => []),
+    loadAliases({ rows: (prefix) => getAllByPrefixWithRetry(prefix) }),
+  ]);
+  const items: KnownItem[] = [];
+  const has = new Set<string>();
+  const add = (it: KnownItem) => { const k = `${it.type}|${nameKey(it.name)}`; if (nameKey(it.name) && !has.has(k)) { has.add(k); items.push(it); } };
+  for (const [category, names] of Object.entries(BUILT_IN)) for (const name of names) add({ name, category, type: 'inventory' });
+  for (const [name, category] of Object.entries(RUNNING_HOMES)) add({ name, category, type: 'overhead' });
+  for (const ci of (custom || []) as any[]) if (ci?.itemName) add({ name: ci.itemName, category: ci.category || null, type: ci.entryType === 'overhead' ? 'overhead' : ci.entryType === 'fixedcost' ? 'fixedcost' : 'inventory' });
+  const used = new Map<string, Map<string, number>>();
+  const count = (name: unknown, type: EntryType) => {
+    const n = String(name || '').trim();
+    if (!nameKey(n) || n.length > 30 || n.split(/\s+/).length > 3) return;
+    const k = `${type}|${nameKey(n)}`;
+    const m = used.get(k) || new Map<string, number>();
+    m.set(n, (m.get(n) || 0) + 1);
+    used.set(k, m);
+  };
+  for (const r of (purchases || []) as any[]) count(r?.itemName, 'inventory');
+  for (const r of (running || []) as any[]) count(r?.description, 'overhead');
+  for (const [k, spellings] of used) {
+    const total = [...spellings.values()].reduce((a, b) => a + b, 0);
+    if (total < 2) continue;
+    const name = [...spellings.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    add({ name, category: null, type: k.split('|')[0] as EntryType });
+  }
+  knownCache = { at: Date.now(), items, aliases };
+  return knownCache;
+}
+
+const nameReviewDeps: NameReviewDeps = {
+  kv: kvWithRetry,
+  rows: (prefix) => getAllByPrefixWithRetry(prefix),
+  known: async () => (await knownNames()).items,
+  ownerIds: async () => (await getAllClusterHeads()).map((u: any) => u.authUserId).filter(Boolean),
+  notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate),
+  askBunny: async (p) => {
+    const { data } = await askClaudeForJson(kvWithRetry as any, {
+      purpose: 'item-names',
+      user: { id: 'item-names', isOwner: true },
+      system: [
+        'You keep the expense item list of a small momo shop in West Bengal tidy. Names are often Bengali or Hindi words typed in English letters, and often misspelled.',
+        'Given a newly typed name and the names already on the list, say whether it is the same thing as one of them (sameAs: that exact list name, or an empty string).',
+        'confident: true only when it is clearly the same thing - a misspelling, the same thing in another language, the same product - not when it is only related (Tomato and Tomato Sauce are different items; so are Butter and Butter paper).',
+        'cleanName: how it should be written if it is a new item - the usual name, capitalised, with the local word in brackets when that helps (hata -> Ladle (hata)).',
+      ].join(' '),
+      prompt: JSON.stringify(p),
+      schema: { type: 'object', additionalProperties: false, required: ['sameAs', 'confident', 'cleanName'], properties: { sameAs: { type: 'string' }, confident: { type: 'boolean' }, cleanName: { type: 'string' } } },
+      maxTokens: 300,
+    });
+    return { sameAs: String(data?.sameAs || ''), confident: !!data?.confident, cleanName: String(data?.cleanName || '') };
+  },
+  addToList: async (it) => {
+    const id = `custom-item-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    await kv.set(`custom-item:${id}`, { category: it.category, itemName: it.itemName, entryType: it.entryType, entityType: it.entityType || undefined, createdAt: new Date().toISOString(), addedFrom: 'owner name check' });
+    itemHomesCache = null;
+    knownCache = null;
+  },
+  categoryLabel: (category) => catLabel(category),
+};
+
+// The owner's list of new names to check, and the decision on one (itemNameReview.ts).
+app.get('/make-server-c2dd9b9d/item-names', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ open: [], known: [] });
+  try {
+    const [rows, known] = await Promise.all([getAllByPrefixWithRetry('item-name:'), knownNames()]);
+    const open = (rows || []).filter((r: any) => r?.status === 'open').sort((a: any, b: any) => String(b.lastAt).localeCompare(String(a.lastAt)));
+    return c.json({ open, known: known.items.map((k) => ({ name: k.name, type: k.type, category: k.category || null })) });
+  } catch (error) {
+    console.log('Error loading the new item names:', error);
+    return c.json({ error: 'Could not load the new names' }, 500);
+  }
+});
+
+// While someone types a name the app doesn't know (owner, 31 Oct 2026: "jhul jhara when written it
+// should suggest cobweb - can it do it using Bunny"): the known item it means, else Bunny's reading -
+// the usual name, purchase or running cost, and the category. Each word is asked about once and
+// kept 60 days (item-suggest:{nameKey}). Registered before /item-names/:key, which would take it.
+app.post('/make-server-c2dd9b9d/item-names/suggest', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (!canWriteExpenses(auth.user)) return c.json({});
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const typed = String(body?.typed || '').trim().slice(0, 60);
+    const nk = nameKey(typed);
+    if (nk.length < 3) return c.json({});
+    const known = await knownNames();
+    const hit = known.aliases.get(nk) || matchName(typed, known.items)?.item;
+    if (hit) return c.json({ sameAs: hit.name, type: hit.type || null, category: hit.category || null });
+    const cached = await kv.get(`item-suggest:${nk}`).catch(() => null);
+    if (cached?.at && Date.now() - Date.parse(cached.at) < 60 * 86400000) return c.json(cached.answer || {});
+    const { data } = await askClaudeForJson(kvWithRetry as any, {
+      purpose: 'item-names',
+      user: { id: auth.user.id, isOwner: auth.user.user_metadata?.role === 'cluster_head' },
+      system: [
+        'You help staff of a small momo shop in West Bengal log what they bought. Names are often Bengali or Hindi words typed in English letters, often misspelled (jhul jhara = cobweb brush on a stick, hata = ladle, balti = bucket, tar brush = wire brush).',
+        'Given what was typed and the names already on the list: if it is clearly the same thing as one of them, sameAs is that exact list name; otherwise sameAs is empty.',
+        'cleanName: how a new item should be written - the usual English name, capitalised, with the local word in brackets (Cobweb brush (jhul jhara)).',
+        'type: "inventory" for a purchase of goods (ingredients, packaging, cleaning things, utensils), "overhead" for a running cost (transport, repairs, labour, services). category: one key from that type\'s list.',
+      ].join(' '),
+      prompt: JSON.stringify({ typed, onTheList: known.items.slice(0, 500).map((k) => `${k.name} (${k.type === 'overhead' ? 'running cost' : 'purchase'})`), purchaseCategories: CATEGORY_CHOICES.inventory, runningCostCategories: CATEGORY_CHOICES.overhead }),
+      schema: {
+        type: 'object', additionalProperties: false, required: ['sameAs', 'cleanName', 'type', 'category'],
+        properties: { sameAs: { type: 'string' }, cleanName: { type: 'string' }, type: { type: 'string', enum: ['inventory', 'overhead'] }, category: { type: 'string' } },
+      },
+      maxTokens: 300,
+    });
+    const same = data?.sameAs ? known.items.find((k) => k.name === data.sameAs) : null;
+    const type = data?.type === 'overhead' ? 'overhead' : 'inventory';
+    const answer = same
+      ? { sameAs: same.name, type: same.type || null, category: same.category || null }
+      : { cleanName: String(data?.cleanName || '').slice(0, 60) || null, type, category: CATEGORY_CHOICES[type][data?.category] ? data.category : null, byBunny: true };
+    await kv.set(`item-suggest:${nk}`, { key: nk, typed, answer, at: new Date().toISOString() });
+    return c.json(answer);
+  } catch (error) {
+    // No suggestion is fine: the person picks the category as before.
+    console.log('Item name suggestion failed:', error instanceof Error ? error.message : String(error));
+    return c.json({});
+  }
+});
+
+app.post('/make-server-c2dd9b9d/item-names/:key', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ error: 'Only the owner decides new item names' }, 403);
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    if (!['new', 'same', 'keep'].includes(body?.action)) return c.json({ error: 'Choose new item, same as, or leave it' }, 400);
+    const result = await decideName(nameReviewDeps, decodeURIComponent(c.req.param('key')), { action: body.action, name: body.name, category: body.category, by: auth.user.user_metadata?.name || 'Owner' });
+    if (result.error) return c.json({ error: result.error }, 400);
+    knownCache = null;
+    return c.json({ record: result.record });
+  } catch (error) {
+    console.log('Error deciding a new item name:', error);
+    return c.json({ error: 'Could not save that' }, 500);
+  }
+});
+
 // Add custom item to a category - cluster-head only (see the InventoryForm/QuickAddExpense
 // "+ Add Custom Item" gating on the frontend for why: store/operations incharges shouldn't
 // be able to expand the item catalog on their own, only pick from what's already there).
@@ -10032,6 +10199,7 @@ app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
 
     await kv.set(`custom-item:${id}`, customItem);
     itemHomesCache = null;
+    knownCache = null;
 
     return c.json({
       customItem: {

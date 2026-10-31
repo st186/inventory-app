@@ -6,6 +6,7 @@ import {
   AlertTriangle, Banknote, CalendarCheck, Camera, ClipboardCheck, Clock3, Factory, IdCard, MessageSquareWarning, PackageCheck, ReceiptText, Scale, Trash2, Truck, Wallet, Wrench,
 } from 'lucide-react';
 import { ExpenseFlagsSheet, useExpenseFlags } from '../money/ExpenseFlags';
+import { NewItemNamesSheet, useItemNames } from '../money/NewItemNames';
 import { ProductionFlagsSheet, useProductionFlags } from '../production/ProductionFlags';
 import { RepairAlertsSheet, repairLine, useRepairAlerts } from '../production/RepairAlerts';
 import { ExtraHoursSheet, hoursText, useExtraHours } from '../kpi/ExtraHours';
@@ -61,6 +62,9 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   // Expense entries the checks flagged (server expenseReview.ts).
   const expenseFlags = useExpenseFlags(nav.perms.isClusterHead || nav.perms.isOperationsManager, token);
   const [flagsOpen, setFlagsOpen] = useState(false);
+  // New item names only the owner decides (money/NewItemNames.tsx).
+  const itemNames = useItemNames(nav.perms.isClusterHead);
+  const [namesOpen, setNamesOpen] = useState(false);
   // Production entries the checks flagged (server productionReview.ts).
   const productionFlags = useProductionFlags(nav.perms.isClusterHead || nav.perms.isOperationsManager, token);
   const [productionFlagsOpen, setProductionFlagsOpen] = useState(false);
@@ -176,6 +180,15 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         onOpen: () => setFlagsOpen(true),
       });
     }
+    if (itemNames.names.length) {
+      items.push({
+        key: 'item-names', icon: ReceiptText, tone: 'neutral', rank: 3.5,
+        title: itemNames.names.length === 1 ? '1 new item name to check' : `${itemNames.names.length} new item names to check`,
+        meta: itemNames.names.slice(0, 3).map((n) => `"${n.name}"`).join(' · '),
+        count: itemNames.names.length,
+        onOpen: () => setNamesOpen(true),
+      });
+    }
     if (complaintsToExplain.items.length) {
       items.push({
         key: 'complaint-explain', icon: MessageSquareWarning, tone: 'danger', rank: 1.1,
@@ -247,7 +260,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       items.push({ key: 'profile', icon: IdCard, tone: 'warning', rank: 9, title: t('home.task.profile'), meta: t('home.task.profileMeta'), onOpen: profile.openSheet });
     }
     return items;
-  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, complaintsToDecide, complaintsToExplain.items, opening.data]);
+  }, [nav.perms, context.salesData, context.productionData, context.productionRequests, x, variant, clock.today, home.scope, profile.needed, profile.openSheet, open, has, t, words, expenseFlags.flags, itemNames.names, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, complaintsToDecide, complaintsToExplain.items, opening.data]);
 
   const teamPath = has('team/attendance') ? 'team/attendance' : has('team/people') ? 'team/people' : null;
 
@@ -332,6 +345,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
       </div>
       {profile.sheet}
       <ExpenseFlagsSheet open={flagsOpen} onOpenChange={setFlagsOpen} flags={expenseFlags.flags} onChanged={expenseFlags.reload} />
+      <NewItemNamesSheet open={namesOpen} onOpenChange={setNamesOpen} names={itemNames.names} known={itemNames.known} onChanged={itemNames.reload} />
       <ProductionFlagsSheet open={productionFlagsOpen} onOpenChange={setProductionFlagsOpen} flags={productionFlags.flags} onChanged={productionFlags.reload} />
       <RepairAlertsSheet open={repairsOpen} onOpenChange={setRepairsOpen} alerts={repairs.alerts} onChanged={repairs.reload} />
       <ExtraHoursSheet open={extraOpen} onOpenChange={setExtraOpen} days={extraHours.days} onChanged={extraHours.reload} />

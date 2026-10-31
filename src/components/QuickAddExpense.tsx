@@ -50,6 +50,7 @@ import { PaidFromField, SplitAmounts } from './money/PaidFromField';
 import { categoryText, stripEmoji } from './money/categoryDisplay';
 import { pricePerUnitLine } from './money/expenseHelpers';
 import { checkPurchase, priceItemKey, type PriceFix, type PriceGuide } from '../utils/expenseChecks';
+import { matchName, nameKey } from '../utils/itemNames';
 
 // The shared item catalog (same for everyone), kept on the phone for offline suggestions.
 const CUSTOM_ITEMS_KEY = 'shared:custom-items';
@@ -175,7 +176,14 @@ export function QuickAddExpense({
     ),
     [customItems, canUseRestrictedCategories]
   );
-  const suggestions = useMemo(() => searchExpenseCandidates(query, candidates, 6), [query, candidates]);
+  // A Bengali / Hindi word for a listed item ("cha" is Tea) goes first: the plain search read "cha"
+  // as the start of Charger and picked it (utils/itemNames.ts).
+  const suggestions = useMemo(() => {
+    const found = searchExpenseCandidates(query, candidates, 6);
+    const hit = matchName(query, candidates.map((cd) => ({ name: cd.label })));
+    const word = hit && hit.how !== 'spelling' ? candidates.find((cd) => cd.label === hit.item.name) : null;
+    return word ? [{ ...word, score: 0.99, exact: false }, ...found.filter((f) => f.label !== word.label)].slice(0, 6) : found;
+  }, [query, candidates]);
   const bestMatch = suggestions[0];
   const hasStrongMatch = !!bestMatch && bestMatch.score >= 0.85;
   const isNewItem = query.trim().length > 0 && !hasStrongMatch && !matched;
@@ -197,6 +205,29 @@ export function QuickAddExpense({
   // A new item's category is picked, never filled in: it used to start on the first in the list,
   // and "Makhani Gravy" (spelt unlike the listed "Makhni Gravy") was saved under Meat, 28 Oct 2026.
 
+  // "Did you mean Paneer?" (owner, 31 Oct 2026: people won't remember the list's exact name): the
+  // same item written another way (utils/itemNames.ts), else Bunny's reading of a new word
+  // ("jhul jhara" -> Cobweb brush, under cleaning) once typing pauses, so nobody has to know it.
+  const [notSame, setNotSame] = useState(''); // the name someone said "No, it's something new" to
+  const [idea, setIdea] = useState<(api.ItemNameIdea & { q: string; used?: boolean }) | null>(null);
+  const closeMatch = useMemo(() => {
+    if (!isNewItem) return null;
+    const hit = matchName(query, candidates.map((cd) => ({ name: cd.label })));
+    return hit ? candidates.find((cd) => cd.label === hit.item.name) || null : null;
+  }, [isNewItem, query, candidates]);
+  useEffect(() => {
+    const q = query.trim();
+    if (!isNewItem || closeMatch || nameKey(q).length < 3 || (idea && idea.q === q)) return;
+    const timer = setTimeout(() => {
+      api.suggestItemName(q).then((r) => setIdea({ q, ...r })).catch(() => undefined);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [isNewItem, closeMatch, query]); // eslint-disable-line react-hooks/exhaustive-deps
+  const currentIdea = idea && idea.q === query.trim() && !idea.used ? idea : null;
+  const meant = closeMatch || (currentIdea?.sameAs ? candidates.find((cd) => cd.label === currentIdea.sameAs) || null : null);
+  const askingMeant = isNewItem && !!meant && notSame !== query.trim();
+  const newIdea = isNewItem && !meant && currentIdea?.cleanName ? currentIdea : null;
+
   const selectSuggestion = (s: ExpenseSuggestion) => {
     setMatched(s);
     setQuery(s.label);
@@ -212,6 +243,17 @@ export function QuickAddExpense({
       setUnit(usual && UNIT_PILLS.includes(usual) ? usual : 'pcs');
       setQuantity('1');
     }
+  };
+
+  // Bunny's reading of a new word: its usual name, purchase or running cost, and the category.
+  const useIdea = (i: api.ItemNameIdea & { q: string }) => {
+    const name = String(i.cleanName || '').trim();
+    if (!name) return;
+    setQuery(name);
+    if (i.type === 'inventory' || i.type === 'overhead') setManualType(i.type);
+    setManualCategory(i.category || '');
+    setNotSame(name);
+    setIdea({ ...i, q: name, used: true });
   };
 
   const needsItemName = !!matched?.generic && /^asset_|^equipments$/.test(matched.category);
@@ -453,6 +495,7 @@ export function QuickAddExpense({
           });
         } else {
           pendingNotice = t('exp.notInList', { name: query.trim() });
+          // (The server files it under a known item if it is one, or keeps it for the owner to check.)
         }
       }
 
@@ -645,7 +688,25 @@ export function QuickAddExpense({
         )}
         <AssetHint name={needsItemName ? itemName : query} category={currentCategory} source={currentEntryType} date={entryDate} />
 
-        {isNewItem && (
+        {askingMeant && meant && (
+          <div className="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary-soft/40 p-3" role="status">
+            <p className="text-body-md font-semibold text-text">{t('exp.didYouMean', { name: meant.label })}</p>
+            <p className="text-label text-text-3">{typeLabel(meant.entryType)} · {categoryText(meant.category)}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" leadingIcon={<Check />} onClick={() => selectSuggestion({ ...meant, score: 1, exact: false })}>{t('exp.yesUse', { name: meant.label })}</Button>
+              <Button size="sm" variant="ghost" onClick={() => setNotSame(query.trim())}>{t('exp.noNew')}</Button>
+            </div>
+          </div>
+        )}
+        {newIdea && (
+          <div className="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary-soft/40 p-3" role="status">
+            <p className="text-body-md font-semibold text-text">{t('exp.bunnyIdea', { name: newIdea.cleanName || '' })}</p>
+            {newIdea.category && <p className="text-label text-text-3">{newIdea.type ? `${typeLabel(newIdea.type as ExpenseEntryType)} · ` : ''}{categoryText(newIdea.category)}</p>}
+            <Button size="sm" variant="secondary" className="self-start" onClick={() => useIdea(newIdea)}>{t('exp.useIdea')}</Button>
+          </div>
+        )}
+
+        {isNewItem && !askingMeant && (
           <div className="flex flex-col gap-3 rounded-lg border border-warning-border bg-warning-soft p-3">
             <p className="text-body-sm font-medium text-text">{t('exp.newItem')}</p>
             <SegmentedControl

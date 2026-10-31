@@ -2866,6 +2866,36 @@ export async function addCustomItem(
   return data.customItem;
 }
 
+// One item, one name (server itemNameReview.ts, owner 31 Oct 2026): what a typed name means - a
+// known item, or Bunny's reading of a new word ("jhul jhara" -> Cobweb brush (jhul jhara)).
+export type ItemNameIdea = { sameAs?: string; cleanName?: string | null; type?: 'inventory' | 'overhead' | 'fixedcost' | null; category?: string | null; byBunny?: boolean };
+export async function suggestItemName(typed: string): Promise<ItemNameIdea> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) return {};
+  return (await fetchWithAuth(`${API_BASE}/item-names/suggest`, session.access_token, { method: 'POST', body: JSON.stringify({ typed }) })) || {};
+}
+
+// The owner's list of new names to check, and the decision on one.
+export type WaitingItemName = {
+  key: string; name: string; type: 'inventory' | 'overhead'; category: string; entityType: string | null;
+  cleanName: string | null; maybeSameAs: string | null; firstAt: string; lastAt: string;
+  entries: { key: string; date: string | null; amount: number; place: string; by: string }[];
+};
+export async function getItemNames(): Promise<{ open: WaitingItemName[]; known: { name: string; type: string; category: string | null }[] }> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) return { open: [], known: [] };
+  const data = await fetchWithAuth(`${API_BASE}/item-names`, session.access_token);
+  return { open: data?.open || [], known: data?.known || [] };
+}
+export async function decideItemName(key: string, action: 'new' | 'same' | 'keep', name?: string, category?: string) {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+  return fetchWithAuth(`${API_BASE}/item-names/${encodeURIComponent(key)}`, session.access_token, { method: 'POST', body: JSON.stringify({ action, name, category }) });
+}
+
 export async function updateCustomItem(id: string, updates: Partial<Omit<CustomItem, 'id'>>): Promise<CustomItem> {
   const supabase = createBrowserSupabase();
   const { data: { session } } = await supabase.auth.getSession();
