@@ -310,22 +310,18 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     const clock = istClock(nowMs);
     const { day, ids, keep } = assign(before, date, clock, look.people, numbered.crops);
     look.people.forEach((p, i) => { if (ids[i]) { (p as any).key = slotOf(ids[i]); (p as any).id = ids[i]; } });
-    // Where each number's box was this burst; a number named "Not a person" leaves the burst and its
-    // spot is kept, so the object is dropped before Bunny next time (owner, 31 Oct 2026).
+    // Where each number's box was in its first burst - the Who is who photo - kept for "Not a person"
+    // (owner, 31 Oct 2026). A later match by Bunny never moves it: one wrong match at 13:25 on 31 Oct
+    // made Vijay's folding seat the sack's spot.
     for (const p of look.people as any[]) {
       const spot = p.box ? spotOf(numbered, p.box) : null;
       const person = spot && day.people.find((x) => x.id === p.id);
-      if (person) person.spot = spot!;
+      if (person && !person.spot) person.spot = spot!;
     }
+    // A number named "Not a person" still in Bunny's answer leaves the burst (no new spot from it).
     const names = (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`)) || {};
     const objects = new Set((look.people as any[]).filter((p) => p.id && names[slotOf(p.id)] === NOT_A_PERSON).map((p) => p.id as number));
     if (objects.size) {
-      let spots = (await deps.kv.get<IgnoreSpot[]>(`cctv-ignore:${cam.id}`)) || [];
-      for (const id of objects) {
-        const spot = day.people.find((x) => x.id === id)?.spot;
-        if (spot) spots = addSpot(spots, { box: spot, from: date, slot: slotOf(id), by: 'Who is who' });
-      }
-      await deps.kv.set(`cctv-ignore:${cam.id}`, spots);
       const kept = look.people.filter((p: any) => !objects.has(p.id));
       look.peopleCount = Math.max(kept.length ? 1 : 0, look.peopleCount - (look.people.length - kept.length));
       look.people.splice(0, look.people.length, ...kept);

@@ -144,6 +144,8 @@ test('references: a person named on two numbers goes to Bunny once, under the fi
   assert.deepEqual(toShow(day, { p1: 'Rudra Mahato', p2: 'Rudra Mahato', p4: 'Aniket Prasad' }), [{ id: 1, paths: ['1a', '2b', '1b'] }, { id: 4, paths: ['4a', '4b'] }]);
   // Someone else is never merged: two visitors are two people.
   assert.equal(toShow(day, { p1: 'Someone else', p2: 'Someone else' }).length, 3);
+  // An object is never shown: 31 Oct 13:25, Bunny took Vijay on the front seat for the sack (Person 3).
+  assert.deepEqual(toShow(day, { p2: 'Not a person' }).map((s) => s.id), [4, 1]);
 });
 
 test('folding is steady work: 31 Oct 11:40, Rudra at the wooden table got 4 scattered frames of folding', () => {

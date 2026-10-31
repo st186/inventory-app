@@ -12,6 +12,10 @@
 // roundup) and keeps the box's spot; later boxes the same size in the same spot are dropped before
 // Bunny reads the burst. The person finder was 76% sure of the sack - as sure as of real people - so
 // a score cut-off can't tell; a person standing there is a taller box and still counts.
+// The spot is the box in the Who is who photo (the number's first burst), never one Bunny matched
+// later, and Bunny is never shown an object's crops: at 13:25 on 31 Oct it took Vijay, folding on the
+// front seat, for the sack's number, the seat was kept as the sack's spot, and his folding was
+// dropped from every burst after (owner: "Vijay is folding since long time but no data of that").
 //
 // Tags (owner, 31 Oct 2026: "once marked don't show those, come up with new ones... mark complete
 // when all persons are tagged at least twice"): Who is who asks only about numbers without a name.
@@ -71,12 +75,13 @@ export function cleanNumbered(raw: any, frames: number): NumberedBody | null {
 export const isStaffName = (name?: string | null): name is string => !!name && name !== NOT_A_PERSON && name !== SOMEONE_ELSE;
 
 /** The people whose reference crops go to Bunny with this burst: seen most recently first. Numbers
- *  given the same name are one person, under the first number, with each number's newest look. */
+ *  given the same name are one person, under the first number, with each number's newest look.
+ *  Objects (Not a person) aren't shown, so no one can be matched to them. */
 export function toShow(day: DayPeople | null, names: Record<string, string> = {}): { id: number; paths: string[] }[] {
   const groups = new Map<string, DayPerson[]>();
   for (const p of day?.people || []) {
-    if (!p.refs.length) continue;
     const name = names[slotOf(p.id)];
+    if (!p.refs.length || name === NOT_A_PERSON) continue;
     const k = isStaffName(name) ? `n:${name}` : `p:${p.id}`;
     groups.set(k, [...(groups.get(k) || []), p]);
   }
