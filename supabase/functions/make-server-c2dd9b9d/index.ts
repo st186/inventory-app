@@ -15990,8 +15990,21 @@ async function pollLiveOrders(opts: { alert: boolean; storeIds?: string[] }) {
       await kv.set(key, { ...(prev || { storeId: store.id, date, orders: {}, lastPoll: null, polls: 0 }), error: error?.message || String(error) }).catch(() => undefined);
       results.push({ store: store.name, error: error?.message || String(error) });
     }
+    // The cron's look also notes which items are switched off on Zomato and Swiggy, for the day's
+    // out-of-stock report (onlineStock.trackStatus). Saved only when something changed.
+    if (opts.alert) await trackOnlineStock(store, date, nowIso).catch((e) => console.error(`[online stock] ${store.name}:`, e?.message || e));
   }
   return results;
+}
+
+const STOCK_STATUS_URL = 'https://api.ciferon.com/Api/ZomatoApi/StockStatus';
+async function trackOnlineStock(store: any, date: string, nowIso: string) {
+  const items = onlineStock.parseStockStatus(await ciferonAdminGet(store, STOCK_STATUS_URL));
+  if (!items.length) return;
+  const key = `online-stock-day:${store.id}:${date}`;
+  const prev = await kv.get(key) as onlineStock.StatusDay | null;
+  const next = onlineStock.trackStatus(prev, date, items, nowIso);
+  if (!prev || JSON.stringify(prev.items) !== JSON.stringify(next.items)) await kv.set(key, next);
 }
 
 app.post('/make-server-c2dd9b9d/cron/live-orders', async (c) => {
@@ -16046,8 +16059,21 @@ app.post('/make-server-c2dd9b9d/cron/live-orders-close', async (c) => {
       for (const u of owners) await notifyUser(u.authUserId, 'orders_unbilled', `Orders to check: ${store.name}`, message, undefined, date).catch(() => undefined);
       await kv.set(onceKey, { at: nowIso, findings: check.findings.length });
     }
-    console.log(`Live orders closing check ${date}:`, JSON.stringify(results));
-    return c.json({ success: true, date, stores: results });
+    // The day's out-of-stock report, and the store incharge asked why (stock-out-day:{store}:{date}).
+    const outOfStock: any[] = [];
+    for (const store of await liveStores()) {
+      try {
+        const report = await buildOutOfStockDay(store, date);
+        outOfStock.push({ store: store.name, items: report.items.map((i) => `${i.name}${i.periods.some((p) => !p.to) ? ' (still off)' : ''}`) });
+        if (dry) continue;
+        await kv.set(`stock-out-day:${store.id}:${date}`, report);
+        if (report.items.some((i) => !i.explanation)) await askStockOutReasons(store, report, false);
+      } catch (error: any) {
+        outOfStock.push({ store: store.name, error: error?.message || String(error) });
+      }
+    }
+    console.log(`Live orders closing check ${date}:`, JSON.stringify(results), 'out of stock:', JSON.stringify(outOfStock));
+    return c.json({ success: true, date, stores: results, outOfStock });
   } catch (error: any) {
     console.error('Error running the live orders closing check:', error);
     return c.json({ error: error.message }, 500);
@@ -16079,6 +16105,7 @@ app.get('/make-server-c2dd9b9d/live-orders/now', async (c) => {
     const yesterday = addDaysToDateString(date, -1);
     const checks = await kv.mget(stores.flatMap((s: any) => [`live-orders-check:${s.id}:${date}`, `live-orders-check:${s.id}:${yesterday}`])) as (liveOrders.CloseCheck | null)[];
     const offs = await kv.mget(stores.flatMap((s: any) => [`online-stock:${s.id}:${date}`, `online-stock:${s.id}:${yesterday}`])) as any[];
+    const outDays = await kv.mget(stores.flatMap((s: any) => [`stock-out-day:${s.id}:${date}`, `stock-out-day:${s.id}:${yesterday}`])) as (OutOfStockDay | null)[];
     return c.json({
       date, open,
       stores: stores.map((s: any, i: number) => {
@@ -16091,6 +16118,8 @@ app.get('/make-server-c2dd9b9d/live-orders/now', async (c) => {
           check: check ? { ...check, summary: liveOrders.checkSummary(check.findings) } : null,
           // Items switched off on Zomato and Swiggy that the store still sells (4 PM check).
           offOnline: off ? { date: off.date, at: off.at, sells: off.sells || [], kept: (off.kept || []).length, idle: off.idle || 0, off: off.off || 0 } : null,
+          // The latest day's out-of-stock report with the store incharge's reasons.
+          outOfStock: outDays[2 * i] || outDays[2 * i + 1] || null,
         };
       }),
     });
@@ -16141,6 +16170,19 @@ app.post('/make-server-c2dd9b9d/cron/online-stock', async (c) => {
     const owners = staff.filter((u: any) => u.role === 'cluster_head');
     const results: any[] = [];
     for (const store of await liveStores()) {
+      // Yesterday's out-of-stock items still without a reason: the store incharge once more, and the owner.
+      if (!dry) {
+        const yday = addDaysToDateString(date, -1);
+        const report = await kv.get(`stock-out-day:${store.id}:${yday}`) as OutOfStockDay | null;
+        if (report?.items.some((i) => !i.explanation)) {
+          await askStockOutReasons(store, report, true).catch(() => undefined);
+          const lateKey = `stock-out-day-owner-late:${store.id}:${yday}`;
+          if (!(await kv.get(lateKey))) {
+            await tellOwnerStockOuts(store, report, true).catch(() => undefined);
+            await kv.set(lateKey, { at: new Date().toISOString() });
+          }
+        }
+      }
       let check: Awaited<ReturnType<typeof runOnlineStockCheck>>;
       try {
         check = await runOnlineStockCheck(store, date);
@@ -16171,6 +16213,137 @@ app.post('/make-server-c2dd9b9d/cron/online-stock', async (c) => {
     return c.json({ success: true, date, stores: results });
   } catch (error: any) {
     console.error('Error checking items switched off online:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ---- The day's out-of-stock report (owner, 1 Nov 2026: "for a day which items were not in stock and
+// when they were stocked and send notification to the store manager explaining why it was out of
+// stock") ----
+// Built at 11:45 PM (live-orders-close) for each store: every item switched off on Zomato and Swiggy
+// during the day that the store sells, with when it went off and came back (Ciferon's item log, else
+// the 3-minute looks). The store incharge picks a reason for each; the owner hears when all are in,
+// and at 4 PM the next day if they aren't. Saved as stock-out-day:{storeId}:{date}.
+type OutOfStockDay = { storeId: string; storeName: string; date: string; at: string; items: onlineStock.OutItem[]; ownerToldAt?: string };
+
+async function buildOutOfStockDay(store: any, date: string): Promise<OutOfStockDay> {
+  const items = onlineStock.parseStockStatus(await ciferonAdminGet(store, STOCK_STATUS_URL));
+  const seen = await kv.get(`online-stock-day:${store.id}:${date}`) as onlineStock.StatusDay | null;
+  const kept = ((await kv.get(`online-stock:kept-off:${store.id}`)) || {}) as Record<string, any>;
+  const dates: string[] = [];
+  for (let i = 0; i <= onlineStock.ONLINE_DAYS; i++) dates.push(addDaysToDateString(date, -i));
+  const records = (await kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`))) as any[];
+  const stats = onlineStock.soldStats(records.filter(Boolean).map((r: any) => ({ date: r.date, orders: r.orders || [] })), date);
+  // Off at any look today, or off now; only what the store sells, and not what's kept off on purpose.
+  const byId = new Map(items.map((i) => [i.productId, i]));
+  const ids = new Set([...items.filter((i) => !i.inStock).map((i) => i.productId), ...Object.keys(seen?.items || {})]);
+  const candidates = [...ids].map((id) => ({ productId: id, name: byId.get(id)?.name || seen?.items[id]?.name || id, category: byId.get(id)?.category || seen?.items[id]?.category || '', inStock: false }));
+  const { sells } = onlineStock.offOnline(candidates, stats, kept, date);
+  const prev = await kv.get(`stock-out-day:${store.id}:${date}`) as OutOfStockDay | null;
+  const out: onlineStock.OutItem[] = [];
+  for (const row of sells.slice(0, 25)) {
+    let periods: onlineStock.OffPeriod[] = [];
+    try {
+      const logs = await ciferonAdminGet(store, `https://api.ciferon.com/api/ViewLogs/GetProductLogs?productId=${encodeURIComponent(row.productId)}`);
+      periods = onlineStock.dayPeriods(Array.isArray(logs?.Result) ? logs.Result : [], date);
+    } catch { /* no log: the 3-minute looks below */ }
+    if (!periods.length) periods = (seen?.items[row.productId]?.periods || []).map((p) => ({ from: p.from, to: p.to, by: null, platforms: [] }));
+    if (!periods.length && byId.get(row.productId)?.inStock === false) periods = [{ from: null, to: null, by: null, platforms: [] }];
+    if (!periods.length) continue;
+    out.push({ productId: row.productId, name: onlineStock.cleanItemName(row.name), category: row.category, periods,
+      explanation: prev?.items.find((x) => x.productId === row.productId)?.explanation || null });
+  }
+  return { storeId: store.id, storeName: store.name, date, at: new Date().toISOString(), items: out, ...(prev?.ownerToldAt ? { ownerToldAt: prev.ownerToldAt } : {}) };
+}
+
+const dayWord = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const outItemLine = (i: onlineStock.OutItem, date: string) => `${i.name} (${i.periods.map((p) => onlineStock.periodWords(p, date)).join('; ')})`;
+
+// The store incharge (else the operations managers): pick a reason for each item. Once at closing,
+// once more at 4 PM the next day if any are still waiting.
+async function askStockOutReasons(store: any, report: OutOfStockDay, reminder: boolean) {
+  const onceKey = `stock-out-day-asked:${store.id}:${report.date}:${reminder ? 'reminder' : 'first'}`;
+  if (await kv.get(onceKey)) return;
+  const waiting = report.items.filter((i) => !i.explanation);
+  if (!waiting.length) return;
+  const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+  let to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+  if (!to.length) to = staff.filter((u: any) => u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation));
+  const n = waiting.length;
+  const title = reminder
+    ? `Still to explain: ${n} item${n > 1 ? 's' : ''} out of stock on ${dayWord(report.date)}`
+    : `Why ${n > 1 ? `were ${n} items` : 'was an item'} out of stock today?`;
+  const list = waiting.slice(0, 5).map((i) => outItemLine(i, report.date)).join(', ');
+  const message = `${store.name}: ${list}${n > 5 ? ` and ${n - 5} more` : ''}. Open Home and pick why for each - the owner reads them.`;
+  for (const u of to) await notifyUser(u.authUserId, 'stockout_explain', title, message, undefined, report.date).catch(() => undefined);
+  await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+}
+
+// The owner: the day's out-of-stock items with the reasons, once all are in (or at 4 PM the next day
+// with what's missing).
+async function tellOwnerStockOuts(store: any, report: OutOfStockDay, late: boolean) {
+  const owners = (await staffForNotifications()).filter((u: any) => u.role === 'cluster_head' && u.authUserId && u.status !== 'inactive');
+  const lines = report.items.map((i) => `${outItemLine(i, report.date)}: ${i.explanation ? `${onlineStock.REASON_WORDS[i.explanation.reason]}${i.explanation.note ? ` - "${i.explanation.note}"` : ''}` : 'no reason yet'}`);
+  const waiting = report.items.filter((i) => !i.explanation).length;
+  const title = late
+    ? `Out of stock on ${dayWord(report.date)}: ${waiting} not explained yet (${store.name})`
+    : `Out of stock on ${dayWord(report.date)}: reasons in (${store.name})`;
+  for (const u of owners) await notifyUser(u.authUserId, 'stockout_explained', title, lines.slice(0, 6).join(' · '), undefined, report.date).catch(() => undefined);
+}
+
+// GET /stock-out-day/mine - the store incharge: their store's out-of-stock days (last 3) with items
+// still to explain; the owner and operations: every store's.
+app.get('/make-server-c2dd9b9d/stock-out-day/mine', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const actor = await stockOutActor(auth);
+    const stores = (await liveStores()).filter((s: any) => actor.isOversight || (actor.isStoreIncharge && actor.storeId === s.id));
+    const today = getTodayIST();
+    const dates = [today, addDaysToDateString(today, -1), addDaysToDateString(today, -2)];
+    const keys = stores.flatMap((s: any) => dates.map((d) => `stock-out-day:${s.id}:${d}`));
+    const reports = ((await kv.mget(keys)) as (OutOfStockDay | null)[]).filter((r): r is OutOfStockDay => !!r && r.items.some((i) => !i.explanation));
+    return c.json({ reports, reasons: onlineStock.EXPLAIN_REASONS.map((value) => ({ value, label: onlineStock.REASON_WORDS[value] })) });
+  } catch (error: any) {
+    console.error('Error reading out-of-stock days:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /stock-out-day/explain { storeId, date, productId, reason, note } - the store incharge (or the
+// owner / operations). "Kept off on purpose" also keeps it off the 4 PM check.
+app.post('/make-server-c2dd9b9d/stock-out-day/explain', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const actor = await stockOutActor(auth);
+    const { storeId, date, productId, reason, note } = await c.req.json();
+    if (!actor.isOversight && !(actor.isStoreIncharge && actor.storeId === storeId)) return c.json({ error: 'Only the store incharge explains these' }, 403);
+    if (!(onlineStock.EXPLAIN_REASONS as readonly string[]).includes(reason)) return c.json({ error: 'Pick a reason' }, 400);
+    const text = String(note || '').trim().slice(0, 300);
+    if (reason === 'other' && !text) return c.json({ error: 'Write why it was out of stock' }, 400);
+    const key = `stock-out-day:${storeId}:${date}`;
+    const report = await kv.get(key) as OutOfStockDay | null;
+    const item = report?.items.find((i) => i.productId === String(productId));
+    if (!report || !item) return c.json({ error: 'That item is not in the report' }, 404);
+    item.explanation = { reason, ...(text ? { note: text } : {}), by: actor.name, at: new Date().toISOString() };
+    if (reason === 'on_purpose') {
+      const keptKey = `online-stock:kept-off:${storeId}`;
+      const kept = ((await kv.get(keptKey)) || {}) as Record<string, any>;
+      kept[item.productId] = { at: new Date().toISOString(), by: actor.employeeId, from: 'stock-out-day' };
+      await kv.set(keptKey, kept);
+    }
+    // The owner hears once, when the last reason is in.
+    const tellOwner = report.items.every((i) => i.explanation) && !report.ownerToldAt;
+    if (tellOwner) report.ownerToldAt = new Date().toISOString();
+    await kv.set(key, report);
+    if (tellOwner) {
+      const store = (await liveStores()).find((s: any) => s.id === storeId) || { id: storeId, name: report.storeName };
+      await tellOwnerStockOuts(store, report, false).catch(() => undefined);
+    }
+    return c.json({ success: true, report });
+  } catch (error: any) {
+    console.error('Error saving an out-of-stock reason:', error);
     return c.json({ error: error.message }, 500);
   }
 });

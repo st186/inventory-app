@@ -903,6 +903,24 @@ export interface LiveStoreNow {
     summary: { notBilled: number; notBilledTotal: number; billedLess: number; lessBy: number; openAtClose: number; openTotal: number } };
   /** Items switched off on Zomato and Swiggy that the store still sells (server onlineStock.ts, 4 PM). */
   offOnline: null | { date: string; at: string; sells: OffOnlineItem[]; kept: number; idle: number; off: number };
+  /** The latest day's out-of-stock report with the store incharge's reasons (11:45 PM). */
+  outOfStock: OutOfStockDay | null;
+}
+// The day's out-of-stock report (server onlineStock.ts, stock-out-day): each item switched off on
+// Zomato and Swiggy during the day, from when to when, and why (the store incharge says).
+export interface OffPeriod { from: string | null; to: string | null; by: string | null; platforms: string[] }
+export interface OutItem {
+  productId: string; name: string; category: string; periods: OffPeriod[];
+  explanation?: { reason: string; note?: string; by: string; at: string } | null;
+}
+export interface OutOfStockDay { storeId: string; storeName: string; date: string; at: string; items: OutItem[]; ownerToldAt?: string }
+
+export async function getStockOutDaysToExplain(accessToken?: string): Promise<{ reports: OutOfStockDay[]; reasons: { value: string; label: string }[] }> {
+  return fetchWithAuth(`${API_BASE}/stock-out-day/mine`, await tokenOr(accessToken));
+}
+
+export async function explainStockOut(body: { storeId: string; date: string; productId: string; reason: string; note?: string }, accessToken?: string): Promise<{ report: OutOfStockDay }> {
+  return fetchWithAuth(`${API_BASE}/stock-out-day/explain`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify(body) });
 }
 export interface OffOnlineItem {
   productId: string; name: string; category: string; lastOnline: string | null; lastCounter: string | null;

@@ -119,6 +119,13 @@ function liveNow() {
         { productId: '960994', name: 'Chicken Chilli Momos [6 Pieces]', category: 'Chilli Momos - O', lastOnline: '2026-10-31', lastCounter: '2026-10-27',
           offSince: '2026-10-31T13:32:40Z', offBy: 'Subham Tewari', platforms: ['Zomato', 'Swiggy'] },
         { productId: '2', name: 'Chicken Momo Burger', category: 'Momo Burgers -O', lastOnline: '2026-10-11', lastCounter: '2026-10-31', offSince: null, offBy: null },
+      ] },
+      outOfStock: { storeId: 'STORE-1', storeName: 'Bunny Momos 1', date: '2026-10-31', at: '2026-10-31T18:15:00Z', items: [
+        { productId: '960994', name: 'Chicken Chilli Momos [6 Pieces]', category: 'Chilli Momos - O',
+          periods: [{ from: '2026-10-31T13:32:10Z', to: null, by: 'Subham Tewari', platforms: ['Swiggy', 'Zomato'] }],
+          explanation: { reason: 'ingredient', note: 'Chilli sauce finished, new batch tomorrow', by: 'Rohan', at: '2026-10-31T18:40:00Z' } },
+        { productId: '960990', name: 'Chicken Cheese Momos', category: 'Steamed Momos - O',
+          periods: [{ from: '2026-10-31T12:40:00Z', to: '2026-10-31T14:05:00Z', by: 'Subham Tewari', platforms: ['Swiggy', 'Zomato'] }], explanation: null },
       ] } }],
   };
 }
@@ -129,6 +136,8 @@ export function installPerfPreviewMock() {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.includes('/cctv/activity')) return json(activity);
     if (url.includes('/live-orders/now')) return json(liveNow());
+    if (url.includes('/stock-out-day/explain')) return json({ success: true });
+    if (url.includes('/stock-out-day/mine')) return json({ reasons: [], reports: [liveNow().stores[0].outOfStock] });
     if (url.includes('/cctv/whois') && init?.method === 'POST') return json(setWho(JSON.parse(String(init.body || '{}'))));
     if (url.includes('/cctv/whois')) return json(whois());
     if (url.includes('/cctv/cameras') && !init?.method) return json({ cameras, canManage: true });

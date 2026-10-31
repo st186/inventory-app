@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { getLastRecalibration } from '../../utils/api';
 import { ExplainComplaintSheet, useComplaintsToExplain } from '../complaints/ExplainComplaint';
+import { StockOutExplainSheet, dayWord, useStockOutsToExplain } from '../stock/StockOutExplain';
 import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
 import { Callout } from '../ui/callout';
@@ -136,8 +137,20 @@ function InchargeHome() {
   // Customer complaints the owner asked this person to explain (complaints.ts).
   const complaintsToExplain = useComplaintsToExplain(true);
   const [explaining, setExplaining] = useState<ComplaintT | null>(null);
+  // Items switched off on Zomato and Swiggy during the day: the store incharge says why (onlineStock.ts).
+  const stockOutsToExplain = useStockOutsToExplain(nav.perms.isStoreIncharge || nav.perms.isStoreInchargeManager, token);
+  const [stockOutsOpen, setStockOutsOpen] = useState(false);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (stockOutsToExplain.waiting.length) {
+      const n = stockOutsToExplain.waiting.length;
+      list.push({
+        key: 'stock-outs-explain', icon: PackageOpen, title: n === 1 ? t('stock.oos.taskOne') : t('stock.oos.taskMany', { n }),
+        meta: `${dayWord(stockOutsToExplain.waiting[0].report.date)} · ${stockOutsToExplain.waiting.slice(0, 3).map((w) => w.item.name).join(', ')}`.slice(0, 90),
+        status: 'late', count: n, due: 0,
+        onOpen: () => setStockOutsOpen(true),
+      });
+    }
     if (complaintsToExplain.items.length) {
       list.push({
         key: 'complaints', icon: MessageSquareWarning, title: complaintsToExplain.items.length === 1 ? 'Explain a customer complaint' : `Explain ${complaintsToExplain.items.length} customer complaints`,
@@ -293,7 +306,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items, monthEnd]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items, monthEnd, stockOutsToExplain.waiting]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);
@@ -376,6 +389,7 @@ function InchargeHome() {
       <RepairAlertsSheet open={repairsOpen} onOpenChange={setRepairsOpen} alerts={repairs.alerts} onChanged={repairs.reload} />
       <ExtraHoursSheet open={extraOpen} onOpenChange={setExtraOpen} days={extraHours.days} onChanged={extraHours.reload} />
       <ExplainComplaintSheet complaint={explaining} onClose={() => setExplaining(null)} onDone={complaintsToExplain.reload} />
+      <StockOutExplainSheet open={stockOutsOpen} onOpenChange={setStockOutsOpen} reports={stockOutsToExplain.reports} accessToken={token} onDone={stockOutsToExplain.reload} />
     </HomePage>
   );
 }

@@ -105,6 +105,95 @@ export function lastSwitchOff(rows: any[]): { at: string | null; by: string | nu
   return { at: dated[0].at, by: String(dated[0].r?.UserName ?? dated[0].r?.userName ?? '').trim() || null, platforms };
 }
 
+// ---- The day's out-of-stock report (owner, 1 Nov 2026: "for a day which items were not in stock and
+// when they were stocked and send notification to the store manager explaining why it was out of
+// stock") ----
+/** What the 3-minute look saw during the day: each item seen switched off, from when to when. */
+export type SeenPeriod = { from: string; to: string | null };
+export type StatusDay = { date: string; at: string | null; items: Record<string, { name: string; category: string; periods: SeenPeriod[] }> };
+
+/** Adds one look at the stock list: an item seen off starts (or continues) a period; seen back on, the
+ *  period ends then. */
+export function trackStatus(prev: StatusDay | null, date: string, items: StockItem[], nowIso: string): StatusDay {
+  const day: StatusDay = { date, at: nowIso, items: { ...(prev?.date === date ? prev.items : {}) } };
+  for (const it of items) {
+    const seen = day.items[it.productId];
+    const open = seen?.periods.find((p) => p.to === null);
+    if (!it.inStock) {
+      if (!seen) day.items[it.productId] = { name: it.name, category: it.category, periods: [{ from: nowIso, to: null }] };
+      else if (!open) day.items[it.productId] = { ...seen, periods: [...seen.periods, { from: nowIso, to: null }] };
+    } else if (open) {
+      day.items[it.productId] = { ...seen!, periods: seen!.periods.map((p) => (p === open ? { ...p, to: nowIso } : p)) };
+    }
+  }
+  return day;
+}
+
+/** One stretch an item was off during the day. from is when it was switched off (which may be an
+ *  earlier day: "off since 31 Oct 7:02 PM"); to is when it came back, null if still off at the check. */
+export type OffPeriod = { from: string | null; to: string | null; by: string | null; platforms: string[] };
+
+/** The day's off stretches from Ciferon's item log: each Stock-Out starts one, the next Stock-In ends
+ *  it (Swiggy and Zomato a few minutes apart are one switch). Only stretches that touch the day
+ *  [date 00:00, next day 00:00) India time count. */
+export function dayPeriods(rows: any[], date: string): OffPeriod[] {
+  const dayStart = Date.parse(`${date}T00:00:00+05:30`), dayEnd = dayStart + 86400000;
+  const events = (Array.isArray(rows) ? rows : [])
+    .map((r) => ({ at: dateOf(r), out: /out/i.test(String(r?.type ?? r?.Type ?? '')), by: String(r?.UserName ?? '').trim() || null, platform: String(r?.platform ?? r?.Platform ?? '').trim() }))
+    .filter((e) => e.at)
+    .sort((a, b) => a.at!.localeCompare(b.at!));
+  const periods: OffPeriod[] = [];
+  let open: OffPeriod | null = null;
+  for (const e of events) {
+    const t = Date.parse(e.at!);
+    if (t >= dayEnd) break;
+    if (e.out) {
+      if (!open) open = { from: e.at, to: null, by: e.by, platforms: e.platform ? [e.platform] : [] };
+      else if (e.platform && !open.platforms.includes(e.platform)) open.platforms.push(e.platform);
+    } else if (open) {
+      // The other app's switch back on a moment later finds nothing open: the same switch.
+      open.to = e.at;
+      periods.push(open);
+      open = null;
+    }
+  }
+  if (open) periods.push(open);
+  return periods.filter((p) => (p.to === null || Date.parse(p.to) > dayStart) && Date.parse(p.from!) < dayEnd);
+}
+
+export const EXPLAIN_REASONS = ['sold_out', 'short_delivery', 'not_requested', 'ingredient', 'equipment', 'quality', 'busy', 'mistake', 'on_purpose', 'other'] as const;
+export type ExplainReason = typeof EXPLAIN_REASONS[number];
+export const REASON_WORDS: Record<ExplainReason, string> = {
+  sold_out: 'sold out', short_delivery: 'delivery short or late', not_requested: 'not requested enough', ingredient: 'sauce or ingredient finished',
+  equipment: 'machine down', quality: 'bad quality', busy: 'too busy, switched off to cope', mistake: 'switched off by mistake / forgot to switch on',
+  on_purpose: 'kept off on purpose', other: 'other',
+};
+export type OutItem = {
+  productId: string; name: string; category: string;
+  periods: OffPeriod[];
+  explanation?: { reason: ExplainReason; note?: string; by: string; at: string } | null;
+};
+
+const clock = (iso: string) => {
+  const d = new Date(Date.parse(iso) + 330 * 60000);
+  const h = d.getUTCHours(), m = d.getUTCMinutes();
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+const shortDay = (iso: string) => {
+  const d = new Date(Date.parse(iso) + 330 * 60000);
+  return `${d.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()]}`;
+};
+/** "7:02 PM to 9:15 PM", "from 7:02 PM, still off at closing", "since 31 Oct 7:02 PM, all day" - for the day `date`. */
+export function periodWords(p: OffPeriod, date: string): string {
+  if (!p.from) return p.to ? `off until ${clock(p.to)}` : 'off (since when is not known)';
+  const before = Date.parse(p.from) < Date.parse(`${date}T00:00:00+05:30`);
+  const from = before ? `since ${shortDay(p.from)} ${clock(p.from)}` : `from ${clock(p.from)}`;
+  if (!p.to) return before ? `${from}, all day` : `${from}, still off at closing`;
+  return before ? `${from}, back on at ${clock(p.to)}` : `${clock(p.from)} to ${clock(p.to)}`;
+}
+/** "Chicken Chilli Momos [6 Pieces]" without Ciferon's -O / - A ending. */
+export const cleanItemName = (name: string) => name.replace(/\s*-\s*[OA]\.?$/i, '').trim();
+
 function dateOf(r: any): string | null {
   if (!r || typeof r !== 'object') return null;
   for (const [k, v] of Object.entries(r)) {

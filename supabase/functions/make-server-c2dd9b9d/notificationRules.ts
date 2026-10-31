@@ -33,6 +33,8 @@ const ACTION = new Set([
   'burger_check', // burger buns bought and burgers sold don't add up (burgerCheck.ts)
   'orders_unbilled', // the closing check: orders seen open that never became a bill, or a smaller one (liveOrders.ts)
   'online_items_off', // items switched off on Zomato and Swiggy that still sell (onlineStock.ts)
+  'stockout_explain', // why each item was out of stock today, to the store incharge (onlineStock.ts)
+  'stockout_explained', // the day's out-of-stock items with the reasons, to the owner
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
@@ -84,6 +86,7 @@ const OWNER_BUZZ = new Set([
   'expense_approval', 'cash_topup_request', 'loan_requested', 'discrepancy_request', 'production_cash_discrepancy_request',
   'leave_pending', 'stock_request_missed', 'complaint_answered', 'audit_report', 'test_notification',
   'orders_unbilled',
+  'stockout_explained',
 ]);
 export const ownerBuzzes = (type: string) => notificationCategory(type) === 'urgent' || OWNER_BUZZ.has(type);
 // Reminders that come back by themselves on a timetable aren't also sent to the owner as "Not seen
@@ -120,6 +123,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   supply_low: 'জিনিস কম আছে', supply_sorted: 'জিনিসের খবর', shopping_list: 'কেনাকাটার তালিকা',
   order_stuck: 'অর্ডার অনেকক্ষণ খোলা পড়ে আছে',
   online_items_off: 'অনলাইনে আইটেম বন্ধ আছে',
+  stockout_explain: 'কেন স্টক শেষ ছিল লিখুন',
 };
 
 export const DEFAULT_PREFS = { quietOn: true, quietFrom: '23:00', quietTo: '07:00', muted: {} as Partial<Record<NotificationCategory, boolean>>, digest: false };

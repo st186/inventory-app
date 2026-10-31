@@ -3,8 +3,10 @@
 // a bill or became a smaller one (server liveOrders.ts). The server looks every 3 minutes from
 // 3 PM; a pull down looks again. Before 3 PM it shows last night's check.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Clock3, PowerOff, Radio, ReceiptText } from 'lucide-react';
+import { CheckCircle2, Clock3, PackageOpen, PowerOff, Radio, ReceiptText } from 'lucide-react';
 import * as api from '../../utils/api';
+import { useT } from '../../utils/i18n';
+import { dayWord, periodText, reasonLabel } from '../stock/StockOutExplain';
 import { useRefreshSignal } from '../shell/refreshSignal';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
@@ -55,7 +57,7 @@ function checkLine(s: NonNullable<api.LiveStoreNow['check']>['summary']): string
 /** Before 3 PM there is only last night's check to show; with nothing in it, no card. */
 export function liveCardShown(data: api.LiveOrdersNow | null): data is api.LiveOrdersNow {
   if (!data || !data.stores.length) return false;
-  return data.open || data.stores.some((s) => s.orders.length || s.check || s.offOnline?.sells.length);
+  return data.open || data.stores.some((s) => s.orders.length || s.check || s.offOnline?.sells.length || s.outOfStock?.items.length);
 }
 
 const dayTime = (iso: string) => {
@@ -90,6 +92,7 @@ function OffOnlineRow({ storeId, item, onChanged }: { storeId: string; item: api
 }
 
 export function LiveOrdersCard({ data, onChanged }: { data: api.LiveOrdersNow | null; onChanged?: () => void }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   if (!liveCardShown(data)) return null;
   const several = data.stores.length > 1;
@@ -101,6 +104,7 @@ export function LiveOrdersCard({ data, onChanged }: { data: api.LiveOrdersNow | 
   const lastPoll = data.stores.map((s) => s.lastPoll).filter(Boolean).sort().pop() || null;
   const unreachable = data.open && data.stores.every((s) => s.error);
   const offItems = data.stores.flatMap((s) => s.offOnline?.sells || []);
+  const outDays = data.stores.filter((s) => s.outOfStock?.items.length).map((s) => ({ storeName: s.storeName, day: s.outOfStock! }));
   const checkWord = (date: string) => (date === data.date ? "Tonight's check" : "Last night's check");
 
   return (
@@ -161,6 +165,18 @@ export function LiveOrdersCard({ data, onChanged }: { data: api.LiveOrdersNow | 
           </div>
         )}
 
+        {outDays.map(({ storeName, day }) => {
+          const explained = day.items.filter((i) => i.explanation).length;
+          return (
+            <div key={`out-${storeName}`} className="flex items-start gap-2 rounded-md bg-surface-2 p-2.5">
+              <PackageOpen className="mt-0.5 size-4 shrink-0 text-text-2" aria-hidden="true" />
+              <span className="text-body-sm text-text">
+                <span className="font-medium">Out of stock on {dayWord(day.date)}{several ? ` · ${storeName}` : ''}:</span>{' '}
+                {day.items.length} item{day.items.length > 1 ? 's' : ''} · {explained === day.items.length ? 'all explained' : explained ? `${explained} explained` : 'waiting for the reasons'}
+              </span>
+            </div>
+          );
+        })}
         {checks.map(({ storeName, check }) => (
           <div key={storeName} className={`flex items-start gap-2 rounded-md p-2.5 ${check.findings.length ? 'bg-warning-soft' : 'bg-success-soft'}`}>
             {check.findings.length
@@ -225,6 +241,27 @@ export function LiveOrdersCard({ data, onChanged }: { data: api.LiveOrdersNow | 
                         {' · '}seen open {timeOf(f.firstSeen)}–{timeOf(f.lastSeen)}
                       </span>
                       {f.items.length > 0 && <span className="text-body-sm text-text-2">{itemsLine(f.items, 8)}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {s.outOfStock && s.outOfStock.items.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-label font-medium uppercase tracking-wide text-text-3">
+                    Out of stock on {dayWord(s.outOfStock.date)} · switched off on Zomato and Swiggy
+                  </span>
+                  {s.outOfStock.items.map((item) => (
+                    <div key={item.productId} className="flex flex-col gap-1 rounded-lg border border-border p-3">
+                      <span className="text-body-sm font-semibold text-text">{item.name}</span>
+                      <span className="num text-label text-text-3">{item.periods.map((p) => periodText(t, p, s.outOfStock!.date)).join(' · ')}</span>
+                      {item.explanation ? (
+                        <span className="text-body-sm text-text-2">
+                          <span className="font-medium text-text">{reasonLabel(t, item.explanation.reason)}</span>
+                          {item.explanation.note ? ` - "${item.explanation.note}"` : ''} · {item.explanation.by}
+                        </span>
+                      ) : (
+                        <StatusChip tone="warning" size="sm" className="self-start">Waiting for the store incharge's reason</StatusChip>
+                      )}
                     </div>
                   ))}
                 </div>
