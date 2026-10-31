@@ -155,4 +155,27 @@ test('numbered people: the day number is the slot; two numbers named the same ar
   assert.deepEqual(named.people[0].away, []);
 });
 
+test('the whole kitchen empty (lunch) is a break, not anyone away; a real absence still counts', () => {
+  // Spread bursts: 20 pictures 105 s apart, each 1.75 minutes (31 Oct 2026: lunch counted as Rudra away).
+  const seen = (on: (f: number) => boolean) => Array.from({ length: 20 }, (_, f) => (on(f) ? 'folding' : 'away'));
+  const b = (d: ActivityDay | null, from: string, vijay: (f: number) => boolean, rudra: (f: number) => boolean) =>
+    addBurst(d, { date: '2026-10-31', cameraId: 'cam', from, to: from, frames: 20, minutesPerFrame: 1.75, checks: [], gapSec: 105, people: [
+      { top: 'red', key: 'p1', activities: seen(vijay), phoneFrames: [] },
+      { top: 'red', key: 'p2', activities: seen(rudra), phoneFrames: [] },
+    ] });
+  let d = b(null, '13:00', () => true, () => true);
+  d = b(d, '13:35', (f) => f < 10, (f) => f < 5); // Rudra goes first (13:42), Vijay at 13:51
+  d = b(d, '14:10', () => false, () => false); // nobody
+  d = b(d, '14:45', (f) => f >= 3, (f) => f >= 3); // both back at 14:50
+  d = b(d, '15:20', (f) => f !== 7, () => false); // Rudra out the whole burst; one picture with nobody in view
+  d = b(d, '15:55', () => true, () => true);
+  const s = summarise([d], { '2026-10-31': { p1: 'Vijay Das', p2: 'Rudra Mahato' } }, 0);
+  assert.deepEqual(s.kitchen.empty, [{ date: '2026-10-31', from: '13:52', to: '14:50', minutes: 58 }]); // (10 + 20 + 3) pictures
+  const vijay = s.people.find((x) => x.name === 'Vijay Das')!;
+  const rudra = s.people.find((x) => x.name === 'Rudra Mahato')!;
+  assert.equal(vijay.notInKitchenMinutes, 0);
+  assert.deepEqual(rudra.away, [{ date: '2026-10-31', from: '15:18', to: '15:55', minutes: 35 }]); // 10 minutes before lunch isn't away
+  assert.equal(rudra.notInKitchenMinutes, 35);
+});
+
 console.log(`activityRules: ${passed} tests passed`);

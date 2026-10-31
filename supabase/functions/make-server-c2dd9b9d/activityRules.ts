@@ -174,23 +174,73 @@ export function addBurst(day: ActivityDay | null, o: {
 /**
  * Minutes a person was out of the kitchen: between their first and last sighting, every absence that
  * lasted AWAY_MIN or more; each frame the camera took while they were gone counts what a frame stands
- * for. Before they first come in and after they leave for the day isn't counted.
+ * for. Before they first come in and after they leave for the day isn't counted, nor a time the
+ * whole kitchen was empty (`empty`, see emptyFrames).
  */
-export function notInKitchen(d: ActivityDay, s: Slot, awayMin = AWAY_MIN): number {
-  return awaySpells(d, s, awayMin).reduce((t, x) => t + x.minutes, 0);
+export function notInKitchen(d: ActivityDay, s: Slot, awayMin = AWAY_MIN, empty: Set<string> = new Set()): number {
+  return awaySpells(d, s, awayMin, empty).reduce((t, x) => t + x.minutes, 0);
 }
+
+const frameKey = (t: number) => t.toFixed(3);
 
 /** Each time out of the kitchen (owner, 30 Oct 2026: "along with timestamp"): last seen, back, and
  *  the minutes it counts (the frames missed in between). */
 export type AwaySpell = { date: string; from: string; to: string; minutes: number };
-export function awaySpells(d: ActivityDay, s: Slot, awayMin = AWAY_MIN): AwaySpell[] {
+
+/**
+ * The whole kitchen empty (owner, 31 Oct 2026: lunch was counting as Rudra's "not in kitchen" though
+ * Vijay and Aniket were out too): runs of frames with nobody in view, between the first and last
+ * person seen that day, that add up to AWAY_MIN or more (a frame or two with everyone bent out of
+ * view isn't a break). `frames` = those frames, `spells` = each run from its first empty frame to
+ * the next frame with someone in it. `notPeople` = slots that are objects ("Not a person"). Days
+ * from before sightings had times give nothing.
+ */
+export function kitchenEmpty(d: ActivityDay, notPeople: Set<string> = new Set(), awayMin = AWAY_MIN): { frames: Set<string>; spells: AwaySpell[] } {
+  const out = { frames: new Set<string>(), spells: [] as AwaySpell[] };
+  const slots = Object.entries(d.slots).filter(([slot]) => !notPeople.has(slot)).map(([, s]) => s);
+  if (!slots.some((s) => s.at?.length)) return out;
+  const seen = new Set(slots.flatMap((s) => (s.at || []).map(frameKey)));
+  let anyoneYet = false;
+  let run: number[] = [];
+  for (const t of [...(d.frames || [])].sort((a, b) => a - b)) {
+    if (!seen.has(frameKey(t))) { if (anyoneYet) run.push(t); continue; }
+    if (run.length * (d.mpf || 0) >= awayMin) {
+      for (const f of run) out.frames.add(frameKey(f));
+      out.spells.push({ date: d.date, from: clockOf(run[0]), to: clockOf(t), minutes: run.length * (d.mpf || 0) });
+    }
+    anyoneYet = true;
+    run = [];
+  }
+  return out;
+}
+
+/** A break with the whole kitchen empty (`empty`, kitchenEmpty's frames) in the middle of an absence
+ *  is everyone's break: it splits the absence, the part after it starts when someone is back, and
+ *  each part counts only when it lasted AWAY_MIN or more (out a few minutes before the others went
+ *  for lunch isn't). */
+export function awaySpells(d: ActivityDay, s: Slot, awayMin = AWAY_MIN, empty: Set<string> = new Set()): AwaySpell[] {
   const at = [...(s.at || [])].sort((a, b) => a - b);
-  const frames = d.frames || [];
+  const frames = [...(d.frames || [])].sort((a, b) => a - b);
   const out: AwaySpell[] = [];
+  const add = (from: number | null, to: number, missed: number) => {
+    if (from !== null && missed && to - from >= awayMin) out.push({ date: d.date, from: clockOf(from), to: clockOf(to), minutes: missed * (d.mpf || 0) });
+  };
   for (let i = 1; i < at.length; i++) {
     if (at[i] - at[i - 1] < awayMin) continue;
-    const missed = frames.filter((t) => t > at[i - 1] + 1e-6 && t < at[i] - 1e-6).length;
-    if (missed) out.push({ date: d.date, from: clockOf(at[i - 1]), to: clockOf(at[i]), minutes: missed * (d.mpf || 0) });
+    let from: number | null = at[i - 1];
+    let missed = 0;
+    for (const t of frames) {
+      if (t <= at[i - 1] + 1e-6 || t >= at[i] - 1e-6) continue;
+      if (empty.has(frameKey(t))) {
+        add(from, t, missed);
+        from = null;
+        missed = 0;
+        continue;
+      }
+      if (from === null) from = t;
+      missed += 1;
+    }
+    add(from ?? at[i], at[i], missed);
   }
   return out;
 }
@@ -222,7 +272,11 @@ export function mergeSlots(a: Slot, b: Slot): Slot {
 /** Per person (named where someone tapped the name) and the kitchen as a whole, for one or more days. */
 export function summarise(days: ActivityDay[], names: Record<string, Record<string, string>>, piecesMade: number) {
   const rows = new Map<string, PersonRow>();
+  const emptyTimes: AwaySpell[] = [];
   for (const d of days) {
+    const notPeople = new Set(Object.keys(d.slots).filter((slot) => names[d.date]?.[slot] === 'Not a person'));
+    const { frames: empty, spells } = kitchenEmpty(d, notPeople);
+    emptyTimes.push(...spells);
     // The day's slots of one named person together first, so time under one number isn't counted
     // as away from the other.
     const merged = new Map<string, [string, Slot]>();
@@ -240,7 +294,7 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, notInKitchenMinutes: 0, away: [], foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
       for (const [a, m] of Object.entries(s.minutes)) r.minutes[a as Activity] = (r.minutes[a as Activity] || 0) + (m || 0);
       r.seenMinutes += Object.values(s.minutes).reduce((x, y) => x + (y || 0), 0);
-      const spells = awaySpells(d, s);
+      const spells = awaySpells(d, s, AWAY_MIN, empty);
       r.notInKitchenMinutes += spells.reduce((t, x) => t + x.minutes, 0);
       r.away.push(...spells);
       r.phoneMinutes += s.phoneMinutes;
@@ -281,6 +335,8 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       piecesPerFoldingHour: foldingMinutes >= 30 ? Math.round(piecesMade / (foldingMinutes / 60)) : null,
       // When folding started and ended, and the most people at it at once (one day; null over several).
       folding: days.length === 1 ? foldingSpan(days[0]) : null,
+      // The whole kitchen empty (lunch): nobody's "not in kitchen" (owner, 31 Oct 2026).
+      empty: emptyTimes.map((x) => ({ ...x, minutes: Math.round(x.minutes) })),
       stills: days.reduce((s, d) => s + d.stills, 0),
       bursts: days.reduce((s, d) => s + (d.bursts || 0), 0),
     },

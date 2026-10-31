@@ -25,6 +25,7 @@ export type FoldingSpan = { from: string; to: string; mostPeople: number };
 export type KitchenTotals = {
   foldingHours: number; phoneMinutes: number; idleMinutes: number; piecesMade: number; piecesPerFoldingHour: number | null; stills: number; bursts?: number;
   folding?: FoldingSpan | null; // one day: when folding started and ended, the most people at it at once
+  empty?: { date: string; from: string; to: string; minutes: number }[]; // the whole kitchen empty (lunch): nobody's "not in kitchen"
 };
 export type Activity = {
   from: string; to: string; labels: Record<string, string>;

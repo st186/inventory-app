@@ -264,6 +264,31 @@ function FoldingMarker({ days, single }: { days: (api.KitchenTotals & { date: st
   );
 }
 
+/** The whole kitchen empty for 15 minutes or more, like lunch (owner, 31 Oct 2026): a break for
+ *  everyone, so it isn't counted as anyone's "not in kitchen". */
+function BreakMarker({ days, single }: { days: (api.KitchenTotals & { date: string })[]; single: boolean }) {
+  const breaks = days.filter((d) => d.empty?.length);
+  if (!breaks.length) return null;
+  const times = (d: (typeof breaks)[number]) => d.empty!.map((x, i) => (
+    <span key={i} className="num">{i > 0 && ', '}{x.from}–{x.to} <span className="font-normal text-text-2">({hm(x.minutes)})</span></span>
+  ));
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-border bg-surface p-4">
+      <span className="mt-1.5 size-2.5 shrink-0 rounded-full border border-text-3" aria-hidden="true" />
+      <div className="flex min-w-0 flex-col gap-1">
+        {single ? (
+          <p className="text-body-md font-semibold text-text">Kitchen empty {times(breaks[0])}</p>
+        ) : (
+          <ul className="flex flex-col gap-0.5 text-body-sm text-text">
+            {breaks.map((d) => <li key={d.date}><span className="font-semibold">{dayName(d.date)}</span> · kitchen empty {times(d)}</li>)}
+          </ul>
+        )}
+        <p className="text-body-sm text-text-2">Nobody in view for 15 minutes or more, like lunch: a break for everyone, so it isn't counted as anyone's "not in kitchen".</p>
+      </div>
+    </div>
+  );
+}
+
 export function KitchenActivity() {
   const topName = useTopName();
   const today = getTodayIST();
@@ -291,6 +316,7 @@ export function KitchenActivity() {
           {!c.kitchen.stills ? <EmptyState compact icon={Users} title="No stills in this period" /> : (
             <>
               <FoldingMarker days={c.perDay} single={span[0] === span[1]} />
+              <BreakMarker days={c.perDay} single={span[0] === span[1]} />
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatTile label="Folding" value={<span className="num">{c.kitchen.foldingHours} h</span>} caption="all people" />
                 <StatTile label="Pieces made" value={<span className="num">{c.kitchen.piecesMade.toLocaleString('en-IN')}</span>} caption="production entries" />
@@ -302,7 +328,7 @@ export function KitchenActivity() {
                   ? <>From {c.kitchen.bursts} burst{c.kitchen.bursts === 1 ? '' : 's'} of {c.camera.burst.frames} pictures, one every {c.camera.burst.gapSec} seconds: each picture stands for about {Math.round((c.camera.burst.gapSec / 60) * 100) / 100} minutes</>
                   : <>From {c.kitchen.stills} stills, one every {c.camera.everyMin} minutes: each sighting counts {c.camera.everyMin} minutes</>}
                 , so these are estimates, good for trends. Unnamed people show by the colour of their top - name them in "Who is who".
-                {' '}Not in kitchen: gone 15 minutes or more between when they were first and last seen that day (shorter is just out of view).
+                {' '}Not in kitchen: gone 15 minutes or more between when they were first and last seen that day while others were working (shorter is just out of view; the whole kitchen empty is a break).
               </p>
               <div className="flex flex-col gap-3">
                 {c.people.map((p, i) => {
