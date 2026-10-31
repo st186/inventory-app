@@ -45,6 +45,8 @@ test('Bunny\'s kept answer decides those names', () => {
 test('reconcile lists them for review, with Bunny\'s category and why', () => {
   const plan = planReconcile({ purchases: [chicken], overheads: [brush, hata, lathi, nirma, taxi], assets: [], fromDate: '2026-10-27', now: '2026-10-31T10:00:00Z', by: 'From expenses', verdicts });
   assert.deepEqual(plan.create.map((a) => a.name).sort(), ['Hata', 'Jhul jhara lathi']);
+  // Bunny's category for what it found: the rules read "jhara" as a strainer.
+  assert.equal(plan.create.find((a) => a.name === 'Jhul jhara lathi')!.category, 'cleaning');
   const h = plan.create.find((a) => a.name === 'Hata')!;
   assert.equal(h.category, 'utensils_pans');
   assert.equal(h.needsReview, true);

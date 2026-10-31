@@ -298,11 +298,13 @@ export function planReconcile(input: {
   verdicts?: Map<string, AiVerdict>;
 }): ReconcilePlan {
   const { fromDate, now, by, verdicts } = input;
-  // The rules' category, or Bunny's when the rules can only say "other".
+  // The rules' category; Bunny's when it is the one that read the name as equipment (the rules took
+  // "jhul jhara" - a cobweb brush - for a jhara, a strainer), or when the rules can only say "other".
   const fieldsOf = (row: any, prefix: ExpensePrefix) => {
     const f = assetFieldsFromExpense(row, prefix);
     const v = verdictFor(row, prefix, verdicts);
-    return { ...f, category: f.category === 'other' && v?.category && ASSET_CATEGORY_KEYS.includes(v.category) ? v.category : f.category };
+    const bunnys = !!v?.category && ASSET_CATEGORY_KEYS.includes(v.category) && (f.category === 'other' || !isEquipmentExpense(row, prefix));
+    return { ...f, category: bunnys ? v!.category! : f.category };
   };
   const expenses = new Map<string, { row: any; prefix: ExpensePrefix }>();
   for (const row of input.purchases || []) if (row?.id && !expenses.has(String(row.id))) expenses.set(String(row.id), { row, prefix: 'inventory' });
