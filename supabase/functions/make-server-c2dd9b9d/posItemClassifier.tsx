@@ -39,7 +39,9 @@ function classifyProductName(productName: string): MomoCategory | null {
 // Platters (the owner's rule, the same as the manual sales-sheet upload, SalesData.tsx RULE 2): a
 // non-veg (or chicken mix) platter is 6 chicken + 6 chicken cheese momos, a veg (or veg mix) platter
 // 4 veg + 4 paneer + 4 cheese corn. The POS sync counted them as one plate of 6 of one type (31 Oct
-// 2026 stock check). A platter of one named kind ("Peri Peri Momo Platter (Chicken)") isn't split.
+// 2026 stock check). A platter of one named kind ("Peri Peri Momo Platter (Chicken)") isn't split:
+// 12 of that kind (extractPiecesPerUnit). One with no kind in its name ("Peri Peri Momo Platter")
+// stays uncounted until Ciferon names it (the stock check flags it).
 export function platterSplit(productName: string): Partial<Record<MomoCategory, number>> | null {
   const n = productName.toLowerCase();
   if (!n.includes('platter') || NON_FOOD_KEYWORDS.some((x) => n.includes(x))) return null;
@@ -80,6 +82,9 @@ function extractPiecesPerUnit(productName: string): number {
     const burgersPerPlate = pcsMatch ? parseInt(pcsMatch[1]) : 1;
     return burgersPerPlate * momosPerBurger;
   }
+
+  // A platter is 12 momos (owner, 31 Oct 2026: "Peri peri momo platter should have 12 momos").
+  if (!pcsMatch && nameLower.includes('platter')) return 12;
 
   // Platter (and any other plain "N pcs/pieces" item) = N momos of that type.
   if (pcsMatch) {

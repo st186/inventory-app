@@ -517,18 +517,23 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       // -------------------------------------------------
       // RULE 2: Platters (Split Logic)
       // -------------------------------------------------
+      // Same as posItemClassifier.tsx platterSplit (31 Oct 2026): a chicken mix is the non-veg
+      // split, a veg mix the veg split, and a platter of one named kind 12 of that kind.
       if (nameLower.includes('platter')) {
-        if (nameLower.includes('non veg')) {
+        const kind = classifyMomoCategory(nameLower);
+        if (/non[\s-]*veg|chicken mix/.test(nameLower)) {
           // 6 Chicken + 6 Chicken Cheese
           result['Chicken Momos'] += (6 * qty);
           result['Chicken Cheese Momos'] += (6 * qty);
-        } else if (nameLower.includes('veg')) {
+        } else if (/\bveg\b/.test(nameLower) && !/chicken|paneer|corn|kurkure/.test(nameLower)) {
           // 4 Paneer + 4 Veg + 4 Corn Cheese
           result['Paneer Momos'] += (4 * qty);
           result['Veg Momos'] += (4 * qty);
           result['Corn Cheese Momos'] += (4 * qty);
+        } else if (kind) {
+          result[kind] += (12 * qty);
         }
-        return; // Done processing this row
+        return; // Done processing this row (a platter with no kind in its name isn't counted)
       }
 
       // -------------------------------------------------
