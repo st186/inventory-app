@@ -16238,7 +16238,7 @@ async function buildOutOfStockDay(store: any, date: string): Promise<OutOfStockD
   const byId = new Map(items.map((i) => [i.productId, i]));
   const ids = new Set([...items.filter((i) => !i.inStock).map((i) => i.productId), ...Object.keys(seen?.items || {})]);
   const candidates = [...ids].map((id) => ({ productId: id, name: byId.get(id)?.name || seen?.items[id]?.name || id, category: byId.get(id)?.category || seen?.items[id]?.category || '', inStock: false }));
-  const { sells } = onlineStock.offOnline(candidates, stats, kept, date);
+  const { sells } = onlineStock.offOnline(candidates, stats, kept, date, items);
   const prev = await kv.get(`stock-out-day:${store.id}:${date}`) as OutOfStockDay | null;
   const out: onlineStock.OutItem[] = [];
   for (const row of sells.slice(0, 25)) {

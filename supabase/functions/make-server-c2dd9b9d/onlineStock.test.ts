@@ -59,6 +59,27 @@ test('flags what still sells; old and kept-off items are not flagged', () => {
   assert.equal(r.idle, 2); // Veg Chilli (never sold) and the old 8-piece add-on
 });
 
+test('an old listing is not flagged while the same dish is on under another', () => {
+  const list = parseStockStatus({ Result: { StockStatus: [{ CategoryName: 'Steamed', ProductStockStatus: [
+    { ProductId: 10, ProductName: 'Chicken Steamed Momos (8 pcs) - A', InStock: false },
+    { ProductId: 11, ProductName: 'Chicken Steamed Momos [6 Pieces]', InStock: true },
+    { ProductId: 12, ProductName: 'Chicken Chilli Momos [6 Pieces]', InStock: false },
+  ] }] } });
+  const stats = soldStats([{ date: '2026-10-31', orders: [{ orderType: 'HomeDelivery', rawItems: [
+    { productName: 'Chicken Steamed Momos [6 Pieces] -O', quantity: 3 }, { productName: 'Chicken Chilli Momos [6 Pieces] -O', quantity: 1 },
+  ] }] }], '2026-11-01');
+  const r = offOnline(list, stats, {}, '2026-11-01');
+  assert.deepEqual(r.sells.map((s) => s.name), ['Chicken Chilli Momos [6 Pieces]']);
+  assert.equal(r.idle, 1);
+  // Both listings of a dish off: shown once, as the current one.
+  const both = offOnline([{ ...list[0] }, { ...list[1], inStock: false }], stats, {}, '2026-11-01');
+  assert.deepEqual(both.sells.map((s) => s.name), ['Chicken Steamed Momos [6 Pieces]']);
+  assert.equal(both.idle, 1);
+  // The day's report: an item back on now is still in the day's list (its own listing doesn't count).
+  const day = offOnline([{ ...list[2], inStock: false }], stats, {}, '2026-11-01', [{ ...list[2], inStock: true }, list[1]]);
+  assert.deepEqual(day.sells.map((s) => s.name), ['Chicken Chilli Momos [6 Pieces]']);
+});
+
 test('a sale too long ago does not flag', () => {
   const stats = soldStats([{ date: '2026-09-20', orders: [{ orderType: 'HomeDelivery', rawItems: [{ productName: 'Chicken Momo Burger -O', quantity: 1 }] }] }], '2026-11-01');
   const r = offOnline(parseStockStatus(resp), stats, {}, '2026-11-01');

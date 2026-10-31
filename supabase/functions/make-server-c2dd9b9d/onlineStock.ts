@@ -72,22 +72,41 @@ export function soldStats(days: { date: string; orders: any[] }[], today: string
 }
 
 /** The items off online: ones the store still sells (flagged), ones kept off on purpose, and how many
- *  old ones nobody sells any more. */
-export function offOnline(items: StockItem[], stats: Map<string, SoldStats>, keptOff: Record<string, unknown>, today: string) {
+ *  old ones nobody sells any more. An off listing whose dish is on under another listing (the old
+ *  "Chicken Steamed Momos (8 pcs) - A" while "[6 Pieces]" is on) is old too. `listed` is the whole
+ *  stock list as it is now (by default `items`). */
+export function offOnline(items: StockItem[], stats: Map<string, SoldStats>, keptOff: Record<string, unknown>, today: string, listed: StockItem[] = items) {
   const onlineFrom = addDays(today, -ONLINE_DAYS), counterFrom = addDays(today, -COUNTER_DAYS);
+  const onUnder = new Map<string, Set<string>>();
+  for (const i of listed.filter((x) => x.inStock)) {
+    const k = itemKey(i.name);
+    onUnder.set(k, (onUnder.get(k) || new Set()).add(i.productId));
+  }
   const sells: OffItem[] = [], kept: OffItem[] = [];
   let idle = 0;
   for (const it of items.filter((i) => !i.inStock)) {
-    const s = stats.get(itemKey(it.name));
+    const key = itemKey(it.name);
+    const s = stats.get(key);
     const row: OffItem = { productId: it.productId, name: it.name, category: it.category, lastOnline: s?.lastOnline || null, lastCounter: s?.lastCounter || null };
-    if (keptOff[it.productId]) kept.push(row);
+    if ([...(onUnder.get(key) || [])].some((id) => id !== it.productId)) idle++;
+    else if (keptOff[it.productId]) kept.push(row);
     else if ((s?.lastOnline && s.lastOnline >= onlineFrom) || (s?.lastCounter && s.lastCounter >= counterFrom)) sells.push(row);
     else idle++;
   }
+  // One listing a dish: both "[6 Pieces]" and the old "(8 pcs) - A" off shows once, as the current one.
+  const byDish = new Map<string, OffItem>();
+  for (const row of sells) {
+    const key = itemKey(row.name), had = byDish.get(key);
+    if (!had) byDish.set(key, row);
+    else {
+      idle++;
+      if (/-\s*a\.?\s*$/i.test(had.name) && !/-\s*a\.?\s*$/i.test(row.name)) byDish.set(key, row);
+    }
+  }
   // Sold most recently first: the likeliest mistakes on top.
   const last = (r: OffItem) => [r.lastOnline || '', r.lastCounter || ''].sort().pop() || '';
-  sells.sort((a, b) => last(b).localeCompare(last(a)) || a.name.localeCompare(b.name));
-  return { total: items.length, off: items.filter((i) => !i.inStock).length, sells, kept, idle };
+  const flagged = [...byDish.values()].sort((a, b) => last(b).localeCompare(last(a)) || a.name.localeCompare(b.name));
+  return { total: items.length, off: items.filter((i) => !i.inStock).length, sells: flagged, kept, idle };
 }
 
 /** The last time an item was switched off, from Ciferon's item log (GetProductLogs: Result[] with
