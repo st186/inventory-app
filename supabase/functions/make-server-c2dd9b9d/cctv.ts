@@ -40,7 +40,7 @@ import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtBurst, aiLookAtCamera, type BurstLook } from './insights.ts';
 import { BURST, PPE_ITEMS, burstInHours, cleanFaces, decide, inHours, istClock, minutesPerFrame, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
 import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson } from './activityRules.ts';
-import { addRef, assign, cleanNumbered, mergeSamePerson, slotOf, toShow, type DayPeople, type NumberedBody } from './cameraPeople.ts';
+import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, toShow, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
 import { emptyPpeDay, ppeStep, type PpeDay } from './roundupRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
@@ -285,6 +285,26 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     const clock = istClock(nowMs);
     const { day, ids, keep } = assign(before, date, clock, look.people, numbered.crops);
     look.people.forEach((p, i) => { if (ids[i]) { (p as any).key = slotOf(ids[i]); (p as any).id = ids[i]; } });
+    // Where each number's box was this burst; a number named "Not a person" leaves the burst and its
+    // spot is kept, so the object is dropped before Bunny next time (owner, 31 Oct 2026).
+    for (const p of look.people as any[]) {
+      const spot = p.box ? spotOf(numbered, p.box) : null;
+      const person = spot && day.people.find((x) => x.id === p.id);
+      if (person) person.spot = spot!;
+    }
+    const names = (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`)) || {};
+    const objects = new Set((look.people as any[]).filter((p) => p.id && names[slotOf(p.id)] === NOT_A_PERSON).map((p) => p.id as number));
+    if (objects.size) {
+      let spots = (await deps.kv.get<IgnoreSpot[]>(`cctv-ignore:${cam.id}`)) || [];
+      for (const id of objects) {
+        const spot = day.people.find((x) => x.id === id)?.spot;
+        if (spot) spots = addSpot(spots, { box: spot, from: date, slot: slotOf(id), by: 'Who is who' });
+      }
+      await deps.kv.set(`cctv-ignore:${cam.id}`, spots);
+      const kept = look.people.filter((p: any) => !objects.has(p.id));
+      look.peopleCount = Math.max(kept.length ? 1 : 0, look.peopleCount - (look.people.length - kept.length));
+      look.people.splice(0, look.people.length, ...kept);
+    }
     const gone: string[] = [];
     for (const k of keep) {
       const path = `activity/${cam.id}/${date}/ref-${newId(6)}.jpg`;
@@ -403,7 +423,9 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       await deps.kv.set(`cctv-camera:${cam.id}`, cam);
 
       const place = await placeName(cam);
-      const numbered = isBurst && cam.activity ? cleanNumbered(body.people, images.length) : null;
+      let numbered = isBurst && cam.activity ? cleanNumbered(body.people, images.length) : null;
+      // Objects boxed as people before (Who is who: Not a person) are left out (cameraPeople.ts).
+      if (numbered) numbered = dropBoxes(numbered, objectBoxes(numbered, (await deps.kv.get<IgnoreSpot[]>(`cctv-ignore:${cam.id}`)) || []));
       const dayPeople = numbered ? await deps.kv.get<DayPeople>(`cctv-people:${cam.id}:${istDate(nowMs)}`) : null;
       const burst = isBurst ? await aiLookAtBurst(deps.kv as any, {
         frames: images, gapSec: BURST.gapSec, place: `${cam.name}, ${place}`, notes: cam.notes,
@@ -710,8 +732,20 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const key = `cctv-names:${cam.id}:${body.date}`;
       const names = (await deps.kv.get<Record<string, string>>(key)) || {};
       const name = clip(body.name, 60);
-      if (name) names[clip(body.slot, 20)] = name; else delete names[clip(body.slot, 20)];
+      const slot = clip(body.slot, 20);
+      const was = names[slot];
+      if (name) names[slot] = name; else delete names[slot];
       await deps.kv.set(key, names);
+      // Not a person: keep the box's spot, so the object is left out from the next burst on; taking it
+      // back removes the spot saved for it that day.
+      if (/^p\d+$/.test(slot) && (name === NOT_A_PERSON || was === NOT_A_PERSON)) {
+        let spots = (await deps.kv.get<IgnoreSpot[]>(`cctv-ignore:${cam.id}`)) || [];
+        if (name === NOT_A_PERSON) {
+          const spot = ((await deps.kv.get<DayPeople>(`cctv-people:${cam.id}:${body.date}`))?.people || []).find((p) => slotOf(p.id) === slot)?.spot;
+          if (spot) spots = addSpot(spots, { box: spot, from: body.date, slot, by: r.actor!.name });
+        } else spots = spots.filter((sp) => !(sp.from === body.date && sp.slot === slot));
+        await deps.kv.set(`cctv-ignore:${cam.id}`, spots);
+      }
       return c.json({ names });
     } catch (err) { return fail(c, err); }
   });

@@ -75,6 +75,7 @@ export function ppeFacts(o: { place: string; checks: PpeCheck[]; names?: Record<
       for (const m of c.missingBy || []) {
         if (m.id === undefined || m.id === null) continue;
         const who = o.names?.[`p${m.id}`] || `Person ${m.id}`;
+        if (who === 'Not a person') continue; // an object the camera boxed (cameraPeople.ts)
         const cur = byWho.get(who) || {};
         for (const item of m.items) cur[item] = (cur[item] || 0) + 1;
         byWho.set(who, cur);

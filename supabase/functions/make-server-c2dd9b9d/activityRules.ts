@@ -224,6 +224,7 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
     const merged = new Map<string, [string, Slot]>();
     for (const [slot, s] of Object.entries(d.slots)) {
       const name = names[d.date]?.[slot];
+      if (name === 'Not a person') continue; // an object the camera boxed (cameraPeople.ts NOT_A_PERSON)
       const k = name ? `name:${name}` : `slot:${slot}`;
       const had = merged.get(k);
       merged.set(k, had ? [had[0], mergeSlots(had[1], s)] : [slot, s]);

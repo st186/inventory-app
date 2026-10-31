@@ -21,6 +21,9 @@ import * as api from './camerasApi';
 // The name for a visitor, delivery person or technician (owner, 30 Oct 2026: "it could be someone
 // else"); their minutes add up under this one name, apart from the staff's.
 export const SOMEONE_ELSE = 'Someone else';
+// A box round an object, not a person (owner, 31 Oct 2026: a sack on the water jar was Person 3): left
+// out of the day, and the camera drops boxes in that spot from then on (server cameraPeople.ts).
+export const NOT_A_PERSON = 'Not a person';
 
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60 ? `${min % 60} min` : ''}`.trim() : `${min} min`);
@@ -58,7 +61,7 @@ export function WhoIsWho() {
       <section className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-surface p-4" aria-label={t('cam.whoTitle')}>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <h2 className="text-body-md font-semibold text-text">{t('cam.whoDone')}</h2>
-          <p className="text-body-sm text-text">{slots.map((s) => `${topName(s.slot)}: ${s.name === SOMEONE_ELSE ? t('cam.whoSomeoneElseShort') : s.name}`).join(' · ')}</p>
+          <p className="text-body-sm text-text">{slots.map((s) => `${topName(s.slot)}: ${s.name === SOMEONE_ELSE ? t('cam.whoSomeoneElseShort') : s.name === NOT_A_PERSON ? t('cam.whoNotPersonShort') : s.name}`).join(' · ')}</p>
           <p className="text-body-sm text-text-2">{t('cam.whoDoneNote')}</p>
         </div>
         <Button size="sm" variant="secondary" onClick={() => setChanging(true)}>{t('cam.whoChange')}</Button>
@@ -91,6 +94,7 @@ export function WhoIsWho() {
               <option value="">{t('cam.whoPick')}</option>
               {data.staff.map((n) => <option key={n} value={n}>{n}</option>)}
               <option value={SOMEONE_ELSE}>{t('cam.whoSomeoneElse')}</option>
+              {isNumbered(s.slot) && <option value={NOT_A_PERSON}>{t('cam.whoNotPerson')}</option>}
             </NativeSelect>
           </label>
         </div>

@@ -1577,7 +1577,7 @@ const burstSchema = {
 // within the burst); Bunny gets reference photos of the people seen earlier today and says which of
 // them each box is - so a person's minutes stay theirs all day - and what each is doing.
 const NUMBERED_SYSTEM = `You watch a short burst of CCTV frames from a momo kitchen in India: the same camera, frames in order, a fixed number of seconds apart. Each person has been found and marked with a coloured box with a number in its corner; the same number is the same person all through this burst.
-- List each numbered box that holds a real person once, by its number (box). Leave out a box round an object, and people in posters, screens or reflections.
+- List each numbered box that holds a real person once, by its number (box). Leave out a box round an object - a sack, bag, bucket, water jar, coat or apron on a hook, anything without a human head and body - and people in posters, screens or reflections.
 - Someone clearly in the kitchen in these frames who never got a box (seated far back, cut off by the edge): list them too, with box 0.
 - known: which of today's known people this is (their reference photos come first, each with its number), judged by clothes, cap or hairnet, build and anything printed on the top; 0 if it is none of them (someone new today). Two boxes may be the same known person if the boxing lost them for a while. Don't guess: 0 is better than the wrong person.
 - top: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet).

@@ -1,7 +1,7 @@
 // Tests for cameraPeople.ts. Run with plain node:
 //   node --experimental-strip-types supabase/functions/make-server-c2dd9b9d/cameraPeople.test.ts
 import assert from 'node:assert/strict';
-import { addRef, assign, cleanNumbered, mergeSamePerson, toShow, MAX_REFS } from './cameraPeople.ts';
+import { addRef, addSpot, assign, cleanNumbered, dropBoxes, inSpot, mergeSamePerson, objectBoxes, spotOf, toShow, MAX_REFS } from './cameraPeople.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -58,6 +58,36 @@ test('one person boxed twice in a burst: one row, frame by frame', () => {
   assert.equal(m.length, 2);
   assert.deepEqual(m[0].activities, ['folding', 'away', 'folding']);
   assert.deepEqual(m[0].phoneFrames, [1, 3]);
+});
+
+
+test('not a person: the sack on the water jar (31 Oct 2026) is dropped in its spot; a person there is not', () => {
+  const sack = [0.70, 0.40, 0.81, 0.80];
+  const spots = [{ box: sack, from: '2026-10-31', slot: 'p3', by: 'Owner' }];
+  assert.equal(inSpot([0.705, 0.41, 0.81, 0.79], sack), true);
+  assert.equal(inSpot([0.68, 0.20, 0.82, 0.80], sack), false); // someone standing there: a taller box
+  assert.equal(inSpot([0.30, 0.40, 0.41, 0.80], sack), false);
+  // Burst: box 1 a man walking past the sack, box 2 the sack in 4 of 5 frames.
+  const numbered = {
+    frames: [
+      [{ n: 1, box: [0.62, 0.30, 0.75, 0.80] }, { n: 2, box: [0.70, 0.40, 0.81, 0.80] }],
+      [{ n: 1, box: [0.66, 0.30, 0.79, 0.80] }, { n: 2, box: [0.70, 0.41, 0.81, 0.80] }],
+      [{ n: 1, box: [0.70, 0.30, 0.83, 0.80] }, { n: 2, box: [0.71, 0.40, 0.81, 0.79] }],
+      [{ n: 1, box: [0.74, 0.30, 0.87, 0.80] }, { n: 2, box: [0.70, 0.40, 0.80, 0.80] }],
+      [{ n: 2, box: [0.65, 0.30, 0.80, 0.80] }],
+    ],
+    crops: { 1: 'a', 2: 'b' }, photos: { 1: 'c', 2: 'd' },
+  };
+  const drop = objectBoxes(numbered, spots);
+  assert.deepEqual([...drop], [2]);
+  const kept = dropBoxes(numbered, drop);
+  assert.deepEqual(kept.frames.map((f) => f.map((b) => b.n)), [[1], [1], [1], [1], []]);
+  assert.deepEqual(Object.keys(kept.crops), ['1']);
+  assert.deepEqual(spotOf(numbered, 2), [0.7, 0.4, 0.81, 0.8]);
+  assert.equal(objectBoxes(numbered, []).size, 0);
+  // A spot already covered isn't added twice.
+  assert.equal(addSpot(spots, { box: [0.70, 0.41, 0.81, 0.80], from: '2026-11-01', slot: 'p2', by: 'Vijay' }).length, 1);
+  assert.equal(addSpot(spots, { box: [0.10, 0.40, 0.21, 0.80], from: '2026-11-01', slot: 'p2', by: 'Vijay' }).length, 2);
 });
 
 console.log(`cameraPeople: ${passed} tests passed`);

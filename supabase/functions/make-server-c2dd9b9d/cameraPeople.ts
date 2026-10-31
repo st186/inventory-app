@@ -5,9 +5,18 @@
 // box is (insights.ts aiLookAtBurst, numbered), so a person keeps one day number - slot "p3" - all
 // day, and Who is who shows the photo with their box. No I/O here: cctv.ts stores the crops.
 //
-//   cctv-people:{cameraId}:{date}   {date, next, people: [{id, refs: [{path, at}], first, last, top}]}
+//   cctv-people:{cameraId}:{date}   {date, next, people: [{id, refs: [{path, at}], first, last, top, spot}]}
+//   cctv-ignore:{cameraId}          spots where a box is an object, not a person (owner, 31 Oct 2026:
+//                                   a sack on the water jar was boxed as Person 3 and counted without a cap)
+// Not a person: picking it in Who is who takes that number out of the day (activity, PPE, the
+// roundup) and keeps the box's spot; later boxes the same size in the same spot are dropped before
+// Bunny reads the burst. The person finder was 76% sure of the sack - as sure as of real people - so
+// a score cut-off can't tell; a person standing there is a taller box and still counts.
 
-export type DayPerson = { id: number; refs: { path: string; at: string }[]; first: string; last: string; top: string };
+export type DayPerson = { id: number; refs: { path: string; at: string }[]; first: string; last: string; top: string; spot?: number[] };
+export type IgnoreSpot = { box: number[]; from: string; slot: string; by: string };
+export const NOT_A_PERSON = 'Not a person';
+export const MAX_SPOTS = 20;
 export type DayPeople = { date: string; next: number; people: DayPerson[] };
 export type NumberedBody = {
   frames: { n: number; box: number[] }[][]; // per frame, the boxes drawn on it (0-1 of the frame)
@@ -111,4 +120,53 @@ export function mergeSamePerson<T extends { key?: string; activities: string[]; 
     had.phoneFrames = [...new Set([...had.phoneFrames, ...p.phoneFrames])];
   }
   return out;
+}
+
+// ---- Objects boxed as people ----
+
+const iou = (a: number[], b: number[]) => {
+  const w = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+  const h = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  const inter = w * h;
+  const union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter;
+  return union > 0 ? inter / union : 0;
+};
+/** A box in a remembered object's spot: overlapping well, and about the same height (a person there is taller). */
+export function inSpot(box: number[], spot: number[]): boolean {
+  const ratio = (box[3] - box[1]) / Math.max(1e-6, spot[3] - spot[1]);
+  return iou(box, spot) >= 0.6 && ratio >= 0.75 && ratio <= 1.33;
+}
+
+/** One number's box across the burst: the median of each edge. */
+export function spotOf(numbered: NumberedBody, n: number): number[] | null {
+  const boxes = numbered.frames.flatMap((f) => f.filter((b) => b.n === n).map((b) => b.box));
+  if (!boxes.length) return null;
+  const mid = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  return [0, 1, 2, 3].map((i) => Math.round(mid(boxes.map((b) => b[i])) * 1e4) / 1e4);
+}
+
+/** The burst's numbers that sit in an object's spot in most of the frames they are drawn in. */
+export function objectBoxes(numbered: NumberedBody, spots: IgnoreSpot[]): Set<number> {
+  const out = new Set<number>();
+  if (!spots.length) return out;
+  const drawn = new Set(numbered.frames.flat().map((b) => b.n));
+  for (const n of drawn) {
+    const boxes = numbered.frames.flatMap((f) => f.filter((b) => b.n === n).map((b) => b.box));
+    const inside = boxes.filter((b) => spots.some((sp) => inSpot(b, sp.box))).length;
+    if (inside / boxes.length >= 0.6) out.add(n);
+  }
+  return out;
+}
+
+/** The burst without those numbers: Bunny is never told about them (its answer keeps only drawn boxes). */
+export function dropBoxes(numbered: NumberedBody, drop: Set<number>): NumberedBody {
+  if (!drop.size) return numbered;
+  const keep = <T>(o: Record<number, T>) => Object.fromEntries(Object.entries(o).filter(([n]) => !drop.has(Number(n)))) as Record<number, T>;
+  return { frames: numbered.frames.map((f) => f.filter((b) => !drop.has(b.n))), crops: keep(numbered.crops), photos: keep(numbered.photos) };
+}
+
+/** A new spot, unless one already covers it (newest kept, at most MAX_SPOTS). */
+export function addSpot(spots: IgnoreSpot[], spot: IgnoreSpot): IgnoreSpot[] {
+  if (spots.some((s) => inSpot(spot.box, s.box))) return spots;
+  return [...spots, spot].slice(-MAX_SPOTS);
 }
