@@ -74,7 +74,7 @@ export async function sendText(roomId: string, body: string, mentions: string[] 
 
 /** A photo (data URL from the camera, already made small) or a voice note, then its message. */
 export async function sendMedia(roomId: string, kind: 'photo' | 'voice', file: Blob, extras: { body?: string; seconds?: number; mentions?: string[] } = {}): Promise<ChatMessage> {
-  const ext = kind === 'photo' ? 'jpg' : file.type.includes('mp4') || file.type.includes('aac') ? 'm4a' : file.type.includes('ogg') ? 'ogg' : 'webm';
+  const ext = kind === 'photo' ? (file.type === 'image/gif' ? 'gif' : 'jpg') : file.type.includes('mp4') || file.type.includes('aac') ? 'm4a' : file.type.includes('ogg') ? 'ogg' : 'webm';
   const path = `${roomId}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { error: upErr } = await db().storage.from(BUCKET).upload(path, file, { contentType: file.type || (kind === 'photo' ? 'image/jpeg' : 'audio/webm'), upsert: false });
   if (upErr) throw new Error(upErr.message);
