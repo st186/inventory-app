@@ -302,7 +302,7 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
   // scrolling between the header and the box. In a portal so the page's pull-to-refresh can't catch
   // the scroll.
   return createPortal(
-    <div className="fixed inset-0 z-overlay flex flex-col bg-bg md:left-20 lg:left-[248px]">
+    <div className="fixed inset-0 z-(--z-overlay) flex flex-col bg-bg md:left-20 lg:left-[248px]">
       <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-border bg-surface px-2 py-2">
         <IconButton label={t('chat.back')} icon={<ArrowLeft />} onClick={onBack} />
