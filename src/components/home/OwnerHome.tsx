@@ -295,6 +295,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
             yesterdaySales={home.salesYesterday}
             overview={overview.data}
             forecastApplies={forecastApplies}
+            unbilled={live.data?.open ? live.data.stores.filter((s) => !home.scope || home.scope.includes(s.storeId)).reduce((sum, s) => sum + s.openTotal, 0) : undefined}
             onOpen={has('money/sales') ? () => open('money/sales') : undefined}
           />
         </div>
