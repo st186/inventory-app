@@ -193,7 +193,7 @@ export function houseFlags(day: PlaceDay, o: { entries: Row[] }): Flag[] {
   for (const k of neg(day.closing)) flags.push({ code: 'negative', momo: k, n: -day.closing[k], text: `${-day.closing[k]} ${MOMO_LABEL[k]} more sent than made since the count: a production entry may be missing or too low` });
   const sentAny = MOMO_KEYS.some((k) => day.out[k] > 0);
   if (sentAny && !o.entries.length) flags.push({ code: 'sent_without_entry', text: 'Momos sent but no production entry for the day' });
-  for (const p of o.entries) if (p.approvalStatus === 'pending') flags.push({ code: 'entry_pending', text: 'The day\'s production entry is still waiting for approval (counted already)' });
+  for (const p of o.entries) if (p.approvalStatus === 'pending') flags.push({ code: 'entry_pending', text: 'The day\'s production entry is still waiting for approval' });
   return flags;
 }
 
