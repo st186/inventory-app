@@ -254,3 +254,26 @@ export function trustBoxes<T extends { box?: number; activities: string[]; phone
   });
 }
 
+export const FOLD_SHARE = 0.5; // folding counts when it is at least half the frames the person was in view...
+export const FOLD_RUN = 3;     // ...with at least this many frames of it in a row
+
+/**
+ * Folding is steady work (owner, 31 Oct 2026, again: "still folding hasn't started and it says folding
+ * by Rudra"): at 11:40 Bunny gave him folding in 4 scattered frames at the wooden table, between idle,
+ * prep and filling, with no wrappers in sight. Someone folding momos folds most of the five minutes of
+ * a burst, so a person's folding frames count only when folding is at least half of the frames they
+ * were in view and 3 come in a row; otherwise those frames are "other".
+ */
+export function steadyFolding<T extends { activities: string[] }>(people: T[]): T[] {
+  return people.map((p) => {
+    const folds = p.activities.filter((a) => a === 'folding').length;
+    if (!folds) return p;
+    const seen = p.activities.filter((a) => a !== 'away').length;
+    let run = 0;
+    let best = 0;
+    for (const a of p.activities) { run = a === 'folding' ? run + 1 : 0; best = Math.max(best, run); }
+    if (folds >= FOLD_SHARE * seen && best >= FOLD_RUN) return p;
+    return { ...p, activities: p.activities.map((a) => (a === 'folding' ? 'other' : a)) };
+  });
+}
+

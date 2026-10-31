@@ -1,7 +1,7 @@
 // Tests for cameraPeople.ts. Run with plain node:
 //   node --experimental-strip-types supabase/functions/make-server-c2dd9b9d/cameraPeople.test.ts
 import assert from 'node:assert/strict';
-import { addRef, addSpot, assign, cleanNumbered, dropBoxes, inSpot, mergeSamePerson, objectBoxes, spotOf, tagState, toShow, trustBoxes, wantsConfirm, MAX_REFS, type DayPeople } from './cameraPeople.ts';
+import { addRef, addSpot, assign, cleanNumbered, dropBoxes, inSpot, mergeSamePerson, objectBoxes, spotOf, steadyFolding, tagState, toShow, trustBoxes, wantsConfirm, MAX_REFS, type DayPeople } from './cameraPeople.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -144,6 +144,20 @@ test('references: a person named on two numbers goes to Bunny once, under the fi
   assert.deepEqual(toShow(day, { p1: 'Rudra Mahato', p2: 'Rudra Mahato', p4: 'Aniket Prasad' }), [{ id: 1, paths: ['1a', '2b', '1b'] }, { id: 4, paths: ['4a', '4b'] }]);
   // Someone else is never merged: two visitors are two people.
   assert.equal(toShow(day, { p1: 'Someone else', p2: 'Someone else' }).length, 3);
+});
+
+test('folding is steady work: 31 Oct 11:40, Rudra at the wooden table got 4 scattered frames of folding', () => {
+  const rudra = ['away', 'away', 'away', 'away', 'idle', 'away', 'away', 'machine', 'other', 'away', 'away', 'filling', 'folding', 'folding', 'idle', 'folding', 'prep', 'folding', 'idle', 'away'];
+  const [out] = steadyFolding([{ activities: rudra }]);
+  assert.equal(out.activities.filter((a) => a === 'folding').length, 0);
+  assert.equal(out.activities[12], 'other');
+  assert.equal(out.activities[4], 'idle'); // the rest as Bunny read it
+  // Someone really folding: most frames, long runs, a glance away now and then - kept.
+  const folder = ['folding', 'folding', 'folding', 'idle', 'folding', 'folding', 'folding', 'folding', 'phone', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'away', 'away', 'away', 'away'];
+  assert.deepEqual(steadyFolding([{ activities: folder }])[0].activities, folder);
+  // Folded for a while, then left: half of the frames in view, kept.
+  const left = ['folding', 'folding', 'folding', 'folding', 'prep', 'prep', 'prep', 'prep', 'away', 'away', 'away', 'away', 'away', 'away', 'away', 'away', 'away', 'away', 'away', 'away'];
+  assert.deepEqual(steadyFolding([{ activities: left }])[0].activities, left);
 });
 
 console.log(`cameraPeople: ${passed} tests passed`);

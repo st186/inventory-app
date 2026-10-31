@@ -42,7 +42,7 @@ import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtBurst, aiLookAtCamera, type BurstLook } from './insights.ts';
 import { BURST, PPE_ITEMS, burstInHours, cleanFaces, decide, inHours, istClock, minutesPerFrame, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
 import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson } from './activityRules.ts';
-import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, tagState, toShow, trustBoxes, wantsConfirm, type Confirm, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
+import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, steadyFolding, tagState, toShow, trustBoxes, wantsConfirm, type Confirm, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
 import { emptyPpeDay, ppeStep, type PpeDay } from './roundupRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
@@ -467,6 +467,8 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       }) : null;
       // Where the PC drew someone's box is trusted over Bunny's frame-by-frame guess (cameraPeople.ts).
       if (burst && numbered) burst.people = trustBoxes(burst.people, numbered);
+      // ...and folding counts only as steady work, not a few frames here and there (cameraPeople.ts).
+      if (burst) burst.people = steadyFolding(burst.people);
       if (burst && numbered) {
         await numberPeople(cam, nowMs, dayPeople, burst, numbered)
           .catch((e) => console.error('[cctv] people not numbered:', String(e?.message || e).slice(0, 120)));

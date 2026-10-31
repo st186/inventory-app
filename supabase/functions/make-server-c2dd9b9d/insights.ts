@@ -1437,13 +1437,18 @@ const hygieneSchema = {
 // "no" raises an alert.
 // What each activity looks like, shared by both camera prompts (owner, 30 Oct 2026: two men peeling
 // onions were read as folding and idle - folding only with momo wrappers or momos in view).
-const ACTIVITY_GUIDE = 'folding = shaping or pleating momos by hand - thin round white wrappers, filling going in, finished momos in rows on a tray; '
+// Folding needs the stuffing and the sheets on the table (owner, 31 Oct 2026: "folding should also have
+// the stuffing on table... it should also have those sheets"). Vijay folding on 30 Oct 14:01: seated at
+// the wooden table, a big bowl of stuffing, a stack of round dough sheets and rows of folded momos in
+// front of him. Not folding: the same table with stuffing but no sheets and a phone in his hand (30 Oct
+// 11:40), carrying a crate of folded momos (30 Oct 16:19), standing at it with a pot (31 Oct 11:43).
+const ACTIVITY_GUIDE = 'folding = shaping or pleating momos by hand - ALL of these on the table or tray right in front of them: a bowl of stuffing (the minced filling), a stack of the thin round white dough sheets (wrappers), and folded momos in rows; the hands busy wrapping. A table with stuffing but no sheets, or no folded momos, is not folding, nor is standing at the table with a pot, a knife or vegetables, or carrying a crate of momos; '
   + 'machine = at a dough or sheeting machine, rolling or cutting dough; '
   + 'prep = peeling, cutting or chopping vegetables (onion, cabbage, coriander, garlic) - whole vegetables, peels, a knife or a big bowl of vegetables in front of them, often sitting on a stool; '
   + 'filling = mixing the chopped filling in a big bowl or tray by hand; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; '
   + 'cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; '
   + 'idle = standing or sitting with empty hands, not working (someone holding vegetables, a bowl or a tray is working); other = anything else, or walking. '
-  + 'When the hands are hidden, judge by what is in front of them: call it folding only when wrappers or momos can be seen';
+  + 'When the hands are hidden, judge by what is in front of them: call it folding only when the stuffing, the dough sheets and folded momos can all be seen';
 const COLOURS = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'];
 const TROUSERS = { type: 'string', enum: [...COLOURS, 'unseen'] };
 const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people. Also, for each person: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet), the main colour of their trousers (pants, jeans or lungi; "unseen" if the legs are hidden), what they are doing right now (' + ACTIVITY_GUIDE + '), and whether a phone is in their hand or at their ear.';
