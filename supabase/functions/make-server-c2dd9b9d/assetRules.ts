@@ -47,6 +47,8 @@ export interface Asset {
     guessedCategory?: AssetCategory;
     // Kept on purpose after its expense was deleted or re-filed: no longer followed.
     unlinked?: boolean;
+    // Added because Bunny read the name as equipment (the keywords didn't know it): why.
+    aiWhy?: string;
   };
   needsReview: boolean;
   // Set on a confirmed entry whose expense was later edited or deleted: shown for someone to
@@ -155,6 +157,31 @@ export function isEquipmentExpense(row: any, prefix: ExpensePrefix): boolean {
   if (EQUIPMENT_OVERHEAD_CATEGORIES.has(category)) return !(category === 'asset_vehicle' && VEHICLE_EMI_RE.test(name));
   if (KEYWORD_OVERHEAD_CATEGORIES.has(category)) return keywordMatch;
   return false;
+}
+
+// ---------------- Bunny's word on names the keywords can't judge ----------------
+
+// Owner, 31 Oct 2026: "have an AI to detect if a purchase can be added to the potential equipment
+// and asset list". The keywords know English words; a ladle bought as "hata" or a cobweb stick as
+// "jhul jhara lathi" passes them by. A name they can't judge - outside food and packaging, in the
+// overheads where a pan or a bin is sometimes bought, and not an obvious consumable - is asked of
+// Bunny once (server assetAi.ts) and the answer is kept for that name.
+export type AiVerdict = { equipment: boolean; category?: AssetCategory | null; why?: string };
+export const aiNameKey = (name: string) => String(name || '').toLowerCase().replace(/[^a-z0-9\u0980-\u09ff\u0900-\u097f]+/g, ' ').trim().slice(0, 80);
+
+export function askableForAi(row: any, prefix: ExpensePrefix): boolean {
+  const name = expenseName(row, prefix);
+  if (!aiNameKey(name) || NOT_EQUIPMENT_RE.test(name) || isEquipmentExpense(row, prefix)) return false;
+  const category = String(row?.category || '');
+  return prefix === 'inventory' ? !FOOD_AND_PACKAGING.has(category) : KEYWORD_OVERHEAD_CATEGORIES.has(category);
+}
+
+const verdictFor = (row: any, prefix: ExpensePrefix, verdicts?: Map<string, AiVerdict>) =>
+  verdicts && askableForAi(row, prefix) ? verdicts.get(aiNameKey(expenseName(row, prefix))) || null : null;
+
+/** Equipment by the rules, or by Bunny's kept answer for a name the rules can't judge. */
+export function isEquipment(row: any, prefix: ExpensePrefix, verdicts?: Map<string, AiVerdict>): boolean {
+  return isEquipmentExpense(row, prefix) || !!verdictFor(row, prefix, verdicts)?.equipment;
 }
 
 // For the expense forms' hint: the same test on what has been typed so far.
@@ -267,8 +294,16 @@ export function planReconcile(input: {
   fromDate: string;
   now: string;
   by: string;
+  // Bunny's kept answers per name (aiNameKey), for names the keywords can't judge.
+  verdicts?: Map<string, AiVerdict>;
 }): ReconcilePlan {
-  const { fromDate, now, by } = input;
+  const { fromDate, now, by, verdicts } = input;
+  // The rules' category, or Bunny's when the rules can only say "other".
+  const fieldsOf = (row: any, prefix: ExpensePrefix) => {
+    const f = assetFieldsFromExpense(row, prefix);
+    const v = verdictFor(row, prefix, verdicts);
+    return { ...f, category: f.category === 'other' && v?.category && ASSET_CATEGORY_KEYS.includes(v.category) ? v.category : f.category };
+  };
   const expenses = new Map<string, { row: any; prefix: ExpensePrefix }>();
   for (const row of input.purchases || []) if (row?.id && !expenses.has(String(row.id))) expenses.set(String(row.id), { row, prefix: 'inventory' });
   for (const row of input.overheads || []) if (row?.id && !expenses.has(String(row.id))) expenses.set(String(row.id), { row, prefix: 'overhead' });
@@ -279,8 +314,9 @@ export function planReconcile(input: {
 
   for (const [expenseId, { row, prefix }] of expenses) {
     if (linked.has(expenseId)) continue;
-    if (String(row.date || '') < fromDate || !isEquipmentExpense(row, prefix)) continue;
-    const f = assetFieldsFromExpense(row, prefix);
+    if (String(row.date || '') < fromDate || !isEquipment(row, prefix, verdicts)) continue;
+    const f = fieldsOf(row, prefix);
+    const why = isEquipmentExpense(row, prefix) ? '' : String(verdictFor(row, prefix, verdicts)?.why || '').slice(0, 200);
     plan.create.push({
       id: assetIdForExpense(expenseId),
       name: f.name,
@@ -294,7 +330,7 @@ export function planReconcile(input: {
       condition: 'good',
       photo: null,
       notes: '',
-      source: { kind: 'expense', expenseId, expensePrefix: prefix, fingerprint: expenseFingerprint(f), guessedCategory: f.category },
+      source: { kind: 'expense', expenseId, expensePrefix: prefix, fingerprint: expenseFingerprint(f), guessedCategory: f.category, ...(why ? { aiWhy: why } : {}) },
       needsReview: true,
       expenseChanged: null,
       createdAt: now,
@@ -309,7 +345,7 @@ export function planReconcile(input: {
   for (const [expenseId, a] of linked) {
     if (a.dismissed || a.source.unlinked) continue;
     const e = expenses.get(expenseId);
-    const stillEquipment = e ? isEquipmentExpense(e.row, e.prefix) : false;
+    const stillEquipment = e ? isEquipment(e.row, e.prefix, verdicts) : false;
     if (!e || !stillEquipment) {
       // Gone, or re-filed as something that isn't equipment (food, a repair).
       const kind = e ? 'not_equipment' : 'deleted';
@@ -319,7 +355,7 @@ export function planReconcile(input: {
       }
       continue;
     }
-    const f = assetFieldsFromExpense(e.row, e.prefix);
+    const f = fieldsOf(e.row, e.prefix);
     const fp = expenseFingerprint(f);
     if (fp === a.source.fingerprint) {
       // Edited back to what was confirmed: nothing left to decide.
