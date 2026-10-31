@@ -16,6 +16,7 @@ import { ShellProvider, type ShellContextValue, type ShellUser } from './ShellCo
 import { TopBar } from './TopBar';
 import { PullToRefresh } from './PullToRefresh';
 import { sendRefresh } from './refreshSignal';
+import { reloadWithSales, usePosSyncOnRefresh } from './posSyncOnRefresh';
 import { BottomNav } from './BottomNav';
 import { NavRail } from './NavRail';
 import { Sidebar } from './Sidebar';
@@ -72,14 +73,16 @@ function TopBarWithInbox(props: Omit<ComponentProps<typeof TopBar>, 'unread'>) {
   return <TopBar {...props} unread={feed.unreadCount} />;
 }
 
-// Pull down: the business data (if this login loads it), the Inbox, and whatever the screen in
-// view loads itself (refreshSignal).
-function PullRefresh({ areaRef, anchorRef, onRefresh }: { areaRef: RefObject<HTMLElement | null>; anchorRef: RefObject<HTMLElement | null>; onRefresh?: () => Promise<void> | void }) {
+// Pull down: the business data (if this login loads it), the Inbox, whatever the screen in view
+// loads itself (refreshSignal), and the day's sales from the POS (posSyncOnRefresh).
+function PullRefresh({ areaRef, anchorRef, onRefresh, posSync }: {
+  areaRef: RefObject<HTMLElement | null>; anchorRef: RefObject<HTMLElement | null>; onRefresh?: () => Promise<void> | void; posSync?: () => Promise<boolean> | undefined;
+}) {
   const feed = useNotifications();
   const run = useCallback(() => {
     sendRefresh();
-    return Promise.all([onRefresh?.(), feed.refresh()]);
-  }, [onRefresh, feed.refresh]);
+    return Promise.all([onRefresh ? reloadWithSales(onRefresh, posSync?.()) : undefined, feed.refresh()]);
+  }, [onRefresh, posSync, feed.refresh]);
   return <PullToRefresh areaRef={areaRef} anchorRef={anchorRef} onRefresh={run} />;
 }
 
@@ -200,7 +203,16 @@ function ShellFrame(props: AppShellProps) {
   const columnRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const { onRefresh } = props;
-  const refreshButton = useCallback(() => { sendRefresh(); return onRefresh?.(); }, [onRefresh]);
+  const posSync = usePosSyncOnRefresh(nav.perms, user.accessToken, !!preview);
+  // The button spins while the POS sync runs too (App's `refreshing` is only the reload).
+  const [salesBusy, setSalesBusy] = useState(false);
+  const refreshButton = useCallback(async () => {
+    sendRefresh();
+    if (!onRefresh) return;
+    const sales = posSync?.();
+    setSalesBusy(!!sales);
+    try { await reloadWithSales(onRefresh, sales); } finally { setSalesBusy(false); }
+  }, [onRefresh, posSync]);
 
   const isMe = route.path === 'me';
   // Learn the app: a role with chapters opens the chapter list; the others play the tour.
@@ -249,10 +261,10 @@ function ShellFrame(props: AppShellProps) {
             userName={user.name}
             onAccount={openAccount}
             onRefresh={onRefresh ? refreshButton : undefined}
-            refreshing={props.refreshing}
+            refreshing={props.refreshing || salesBusy}
           />
           {props.banners}
-          <PullRefresh areaRef={columnRef} anchorRef={mainRef} onRefresh={onRefresh} />
+          <PullRefresh areaRef={columnRef} anchorRef={mainRef} onRefresh={onRefresh} posSync={posSync} />
           <main
             ref={mainRef}
             id="main"

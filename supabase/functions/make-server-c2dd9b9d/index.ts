@@ -16468,6 +16468,10 @@ const STORE_OPENING_HOUR_IST = 15;
 // sync of any kind - nightly, Sync Now, past-day or bulk re-sync - runs in that window (owner,
 // 27 Oct 2026). The nightly cron fires at 10:30 PM and again at 11 PM for last-minute sales
 // (pg_cron pos-nightly-sync and pos-late-sync), both outside it.
+const POS_SYNC_LAST_START_KEY = 'pos-sync:last-start';
+// A pull down on the screen syncs too (owner, 31 Oct 2026); one within this long of the last sync
+// is skipped and the phone just reloads what that sync brought in.
+const PULL_SYNC_GAP_MS = 2 * 60 * 1000;
 const POS_QUIET_START_MIN_IST = 23 * 60 + 50;
 const POS_QUIET_END_MIN_IST = 6 * 60 + 10;
 function inPosQuietHours(): boolean {
@@ -16495,6 +16499,8 @@ async function runPosSync(targetDate?: string) {
   if (!isBackfill && getHourIST() < STORE_OPENING_HOUR_IST) {
     return { success: true, skipped: true, date: today, message: `Skipped - stores haven't opened yet (before ${STORE_OPENING_HOUR_IST}:00 IST)`, results };
   }
+  // When today's last sync started: a pull down on the phone skips a sync this recent (trigger route).
+  if (!isBackfill) await kv.set(POS_SYNC_LAST_START_KEY, { at: new Date().toISOString() }).catch(() => undefined);
 
   try {
     const allStores = await kv.getByPrefix('store:');
@@ -17261,6 +17267,14 @@ app.post('/make-server-c2dd9b9d/pos-sync/trigger', async (c) => {
   const isOperationsManager = role === 'manager' && !isStoreIncharge && !isProductionIncharge;
   if (role !== 'cluster_head' && !isOperationsManager && !isStoreIncharge && !isProductionIncharge) {
     return c.json({ error: 'Only production head, operations manager, store incharge, or cluster head can trigger a manual POS sync' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  if (body?.fromPull) {
+    const last = await kv.get(POS_SYNC_LAST_START_KEY).catch(() => null) as { at?: string } | null;
+    if (last?.at && Date.now() - Date.parse(last.at) < PULL_SYNC_GAP_MS) {
+      return c.json({ success: true, skipped: true, recent: true, lastAt: last.at, message: 'Synced moments ago' });
+    }
   }
 
   const result = await runPosSync();

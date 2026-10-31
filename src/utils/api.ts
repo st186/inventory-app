@@ -901,10 +901,12 @@ export async function markRepairFixed(id: string, note?: string, repairCost?: nu
 }
 
 // Manually triggers today's Ciferon POS sync early, instead of waiting for the 10:30 PM
-// cron job. Operations-manager/cluster-head only (enforced server-side).
-export async function triggerPosSync(accessToken: string): Promise<any> {
+// cron job. Operations-manager/cluster-head only (enforced server-side). `fromPull`: a pull down
+// on the screen - the server skips it when a sync started in the last 2 minutes.
+export async function triggerPosSync(accessToken: string, opts: { fromPull?: boolean } = {}): Promise<any> {
   return fetchWithAuth(`${API_BASE}/pos-sync/trigger`, accessToken, {
     method: 'POST',
+    ...(opts.fromPull ? { body: JSON.stringify({ fromPull: true }) } : {}),
   });
 }
 
