@@ -162,4 +162,22 @@ test('folding is steady work: 31 Oct 11:40, Rudra at the wooden table got 4 scat
   assert.deepEqual(steadyFolding([{ activities: left }])[0].activities, left);
 });
 
+test('spread frames (105 s apart): folding for part of the half hour counts; a lone frame of it does not', () => {
+  // Aniket on 31 Oct 13:00-13:35: walked in, then folded from the 5th frame (13:07) on.
+  const aniket = ['away', 'other', 'other', 'idle', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding'];
+  assert.deepEqual(steadyFolding([{ activities: aniket }], 105)[0].activities, aniket);
+  // Folded a quarter of the time (would fail the half rule of bunched frames): kept when spread.
+  const part = ['prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'prep', 'folding', 'folding', 'folding', 'folding', 'folding'];
+  assert.deepEqual(steadyFolding([{ activities: part }], 105)[0].activities, part);
+  assert.equal(steadyFolding([{ activities: part }])[0].activities.includes('folding'), false); // bunched: not steady
+  // Rudra's scattered misreads: lone frames become other, a pair stays.
+  const out = steadyFolding([{ activities: ['idle', 'folding', 'idle', 'machine', 'folding', 'folding', 'idle'] }], 105)[0].activities;
+  assert.deepEqual(out, ['idle', 'other', 'idle', 'machine', 'folding', 'folding', 'idle']);
+  // Changing seats between frames minutes apart isn't walking: folding kept.
+  const seats: { n: number; box: number[] }[][] = [[{ n: 1, box: [0.2, 0.5, 0.35, 0.95] }], [{ n: 1, box: [0.55, 0.5, 0.7, 0.95] }], [{ n: 1, box: [0.55, 0.5, 0.7, 0.95] }]];
+  const said = ['folding', 'folding', 'folding'];
+  assert.deepEqual(trustBoxes([{ box: 1, activities: said }], { frames: seats, crops: {}, photos: {} }, 105)[0].activities, said);
+  assert.equal(trustBoxes([{ box: 1, activities: said }], { frames: seats, crops: {}, photos: {} })[0].activities[0], 'other'); // 15 s apart: walking
+});
+
 console.log(`cameraPeople: ${passed} tests passed`);

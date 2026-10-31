@@ -143,7 +143,11 @@ export function addBurst(day: ActivityDay | null, o: {
     const frames = p.activities.slice(0, o.frames);
     if (!frames.some((a) => a !== 'away')) continue;
     const key = keys[i];
-    const s: Slot = d.slots[key] || newSlot(o.from);
+    // First and last seen: the frames they were in (a spread burst covers 35 minutes, 31 Oct 2026).
+    const inView = frames.map((a, f) => (a === 'away' ? -1 : f)).filter((f) => f >= 0);
+    const seenFrom = clockOf(times[inView[0]]);
+    const seenTo = clockOf(times[inView[inView.length - 1]]);
+    const s: Slot = d.slots[key] || newSlot(seenFrom);
     const phoneAt = new Set(p.phoneFrames);
     let onPhoneNow = false;
     frames.forEach((a, f) => {
@@ -159,8 +163,8 @@ export function addBurst(day: ActivityDay | null, o: {
       s.samples += 1;
       s.at = [...(s.at || []), times[f]];
     });
-    if (o.from < s.first) s.first = o.from;
-    if (o.to > s.last) s.last = o.to;
+    if (seenFrom < s.first) s.first = seenFrom;
+    if (seenTo > s.last) s.last = seenTo;
     judgePpe(s, p, o.checks);
     d.slots[key] = s;
   }

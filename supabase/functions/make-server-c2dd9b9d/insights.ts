@@ -1648,7 +1648,11 @@ export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: n
     content.push({ type: 'text', text: num ? `Frame ${i + 1} (boxes: ${(num.boxes[i] || []).join(', ') || 'none'})` : `Frame ${i + 1}` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
   });
-  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}.${burst.notes ? ` About this kitchen: ${burst.notes.slice(0, 400)}` : ''} ${n} frames, ${burst.gapSec} seconds apart: give each ${num ? 'numbered box' : 'person'} exactly ${n} activities.${num && !num.known.length ? ' Nobody is known yet today: every box is known 0.' : ''}` });
+  // Spread bursts (owner, 31 Oct 2026): frames minutes apart are judged one by one.
+  const spread = burst.gapSec >= 60
+    ? ` The frames are spread over the last ${Math.round((n * burst.gapSec) / 60)} minutes, about ${Math.round(burst.gapSec / 6) / 10} minutes apart: people may move or switch work in between, so judge each frame mainly by what it shows (their hands, what is on the table in front of them); the frames around it are only a hint.`
+    : '';
+  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}.${burst.notes ? ` About this kitchen: ${burst.notes.slice(0, 400)}` : ''} ${n} frames, ${burst.gapSec} seconds apart: give each ${num ? 'numbered box' : 'person'} exactly ${n} activities.${spread}${num && !num.known.length ? ' Nobody is known yet today: every box is known 0.' : ''}` });
   const res = await callClaude(deps, {
     purpose: 'camera',
     system: num ? NUMBERED_SYSTEM : BURST_SYSTEM,

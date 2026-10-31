@@ -229,8 +229,12 @@ export function addSpot(spots: IgnoreSpot[], spot: IgnoreSpot): IgnoreSpot[] {
 // moment hidden); and folding while the box crosses the picture is walking.
 const STEADY = new Set(['folding', 'machine', 'filling']);
 const WALKED = 0.12; // share of the picture's width the box's centre moved to or from the nearest drawn frame
+const SPREAD_GAP = 60; // seconds between frames from which a burst is "spread" (as cameraRules SPREAD_GAP_SEC)
 
-export function trustBoxes<T extends { box?: number; activities: string[]; phoneFrames?: number[] }>(people: T[], numbered: NumberedBody): T[] {
+export function trustBoxes<T extends { box?: number; activities: string[]; phoneFrames?: number[] }>(people: T[], numbered: NumberedBody, gapSec = 15): T[] {
+  // Frames minutes apart (spread bursts, 31 Oct 2026): someone may simply have changed seats in
+  // between, so the walking check is only for frames seconds apart.
+  const walkCheck = gapSec < SPREAD_GAP;
   return people.map((p) => {
     if (!p.box) return p;
     const at = new Map<number, number[]>(); // frame index -> this person's box
@@ -246,7 +250,7 @@ export function trustBoxes<T extends { box?: number; activities: string[]; phone
         if (STEADY.has(a) && !(at.has(i - 1) && at.has(i + 1))) return 'away';
         return a;
       }
-      if (a === 'folding') {
+      if (a === 'folding' && walkCheck) {
         // Moving to or from this frame's spot across the picture: walking, not folding.
         const prev = drawn.filter((d) => d < i).pop();
         const next = drawn.find((d) => d > i);
@@ -261,6 +265,7 @@ export function trustBoxes<T extends { box?: number; activities: string[]; phone
 
 export const FOLD_SHARE = 0.5; // folding counts when it is at least half the frames the person was in view...
 export const FOLD_RUN = 3;     // ...with at least this many frames of it in a row
+export const FOLD_RUN_SPREAD = 2; // spread frames: two in a row (3.5 minutes apart at 35 minutes)
 
 /**
  * Folding is steady work (owner, 31 Oct 2026, again: "still folding hasn't started and it says folding
@@ -268,11 +273,24 @@ export const FOLD_RUN = 3;     // ...with at least this many frames of it in a r
  * prep and filling, with no wrappers in sight. Someone folding momos folds most of the five minutes of
  * a burst, so a person's folding frames count only when folding is at least half of the frames they
  * were in view and 3 come in a row; otherwise those frames are "other".
+ * Spread frames (minutes apart) cover half an hour, so someone may fold for part of it and peel onions
+ * the rest: there folding counts in runs of two or more frames in a row, and a lone frame of it is "other".
  */
-export function steadyFolding<T extends { activities: string[] }>(people: T[]): T[] {
+export function steadyFolding<T extends { activities: string[] }>(people: T[], gapSec = 15): T[] {
+  const spread = gapSec >= SPREAD_GAP;
   return people.map((p) => {
     const folds = p.activities.filter((a) => a === 'folding').length;
     if (!folds) return p;
+    if (spread) {
+      const activities = [...p.activities];
+      for (let i = 0; i < activities.length;) {
+        let j = i;
+        while (j < activities.length && activities[j] === 'folding') j++;
+        if (j - i > 0 && j - i < FOLD_RUN_SPREAD) activities.fill('other', i, j);
+        i = Math.max(j, i + 1);
+      }
+      return activities.some((a, i) => a !== p.activities[i]) ? { ...p, activities } : p;
+    }
     const seen = p.activities.filter((a) => a !== 'away').length;
     let run = 0;
     let best = 0;

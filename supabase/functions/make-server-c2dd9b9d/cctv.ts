@@ -26,8 +26,10 @@
 //                                           second tag; cameraPeople.ts tagState; 7 days)
 // Kitchen activity (owner, 29 Oct 2026): with `activity` on, every scheduled look also counts what
 // each person is doing; only the owner sees the numbers. Such a camera looks in bursts ("for better
-// detection"): the PC takes 20 frames 15 seconds apart and sends them together, the AI follows each
-// person through them (one call for the lot), then the camera waits `everyMin` (30) minutes.
+// detection"): the PC takes 20 frames and sends them together, the AI follows each person through
+// them (one call for the lot). Since 31 Oct the frames are spread over the camera's `everyMin` (35:
+// one every 105 s) and the next burst starts straight away (cameraRules burstFor); before, they were
+// 15 s apart and the camera waited `everyMin` after each.
 // Numbered people (owner, 30 Oct 2026): a PC with tools/kitchen-ai draws a numbered box round each
 // person and sends the boxes too; Bunny then says which of the day's people each box is, from their
 // reference crops, so everyone keeps one number ("p3") all day and Who is who shows their box.
@@ -40,7 +42,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtBurst, aiLookAtCamera, type BurstLook } from './insights.ts';
-import { BURST, PPE_ITEMS, burstInHours, cleanFaces, decide, inHours, istClock, minutesPerFrame, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
+import { PPE_ITEMS, burstFor, burstInHours, burstTooSoon, cleanFaces, decide, inHours, istClock, minutesPerFrame, minutesUntilHoursEnd, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
 import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson } from './activityRules.ts';
 import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, steadyFolding, tagState, toShow, trustBoxes, wantsConfirm, type Confirm, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
 import { emptyPpeDay, ppeStep, type PpeDay } from './roundupRules.ts';
@@ -238,15 +240,14 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
   }
   // A burst into the day's activity; each new person's photo is the frame they're clearest in (a
   // numbered burst: the PC's photo of the frame with only their box drawn).
-  async function recordBurst(cam: Camera, nowMs: number, look: BurstLook, images: string[], boxPhotos?: Record<number, string>) {
+  async function recordBurst(cam: Camera, nowMs: number, look: BurstLook, images: string[], gapSec: number, startMs: number, boxPhotos?: Record<number, string>) {
     const date = istDate(nowMs);
     const key = `cctv-activity:${cam.id}:${date}`;
     const before = await deps.kv.get<ActivityDay>(key);
-    const startMs = nowMs - images.length * BURST.gapSec * 1000;
     const people = mergeSamePerson(look.people as (BurstLook['people'][number] & BurstPerson)[]);
     const day = addBurst(before, {
       date, cameraId: cam.id, from: istClock(startMs), to: istClock(nowMs), frames: images.length,
-      minutesPerFrame: minutesPerFrame(cam.everyMin, { frames: images.length, gapSec: BURST.gapSec }), people, checks: cam.checks, gapSec: BURST.gapSec,
+      minutesPerFrame: minutesPerFrame(cam.everyMin, { frames: images.length, gapSec }), people, checks: cam.checks, gapSec,
     });
     await deps.kv.set(key, day);
     const pKey = `cctv-activity-photos:${cam.id}:${date}`;
@@ -394,11 +395,13 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       active: cam.active, from: cam.from, to: cam.to, everyMin: cam.everyMin, working,
       // Outside working hours: watch for movement, or (watch false) wait for working hours.
       watch: cam.afterHours !== false,
-      // Kitchen activity: the scheduled look is a burst of frames (an older camera PC ignores this
-      // and sends one still, which still counts).
-      burst: cam.activity ? BURST : null,
+      // Kitchen activity: the scheduled look is a burst of frames spread over everyMin, one burst
+      // after the other (an older camera PC ignores this and sends one still, which still counts).
+      burst: cam.activity ? burstFor(cam.everyMin) : null,
       // Seconds until the next scheduled look (working hours) or until watching for movement matters.
-      nextStillInSec: nextStillSeconds({ now, from: cam.from, to: cam.to, active: cam.active, everyMin: cam.everyMin, hasChecks: cam.checks.length > 0 || !!cam.activity, sinceLastS: sinceLast }),
+      nextStillInSec: nextStillSeconds({ now, from: cam.from, to: cam.to, active: cam.active, everyMin: cam.activity ? 0 : cam.everyMin, hasChecks: cam.checks.length > 0 || !!cam.activity, sinceLastS: sinceLast }),
+      // Seconds of working hours left, so a burst stops taking frames at closing.
+      endsInSec: minutesUntilHoursEnd(now, cam.from, cam.to) * 60,
     };
   };
 
@@ -436,8 +439,16 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       // A burst that started before closing still counts.
       if (!cam.active) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'paused', ...p }); }
       const looks = cam.checks.length > 0 || !!cam.activity;
-      const inTime = isBurst ? burstInHours(nowMs, cam.from, cam.to, { frames: images.length, gapSec: BURST.gapSec }) : p.working;
-      if (kind === 'scheduled' && (!inTime || !looks || (p.working && p.nextStillInSec > 60))) {
+      // The PC says how far apart it took the frames (an older one doesn't: the camera's setting).
+      const gapSec = Number.isInteger(body.gapSec) && body.gapSec >= 5 && body.gapSec <= 600 ? body.gapSec : burstFor(cam.everyMin).gapSec;
+      const shape = { frames: images.length, gapSec };
+      // ...and when it took the first (sent with it; else counted back from now).
+      const firstMs = typeof body.firstAt === 'string' ? Date.parse(body.firstAt) : NaN;
+      const startMs = firstMs <= nowMs && nowMs - firstMs <= (images.length * gapSec + 600) * 1000 ? firstMs : nowMs - images.length * gapSec * 1000;
+      const inTime = isBurst ? burstInHours(nowMs, cam.from, cam.to, shape) : p.working;
+      const sinceLast = cam.lastScheduledAt ? (nowMs - Date.parse(cam.lastScheduledAt)) / 1000 : Infinity;
+      const tooSoon = isBurst ? burstTooSoon(sinceLast, shape) : p.working && p.nextStillInSec > 60;
+      if (kind === 'scheduled' && (!inTime || !looks || tooSoon)) {
         await deps.kv.set(`cctv-camera:${cam.id}`, cam);
         return c.json({ skipped: !inTime ? 'outside working hours' : !looks ? 'nothing to check in working hours' : 'too soon', ...p });
       }
@@ -458,13 +469,13 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const dayPeople = numbered ? await deps.kv.get<DayPeople>(`cctv-people:${cam.id}:${istDate(nowMs)}`) : null;
       const dayNames = numbered ? (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${istDate(nowMs)}`)) || {} : {};
       const burst = isBurst ? await aiLookAtBurst(deps.kv as any, {
-        frames: images, gapSec: BURST.gapSec, place: `${cam.name}, ${place}`, notes: cam.notes,
+        frames: images, gapSec, place: `${cam.name}, ${place}`, notes: cam.notes,
         numbered: numbered ? { boxes: numbered.frames.map((f) => f.map((b) => b.n)), known: await referenceCrops(dayPeople, dayNames) } : undefined,
       }) : null;
       // Where the PC drew someone's box is trusted over Bunny's frame-by-frame guess (cameraPeople.ts).
-      if (burst && numbered) burst.people = trustBoxes(burst.people, numbered);
+      if (burst && numbered) burst.people = trustBoxes(burst.people, numbered, gapSec);
       // ...and folding counts only as steady work, not a few frames here and there (cameraPeople.ts).
-      if (burst) burst.people = steadyFolding(burst.people);
+      if (burst) burst.people = steadyFolding(burst.people, gapSec);
       if (burst && numbered) {
         await numberPeople(cam, nowMs, dayPeople, burst, numbered)
           .catch((e) => console.error('[cctv] people not numbered:', String(e?.message || e).slice(0, 120)));
@@ -491,7 +502,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         await deps.kv.set(dayKey, ppe.day);
       }
       if (kind === 'scheduled' && cam.activity) {
-        await (burst ? recordBurst(cam, nowMs, burst, images, numbered?.photos) : recordActivity(cam, nowMs, (look as any).people, image))
+        await (burst ? recordBurst(cam, nowMs, burst, images, gapSec, startMs, numbered?.photos) : recordActivity(cam, nowMs, (look as any).people, image))
           .catch((e) => console.error('[cctv] activity not counted:', String(e?.message || e).slice(0, 120)));
       }
 
@@ -710,7 +721,7 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         }
         const pieces = await piecesFolded(cam.placeId, new Set(days.map((d) => d.date)));
         out.push({
-          camera: { id: cam.id, name: cam.name, everyMin: cam.everyMin, burst: BURST, place: await placeName(cam) },
+          camera: { id: cam.id, name: cam.name, everyMin: cam.everyMin, burst: burstFor(cam.everyMin), place: await placeName(cam) },
           ...summarise(days, names, pieces),
           perDay: await Promise.all(days.map(async (d) => ({ date: d.date, ...summarise([d], names, await piecesFolded(cam.placeId, new Set([d.date]))).kitchen }))),
         });

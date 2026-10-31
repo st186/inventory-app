@@ -90,7 +90,14 @@ test('a burst: each frame a person is in counts its share of the cycle; phone ru
   ] });
   assert.equal(d.slots.red.phoneTimes, 2);
   assert.equal(d.slots.red.first, '10:00');
-  assert.equal(d.slots.red.last, '10:37');
+  assert.equal(d.slots.red.last, '10:36'); // the frame they were last in, not the burst's end
+  // A spread burst (frames 105 s apart): first and last seen are their own frames, not 35 minutes wide.
+  const spread = addBurst(null, { ...b, frames: 20, minutesPerFrame: 1.75, gapSec: 105, from: '13:00', to: '13:35', people: [
+    { top: 'yellow', activities: [...Array(4).fill('away'), ...Array(14).fill('folding'), 'away', 'away'], phoneFrames: [] },
+  ] });
+  assert.equal(spread.slots.yellow.first, '13:07'); // 5th frame: 4 x 105 s after 13:00
+  assert.equal(spread.slots.yellow.last, '13:29'); // 18th frame
+  assert.equal(spread.slots.yellow.minutes.folding, 24.5);
   assert.equal(d.bursts, 2);
   const s = summarise([d], {}, 0);
   const red = s.people.find((x) => x.slot === 'red')!;

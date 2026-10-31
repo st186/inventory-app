@@ -2,8 +2,9 @@
 
 Runs on a PC on the same Wi-Fi (2.4 GHz) as a Tapo camera and talks to the Bunny server (cctv.ts):
   - in working hours: one still every N minutes (the server's setting), checked for cap, gloves
-    and apron; a kitchen-activity camera instead takes a burst - 20 frames 15 seconds apart, sent
-    together - then waits N minutes;
+    and apron; a kitchen-activity camera instead takes bursts of 20 frames sent together, spread
+    over the N minutes (35: one every 105 seconds), one burst after the other (owner, 31 Oct 2026:
+    "Spread the 20 pictures over the 35 minutes"; until then 15 seconds apart, then a wait);
   - outside them: watches the camera's small stream for movement and sends a still when something
     moves; the server's AI says whether anyone is there and raises the "after hours" alert.
 The server keeps the schedule, the working hours and the AI budget; this only grabs pictures.
@@ -124,13 +125,13 @@ def call(s, path, body=None, timeout=90):
         return None
 
 
-def grab_still(s):
-    """One fresh full-size frame: (base64 JPEG, the frame) or (None, None)."""
+def fresh_frame(s):
+    """One fresh full-size frame from the main stream, or None (the stream is closed again after)."""
     cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
             log("camera not reachable (check the Wi-Fi band, the address and the camera account)", s)
-            return None, None
+            return None
         frame = None
         for _ in range(12):  # skip the first frames so the picture is current and complete
             ok, f = cap.read()
@@ -138,13 +139,20 @@ def grab_still(s):
                 frame = f
         if frame is None:
             log("camera sent no picture", s)
-            return None, None
-        h, w = frame.shape[:2]
-        small = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
-        ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        return (base64.b64encode(jpg.tobytes()).decode(), frame) if ok else (None, None)
+        return frame
     finally:
         cap.release()
+
+
+def grab_still(s):
+    """One fresh full-size frame: (base64 JPEG, the frame) or (None, None)."""
+    frame = fresh_frame(s)
+    if frame is None:
+        return None, None
+    h, w = frame.shape[:2]
+    small = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
+    ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return (base64.b64encode(jpg.tobytes()).decode(), frame) if ok else (None, None)
 
 
 def faces_in(s, frame):
@@ -237,15 +245,17 @@ def number_people(s, frames):
         return None, None
 
 
-def send_burst(s, frames, gap):
-    """A burst: `frames` pictures `gap` seconds apart from the full stream, sent together."""
-    images, times, names, unknown = [], [], set(), 0
-    kept = []  # the frames at 1280 wide, for numbering the people
+SPREAD_GAP_S = 60  # frames at least this far apart are each taken on their own connection
+
+
+def bunched_frames(s, frames, gap):
+    """Frames seconds apart, from one connection kept reading so each picture is current."""
+    out = []
     cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
             log("camera not reachable (check the Wi-Fi band, the address and the camera account)", s)
-            return None
+            return out
         start = time.time() + 2  # let the stream settle
         for i in range(frames):
             due = start + i * gap
@@ -260,25 +270,60 @@ def send_burst(s, frames, gap):
                 cap.release()
                 cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
                 ok, frame = cap.read()
-            if not ok:
-                continue
-            image = jpeg(frame)
-            if image:
-                images.append(image)
-                times.append(datetime.now())
-                h, w = frame.shape[:2]
-                kept.append(cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame)
-            seen = faces_in(s, frame)
-            if seen:
-                names.update(seen["names"])
-                unknown = max(unknown, seen["unknown"])
+            if ok:
+                out.append((frame, datetime.now()))
     finally:
         cap.release()
+    return out
+
+
+def spread_frames(s, frames, gap):
+    """Frames minutes apart, each on its own short connection (the camera allows only a few at once,
+    and the recorder holds one). They keep one steady beat from burst to burst: the first frame of a
+    burst comes one gap after the last frame of the one before, while it was being sent."""
+    out = []
+    now = time.time()
+    start = s.get("next_frame_at") or 0
+    if not now <= start <= now + gap:
+        start = now + 2  # first burst, or after a pause: start now
+    log(f"burst: {frames} pictures, one every {gap} seconds ({round(frames * gap / 60)} minutes)", s)
+    for i in range(frames):
+        due = start + i * gap
+        if due > time.time():
+            time.sleep(due - time.time())
+        frame = fresh_frame(s)
+        if frame is not None:
+            out.append((frame, datetime.now()))
+    s["next_frame_at"] = start + frames * gap
+    return out
+
+
+def send_burst(s, frames, gap, ends_in=None):
+    """A burst: `frames` pictures `gap` seconds apart from the full stream, sent together. A spread
+    burst stops at closing time (`ends_in` seconds of working hours left)."""
+    spread = gap >= SPREAD_GAP_S
+    if spread and ends_in:
+        frames = max(2, min(frames, 1 + int(ends_in) // gap))
+    taken = spread_frames(s, frames, gap) if spread else bunched_frames(s, frames, gap)
+    images, times, names, unknown = [], [], set(), 0
+    kept = []  # the frames at 1280 wide, for numbering the people
+    for frame, at in taken:
+        image = jpeg(frame)
+        if image:
+            images.append(image)
+            times.append(at)
+            h, w = frame.shape[:2]
+            kept.append(cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame)
+        seen = faces_in(s, frame)
+        if seen:
+            names.update(seen["names"])
+            unknown = max(unknown, seen["unknown"])
+    del taken
     if len(images) < 2:
         log(f"burst failed: only {len(images)} of {frames} frames", s)
         return None
     boxed, people = number_people(s, kept)
-    body = {"kind": "scheduled", "images": boxed or images}
+    body = {"kind": "scheduled", "images": boxed or images, "gapSec": gap, "firstAt": times[0].astimezone().isoformat(timespec="seconds")}
     if people:
         body["people"] = people
     if face_book is not None:
@@ -377,7 +422,7 @@ def run_camera(s):
                 plan = None  # ask again: hours or settings may have changed
                 continue
             burst = plan.get("burst")
-            res = send_burst(s, int(burst["frames"]), int(burst["gapSec"])) if burst else send_still(s, "scheduled")
+            res = send_burst(s, int(burst["frames"]), int(burst["gapSec"]), plan.get("endsInSec")) if burst else send_still(s, "scheduled")
             plan, plan_at = (res, time.time()) if res and "working" in res else (None, 0.0)
             if not res:
                 time.sleep(120)

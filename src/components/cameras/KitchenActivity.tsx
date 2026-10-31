@@ -4,8 +4,9 @@
 //    WhoIsEditor, the Who is who tab, to change any name;
 //  - KitchenActivity (owner only): per person, minutes folding, at other kitchen work, cleaning, on
 //    the phone and idle, how often on the phone, PPE share; for the kitchen, folding hours and
-//    pieces made per folding hour. Work sampling: the camera takes bursts of 20 frames 15 seconds
-//    apart, then waits 30 minutes; each frame stands for its share of the cycle.
+//    pieces made per folding hour. Work sampling: the camera takes bursts of 20 frames spread over
+//    35 minutes, one burst after the other (owner, 31 Oct 2026; until then 15 seconds apart with a
+//    30-minute wait); each frame stands for its share of the time.
 import { useCallback, useEffect, useState } from 'react';
 import { Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -235,8 +236,8 @@ const GROUPS: { key: string; label: string; acts: string[]; cls: string }[] = [
 
 const dayName = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-/** When folding started and ended and the most people folding at once (owner, 30 Oct 2026). Bursts
- *  come every 35 minutes, so the times are within about half an hour. */
+/** When folding started and ended and the most people folding at once (owner, 30 Oct 2026). The
+ *  camera takes a picture every 105 seconds (since 31 Oct), so the times are within a few minutes. */
 function FoldingMarker({ days, single }: { days: (api.KitchenTotals & { date: string })[]; single: boolean }) {
   const folded = days.filter((d) => d.folding);
   return (
@@ -257,7 +258,7 @@ function FoldingMarker({ days, single }: { days: (api.KitchenTotals & { date: st
             ))}
           </ul>
         )}
-        <p className="text-body-sm text-text-2">First and last folding the camera saw; it looks every 35 minutes, so each time is within about half an hour.</p>
+        <p className="text-body-sm text-text-2">First and last folding the camera saw; it takes a picture every couple of minutes, so each time is within a few minutes.</p>
       </div>
     </div>
   );
@@ -298,7 +299,7 @@ export function KitchenActivity() {
               </div>
               <p className="text-body-sm text-text-2">
                 {c.camera.burst && c.kitchen.bursts
-                  ? <>From {c.kitchen.bursts} burst{c.kitchen.bursts === 1 ? '' : 's'} of {c.camera.burst.frames} frames, {c.camera.burst.gapSec} seconds apart, then a {c.camera.everyMin}-minute wait: each frame stands for about {Math.round(((c.camera.everyMin + (c.camera.burst.frames * c.camera.burst.gapSec) / 60) / c.camera.burst.frames) * 10) / 10} minutes</>
+                  ? <>From {c.kitchen.bursts} burst{c.kitchen.bursts === 1 ? '' : 's'} of {c.camera.burst.frames} pictures, one every {c.camera.burst.gapSec} seconds: each picture stands for about {Math.round((c.camera.burst.gapSec / 60) * 100) / 100} minutes</>
                   : <>From {c.kitchen.stills} stills, one every {c.camera.everyMin} minutes: each sighting counts {c.camera.everyMin} minutes</>}
                 , so these are estimates, good for trends. Unnamed people show by the colour of their top - name them in "Who is who".
                 {' '}Not in kitchen: gone 15 minutes or more between when they were first and last seen that day (shorter is just out of view).
