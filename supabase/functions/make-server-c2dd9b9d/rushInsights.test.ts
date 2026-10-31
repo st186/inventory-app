@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict';
 import { forecastDays, ordersOfDay, parseDish, plateBuffer, rushMix, rushWindows, slotLabel, slotOf, SLOTS, steamerPlan, steamNudges, trendFactor, weekdayProfiles } from './rushInsights.ts';
 
+// The plan's times before the owner gave the real ones (1 Nov 2026), so these numbers stay put.
+const OLD = { steamMin: 12, steamMinFull: 12, fullAbove: 99, holdMin: 15, serviceLevel: 0.8 };
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
 
@@ -21,7 +23,7 @@ test('dishes from the real bill names (Sep-Oct 2026)', () => {
   assert.deepEqual(d('Chicken Steamed Momos [6 Pieces] -O')?.pieces, { chicken: 6 });
   assert.equal(d('Chicken Kurkure Momos [6 Pieces] -O')?.steamer, false);
   assert.equal(d('Chicken Pan Fried Momos')?.style, 'pan_fried');
-  assert.equal(d('Chicken Pan Fried Momos')?.steamer, true);
+  assert.equal(d('Chicken Pan Fried Momos')?.steamer, false); // fried, then tossed (owner, 1 Nov 2026)
   assert.equal(d('Chicken Butter Fried Momos [6 Pieces] -O')?.style, 'fried');
   assert.equal(d('Chicken Momos In Butter Makhni Sauce')?.style, 'makhni');
   assert.equal(d('Chicken Momos In Afghani Sauce')?.steamer, true);
@@ -109,7 +111,7 @@ test('the plates to keep ready', () => {
   assert.equal(plateBuffer(0, 0.8), 0);
   assert.equal(plateBuffer(1, 0.8), 2);
   assert.equal(plateBuffer(6, 0.8), 8);
-  const plan = steamerPlan(weekdayProfiles(days)[6], 1);
+  const plan = steamerPlan(weekdayProfiles(days)[6], 1, OLD);
   const chicken = plan.runs.find((r) => r.filling === 'chicken')!;
   assert.deepEqual([chicken.from, chicken.to, chicken.firstBatchAt], ['19:00', '20:30', '18:48']);
   assert.equal(chicken.keep, plateBuffer(6 + 6 / 4, 0.8)); // the 7:00 slot: 7.5 plates expected -> 10 ready
@@ -120,17 +122,17 @@ test('the plates to keep ready', () => {
   // One quiet 15 minutes between busy ones stays one stretch.
   const gappy = { ...weekdayProfiles(days)[6] };
   gappy.steamer = { ...gappy.steamer, veg: gappy.steamer.veg.map((v, i) => (i === 18 ? 0 : v)) };
-  const veg = steamerPlan(gappy, 1).runs.filter((r) => r.filling === 'veg');
+  const veg = steamerPlan(gappy, 1, OLD).runs.filter((r) => r.filling === 'veg');
   assert.equal(veg.length, 1);
   assert.deepEqual([veg[0].from, veg[0].to], ['19:00', '20:30']);
   assert.equal(chicken.batches, 6);
   // Momos that stay good for 30 minutes: twice the window, bigger batches, half as many.
-  const longer = steamerPlan(weekdayProfiles(days)[6], 1, { steamMin: 12, holdMin: 30, serviceLevel: 0.8 });
+  const longer = steamerPlan(weekdayProfiles(days)[6], 1, { ...OLD, holdMin: 30 });
   assert.equal(longer.runs.find((r) => r.filling === 'chicken')!.batches, 3);
 });
 
 test('steam now: the rush push, and getting ready only when well ahead', () => {
-  const plan = steamerPlan(weekdayProfiles(days)[6], 1);
+  const plan = steamerPlan(weekdayProfiles(days)[6], 1, OLD);
   const nudges = steamNudges(plan);
   assert.equal(nudges.length, 1); // chicken's stretch starts with the rush: one push
   assert.equal(nudges[0].at, '18:48');
@@ -141,6 +143,24 @@ test('steam now: the rush push, and getting ready only when well ahead', () => {
   assert.deepEqual(steamNudges(early).map((n) => n.at), ['17:48', '18:48']);
   // No real rush: nothing.
   assert.deepEqual(steamNudges({ ...plan, runs: plan.runs.map((r) => ({ ...r, keep: 1 })) }), []);
+});
+
+test("the owner's steamer: steamed and Afghani only, 10 min (15 when a can has more than 6 plates), good for 10 min", () => {
+  assert.equal(parseDish('Chicken Pan Fried Momos')?.steamer, false);
+  assert.equal(parseDish('Chicken Momos In Butter Makhni Sauce')?.steamer, false);
+  assert.equal(parseDish('Chicken Momos In Afghani Sauce')?.steamer, true);
+  assert.equal(parseDish('Steamed Chicken Momos')?.steamer, true);
+  const plan = steamerPlan(weekdayProfiles(days)[6], 1);
+  assert.equal(plan.settings.holdMin, 10); // no longer rounded up to 15
+  const peak = plan.slots[16]; // 7:00 PM: more than 6 plates together -> 15 minutes
+  const total = Object.values(peak.keep).reduce((a, b) => a + b, 0);
+  assert.ok(total > 6);
+  assert.deepEqual([peak.steamMin, peak.startAt], [15, '18:45']);
+  const quiet = plan.slots.find((x) => { const t = Object.values(x.keep).reduce((a, b) => a + b, 0); return t > 0 && t <= 6; });
+  if (quiet) assert.equal(quiet.steamMin, 10);
+  const [rushPush] = steamNudges(plan).slice(-1);
+  assert.equal(rushPush.at, '18:45');
+  assert.match(rushPush.message, /more than 6 plates: in one can they take 15 min; split over two cans of 6 or fewer and they're ready in 10\. A fresh batch every 10 min/);
 });
 
 console.log(`rushInsights: ${passed} tests passed`);

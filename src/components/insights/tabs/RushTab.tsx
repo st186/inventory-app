@@ -85,7 +85,7 @@ export function RushTab({ d }: { d: AnalyticsData }) {
       <p className="text-label text-text-3">
         {data.orders.toLocaleString('en-IN')} orders from the last {data.weeks} weeks ({data.days} open days) at {data.storeName}.{' '}
         {data.exactShare >= 0.9 ? 'Times are to the minute.' : `${Math.round(data.exactShare * 100)}% of orders have the exact minute; the rest count from the middle of their hour, so 15-minute detail sharpens as the minutes fill in.`}{' '}
-        Steamer dishes: {data.steamerStyles.map((s) => STYLE_WORD[s] || s).join(', ').toLowerCase()}. Fried, kurkure, peri peri, chilli, Korean and hot garlic count as the fryer.
+        Steamer dishes: {data.steamerStyles.map((s) => STYLE_WORD[s] || s).join(', ').toLowerCase()}. Pan fried, butter makhni, chilli, Korean, hot garlic, peri peri, fried and kurkure are fried, so they're left out.
       </p>
       {canSet && <SteamerSettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} storeId={data.storeId} settings={data.plan.settings} token={token} onSaved={reload} />}
     </div>
@@ -156,7 +156,7 @@ function SteamerCard({ data, canSet, onSettings }: { data: api.RushInsights; can
   return (
     <ChartCard
       title="Steamer plan"
-      caption={`Steamed momos out within 2 minutes: keep this many plates (6 pcs) ready. A batch takes ${settings.steamMin} min; momos stay good ${settings.holdMin} min, so a fresh batch every ${settings.holdMin} min.`}
+      caption={`Steamed momos out within 2 minutes: keep this many plates (6 pcs) ready. Frozen momos take ${settings.steamMin} min in a can of up to ${settings.fullAbove} plates (${settings.steamMinFull} min with more); they stay good ${settings.holdMin} min, so a fresh batch every ${settings.holdMin} min.`}
       actions={canSet ? <Button size="sm" variant="ghost" leadingIcon={<Settings2 />} onClick={onSettings}>Settings</Button> : undefined}
     >
       {groups.length === 0 ? (
@@ -364,14 +364,20 @@ function SteamerSettingsSheet({ open, onOpenChange, storeId, settings, token, on
   open: boolean; onOpenChange: (o: boolean) => void; storeId: string; settings: api.SteamerSettings; token?: string; onSaved: () => void;
 }) {
   const [steamMin, setSteamMin] = useState(settings.steamMin);
+  const [steamMinFull, setSteamMinFull] = useState(settings.steamMinFull);
+  const [fullAbove, setFullAbove] = useState(settings.fullAbove);
   const [holdMin, setHoldMin] = useState(settings.holdMin);
   const [level, setLevel] = useState(String(Math.round(settings.serviceLevel * 100)));
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setSteamMin(settings.steamMin); setHoldMin(settings.holdMin); setLevel(String(Math.round(settings.serviceLevel * 100))); } }, [open, settings]);
+  useEffect(() => {
+    if (!open) return;
+    setSteamMin(settings.steamMin); setSteamMinFull(settings.steamMinFull); setFullAbove(settings.fullAbove);
+    setHoldMin(settings.holdMin); setLevel(String(Math.round(settings.serviceLevel * 100)));
+  }, [open, settings]);
   const save = async () => {
     setBusy(true);
     try {
-      await api.saveSteamerSettings(storeId, { steamMin, holdMin, serviceLevel: Number(level) / 100 }, token);
+      await api.saveSteamerSettings(storeId, { steamMin, steamMinFull, fullAbove, holdMin, serviceLevel: Number(level) / 100 }, token);
       toast.success('Steamer plan updated');
       onOpenChange(false);
       onSaved();
@@ -385,8 +391,19 @@ function SteamerSettingsSheet({ open, onOpenChange, storeId, settings, token, on
     <ResponsiveModal open={open} onOpenChange={onOpenChange} title="Steamer settings" description="How your kitchen steams. The plan uses these for every day." size="detail">
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-1.5">
-          <span className="text-body-sm font-medium text-text">Minutes to steam a batch</span>
-          <NumberStepper label="Steam time" value={steamMin} onChange={setSteamMin} min={3} max={40} unit="min" editable />
+          <span className="text-body-sm font-medium text-text">Plates a can takes at the normal time</span>
+          <span className="text-label text-text-3">More than this and the momos lie on one another, so they take longer.</span>
+          <NumberStepper label="Plates a can" value={fullAbove} onChange={setFullAbove} min={1} max={30} unit="plates" editable />
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-body-sm font-medium text-text">Minutes to steam, up to {fullAbove} plates</span>
+            <NumberStepper label="Steam time" value={steamMin} onChange={setSteamMin} min={3} max={40} unit="min" editable />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-body-sm font-medium text-text">Minutes to steam, more than {fullAbove}</span>
+            <NumberStepper label="Steam time, full can" value={steamMinFull} onChange={setSteamMinFull} min={3} max={60} unit="min" editable />
+          </div>
         </div>
         <div className="flex flex-col gap-1.5">
           <span className="text-body-sm font-medium text-text">Minutes steamed momos stay good</span>

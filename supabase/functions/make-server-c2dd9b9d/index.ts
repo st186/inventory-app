@@ -16398,7 +16398,7 @@ app.post('/make-server-c2dd9b9d/cron/order-times', async (c) => {
   return c.json({ success: true, results });
 });
 
-const RUSH_KEYS = ['steamMin', 'holdMin', 'serviceLevel'] as const;
+const RUSH_KEYS = ['steamMin', 'steamMinFull', 'fullAbove', 'holdMin', 'serviceLevel'] as const;
 async function rushSettings(storeId: string): Promise<rush.SteamerSettings> {
   const saved = ((await kv.get(`rush-settings:${storeId}`)) || {}) as Partial<rush.SteamerSettings>;
   return { ...rush.DEFAULT_STEAMER, ...Object.fromEntries(RUSH_KEYS.filter((k) => Number.isFinite(saved[k])).map((k) => [k, saved[k]])) };
@@ -16506,7 +16506,7 @@ app.get('/make-server-c2dd9b9d/insights/rush', async (c) => {
   }
 });
 
-// POST /insights/rush/settings { storeId, steamMin, holdMin, serviceLevel } - the owner and operations.
+// POST /insights/rush/settings { storeId, steamMin, steamMinFull, fullAbove, holdMin, serviceLevel } - the owner and operations.
 app.post('/make-server-c2dd9b9d/insights/rush/settings', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
   if ('error' in auth) return c.json({ error: auth.error }, auth.status);
@@ -16519,6 +16519,8 @@ app.post('/make-server-c2dd9b9d/insights/rush/settings', async (c) => {
     const next = {
       ...(await rushSettings(body.storeId)),
       ...(clamp(body.steamMin, 3, 40) !== undefined ? { steamMin: clamp(body.steamMin, 3, 40) } : {}),
+      ...(clamp(body.steamMinFull, 3, 60) !== undefined ? { steamMinFull: clamp(body.steamMinFull, 3, 60) } : {}),
+      ...(clamp(body.fullAbove, 1, 30) !== undefined ? { fullAbove: Math.round(clamp(body.fullAbove, 1, 30)!) } : {}),
       ...(clamp(body.holdMin, 5, 60) !== undefined ? { holdMin: clamp(body.holdMin, 5, 60) } : {}),
       ...(clamp(body.serviceLevel, 0.5, 0.95) !== undefined ? { serviceLevel: clamp(body.serviceLevel, 0.5, 0.95) } : {}),
     };

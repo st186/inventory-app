@@ -23,10 +23,10 @@ export const slotOf = (min: number) => {
 export const FILLINGS = ['chicken', 'chicken_cheese', 'veg', 'paneer', 'corn_cheese'] as const;
 export type Filling = typeof FILLINGS[number];
 export type Style = 'steamed' | 'pan_fried' | 'afghani' | 'makhni' | 'fried' | 'kurkure' | 'peri_peri' | 'chilli' | 'korean' | 'garlic' | 'other';
-/** Dishes made from steamed momos: served steamed, pan fried after steaming, or steamed then in a
- *  sauce (Afghani, butter makhni). Fried, kurkure, peri peri fried, chilli, Korean and hot garlic go
- *  through the fryer. The owner can say otherwise. */
-export const STEAMER_STYLES: Style[] = ['steamed', 'pan_fried', 'afghani', 'makhni'];
+/** Dishes whose momos come out of the steamer: steamed, and Afghani (steamed, then the sauce). Pan
+ *  fried, butter makhni, chilli, Korean, hot garlic and peri peri are fried and then tossed (owner,
+ *  1 Nov 2026: "Steam ones and only Afghani momos others are fried and then tossed"). */
+export const STEAMER_STYLES: Style[] = ['steamed', 'afghani'];
 export type Dish = { pieces: Partial<Record<Filling, number>>; style: Style; steamer: boolean; kind: 'momos' | 'meal' | 'platter' | 'combo' };
 
 function fillingOf(s: string): Filling | null {
@@ -233,8 +233,13 @@ export function forecastDays(days: Day[], profiles: WeekdayProfile[], dates: str
 }
 
 // ---- The steamer plan ----
-export type SteamerSettings = { steamMin: number; holdMin: number; serviceLevel: number };
-export const DEFAULT_STEAMER: SteamerSettings = { steamMin: 12, holdMin: 15, serviceLevel: 0.8 };
+/** How the store steams (owner, 1 Nov 2026): frozen momos take 10 minutes in a can of up to 6
+ *  plates, 15 when it holds more (7-10 plates lie on one another); steamed momos stay good for 10
+ *  minutes. serviceLevel: how often every steamed order should find a plate ready. */
+export type SteamerSettings = { steamMin: number; steamMinFull: number; fullAbove: number; holdMin: number; serviceLevel: number };
+export const DEFAULT_STEAMER: SteamerSettings = { steamMin: 10, steamMinFull: 15, fullAbove: 6, holdMin: 10, serviceLevel: 0.8 };
+/** Minutes to steam a batch of this many plates. */
+export const steamTimeFor = (plates: number, s: SteamerSettings) => (plates > s.fullAbove ? s.steamMinFull : s.steamMin);
 
 /** The fewest plates to have ready so that, this often, every order in the window is served from
  *  them (Poisson). */
@@ -245,7 +250,7 @@ export function plateBuffer(mean: number, level: number): number {
   return k;
 }
 
-export type SteamerSlot = { slot: string; orders: number; plates: Record<Filling, number>; keep: Record<Filling, number>; startAt: string };
+export type SteamerSlot = { slot: string; orders: number; plates: Record<Filling, number>; keep: Record<Filling, number>; startAt: string; steamMin: number };
 /** One filling's stretch of keeping plates ready: from..to, the usual number (median), and the busy
  *  part peakFrom..peakTo needing peakLow..keep plates. A gap of 15 minutes inside doesn't break it. */
 export type SteamerRun = { filling: Filling; from: string; to: string; keep: number; usual: number; peakLow: number; peakFrom: string; peakTo: string; firstBatchAt: string; batches: number };
@@ -253,18 +258,21 @@ export type SteamerRun = { filling: Filling; from: string; to: string; keep: num
 /** For a day: in each 15 minutes, how many steamer plates of each filling to expect, and how many to
  *  have ready so a steamed order goes out within the 2 minutes - never more than will go in the time
  *  momos stay good (holdMin). Below about a third of a plate in that time, steam to order instead.
- *  Each batch goes in steamMin before it is needed. */
+ *  Each batch goes in as long before it is needed as it takes to steam: steamMin, or steamMinFull
+ *  when all the plates together are more than fullAbove. */
 export function steamerPlan(profile: WeekdayProfile, factor: number, settings: SteamerSettings = DEFAULT_STEAMER) {
-  const hold = Math.max(SLOT_MIN, settings.holdMin);
+  const s = { ...DEFAULT_STEAMER, ...settings };
+  const hold = Math.max(5, s.holdMin);
   const toClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   const slots: SteamerSlot[] = [];
   for (let i = 0; i < SLOTS; i++) {
     const p = Object.fromEntries(FILLINGS.map((f) => [f, profile.steamer[f][i] * factor])) as Record<Filling, number>;
     const keep = Object.fromEntries(FILLINGS.map((f) => {
       const inHold = p[f] * (hold / SLOT_MIN);
-      return [f, inHold < 0.35 ? 0 : plateBuffer(inHold, settings.serviceLevel)];
+      return [f, inHold < 0.35 ? 0 : plateBuffer(inHold, s.serviceLevel)];
     })) as Record<Filling, number>;
-    slots.push({ slot: slotLabel(i), orders: profile.orders[i] * factor, plates: p, keep, startAt: toClock(DAY_FROM + i * SLOT_MIN - settings.steamMin) });
+    const steamMin = steamTimeFor(FILLINGS.reduce((t, f) => t + keep[f], 0), s);
+    slots.push({ slot: slotLabel(i), orders: profile.orders[i] * factor, plates: p, keep, startAt: toClock(DAY_FROM + i * SLOT_MIN - steamMin), steamMin });
   }
   const runs: SteamerRun[] = [];
   for (const f of FILLINGS) {
@@ -298,7 +306,7 @@ export function steamerPlan(profile: WeekdayProfile, factor: number, settings: S
     }
   }
   runs.sort((a, b) => a.from.localeCompare(b.from) || FILLINGS.indexOf(a.filling) - FILLINGS.indexOf(b.filling));
-  return { settings: { ...settings, holdMin: hold }, slots, runs };
+  return { settings: { ...s, holdMin: hold }, slots, runs };
 }
 
 // ---- "Steam now" to the store (owner, 1 Nov 2026: yes to a push before each predicted rush) ----
@@ -313,7 +321,8 @@ const clock12 = (hhmm: string) => { const m = toMin(hhmm), h = Math.floor(m / 60
  *  (half an hour or more, from 4 PM), getting ready for it. Nothing on a day without a real rush
  *  (fewer than 2 plates at the most). */
 export function steamNudges(plan: ReturnType<typeof steamerPlan>): SteamNudge[] {
-  const { steamMin, holdMin } = plan.settings;
+  const { holdMin, fullAbove, steamMin, steamMinFull } = plan.settings;
+  const slotAt = (hhmm: string) => plan.slots.find((x) => x.slot === hhmm);
   if (!plan.runs.length) return [];
   const main = [...plan.runs].sort((a, b) => b.keep - a.keep)[0];
   if (main.keep < 2) return [];
@@ -322,12 +331,17 @@ export function steamNudges(plan: ReturnType<typeof steamerPlan>): SteamNudge[] 
     .filter((r) => r.from < main.peakTo && r.to > main.peakFrom)
     .sort((a, b) => b.keep - a.keep || FILLINGS.indexOf(a.filling) - FILLINGS.indexOf(b.filling));
   const list = inPeak.map((r) => `${r.keep} ${FILLING_NAME[r.filling]}`).join(', ');
+  const total = inPeak.reduce((t, r) => t + r.keep, 0);
+  // More than fullAbove plates in one can steam slower: say so, and how to keep it to steamMin.
+  const fullCan = total > fullAbove
+    ? ` That's more than ${fullAbove} plates: in one can they take ${steamMinFull} min; split over two cans of ${fullAbove} or fewer and they're ready in ${steamMin}.`
+    : '';
   const nudges: SteamNudge[] = [{
-    at: toHHMM(toMin(main.peakFrom) - steamMin),
+    at: slotAt(main.peakFrom)?.startAt || toHHMM(toMin(main.peakFrom) - steamTimeFor(total, plan.settings)),
     title: `Rush at ${clock12(main.peakFrom)}: steam now`,
-    message: `Put ${list} plates in the steamer now, ready by ${clock12(main.peakFrom)}. A fresh batch every ${holdMin} min till ${clock12(main.peakTo)} - steamed orders go out within 2 minutes.`,
+    message: `Put ${list} plates in the steamer now, ready by ${clock12(main.peakFrom)}.${fullCan} A fresh batch every ${holdMin} min till ${clock12(main.peakTo)} - steamed orders go out within 2 minutes.`,
   }];
-  const readyAt = toMin(main.from) - steamMin;
+  const readyAt = toMin(slotAt(main.from)?.startAt || toHHMM(toMin(main.from) - steamMin));
   if (main.usual >= 1 && main.from >= '16:00' && toMin(nudges[0].at) - readyAt >= 30) {
     nudges.unshift({
       at: toHHMM(readyAt),

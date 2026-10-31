@@ -925,7 +925,7 @@ export interface RushProfile {
 }
 export interface RushMixSide { orders: number; pieces: number; byFilling: Record<RushFilling, number>; byStyle: Record<string, number>; steamerPieces: number }
 export interface SteamerRun { filling: RushFilling; from: string; to: string; keep: number; usual: number; peakLow: number; peakFrom: string; peakTo: string; firstBatchAt: string; batches: number }
-export interface SteamerSettings { steamMin: number; holdMin: number; serviceLevel: number }
+export interface SteamerSettings { steamMin: number; steamMinFull: number; fullAbove: number; holdMin: number; serviceLevel: number }
 export interface RushInsights {
   storeId: string; storeName: string; today: string; weeks: number; days: number; orders: number; exactShare: number;
   slots: string[];
