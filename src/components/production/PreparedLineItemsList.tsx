@@ -5,7 +5,8 @@ import { IconButton } from '../ui/icon-button';
 import { ListGroup, ListRow } from '../ui/list-row';
 import { EmptyState } from '../ui/empty-state';
 import { useT } from '../../utils/i18n';
-import { momoName } from '../stock/stockShared';
+import { ALL_ITEMS } from './kitchenDayMath';
+import { useItemLabel } from './KitchenDay';
 
 type Props = {
   items: ProductionLedgerItem[];
@@ -13,34 +14,49 @@ type Props = {
   onDelete: (id: string) => void | Promise<void>;
 };
 
-// Today's logged batches, removable until the day is closed (a closed day's wastage and
-// tomorrow's opening depend on this list).
+const item = (id: string) => ALL_ITEMS.find((i) => i.id === id)!;
+// loggedAt holds India time already (getNowIST), so it's read as UTC.
+const clock = (iso?: string) => {
+  if (!iso) return '';
+  const [h, m] = iso.slice(11, 16).split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'pm' : 'am'}`;
+};
+
+// Today's batches with the time each was logged, removable until the day is closed (a closed day's
+// figures and tomorrow's morning count depend on this list).
 export function PreparedLineItemsList({ items, disabled, onDelete }: Props) {
-  const { t, lang } = useT();
+  const { t } = useT();
+  const label = useItemLabel();
   return (
     <ListGroup
       overline={t('stock.prod.todaysBatches')}
       meta={items.length ? String(items.length) : undefined}
       empty={<EmptyState compact title={t('stock.prod.noBatches')} />}
     >
-      {items.map((item) => {
-        const by = item.loggedByName ? ` · ${t('stock.prod.byName', { name: item.loggedByName })}` : '';
-        const remove = !disabled ? <IconButton label={t('stock.prod.remove')} icon={<Trash2 />} variant="danger-ghost" onClick={() => onDelete(item.id)} /> : undefined;
-        // GLOBAL_DOUGH/GLOBAL_BATTER are logs of the shared pool itself, with no momo type.
-        if (item.momoKey === 'GLOBAL_DOUGH' || item.momoKey === 'GLOBAL_BATTER') {
-          const pool = (item.momoKey === 'GLOBAL_DOUGH' ? t('stock.prod.dough') : t('stock.prod.batter')).replace(/ \(.*\)$/, '');
-          return <ListRow key={item.id} density="compact" title={t('stock.prod.sharedPoolLine', { pool })} subtitle={`${t('stock.prod.kg', { n: item.globalPoolQty })}${by}`} trailing={remove} />;
+      {items.map((it) => {
+        const kg = (n: number) => t('stock.prod.kg', { n });
+        // What went in: the shared dough / batter, cheese corn's own dough, a stuffing or coating.
+        // A type's "own" dough from 30 Oct is the shared dough (server aggregatePreparedByPool).
+        const parts: string[] = [];
+        if (it.momoKey === 'GLOBAL_DOUGH') parts.push(`${label(item('dough'))} ${kg(it.globalPoolQty)}`);
+        else if (it.momoKey === 'GLOBAL_BATTER') parts.push(`${label(item('batter'))} ${kg(it.globalPoolQty)}`);
+        else {
+          const m = getMomoType(it.momoKey);
+          if (m && it.perTypePoolQty > 0) parts.push(`${label(item(`${m.perTypePoolField}:${m.inventoryKey}`))} ${kg(it.perTypePoolQty)}`);
+          if (m && it.globalPoolQty > 0) {
+            const own = m.inventoryKey === 'cheeseCorn' ? 'dough:cheeseCorn' : m.globalPoolField;
+            parts.push(`${label(item(own))} ${kg(it.globalPoolQty)}`);
+          }
+          if (!m) parts.push(it.momoKey);
         }
-        const momoType = getMomoType(item.momoKey);
-        const globalWord = (momoType?.globalPoolField === 'batter' ? t('stock.prod.batter') : t('stock.prod.dough')).replace(/ \(.*\)$/, '');
-        const perTypeWord = (momoType?.perTypePoolField === 'coating' ? t('stock.prod.coatingKg') : t('stock.prod.stuffingKg')).replace(/ \(.*\)$/, '');
+        const sub = [clock(it.loggedAt), it.loggedByName ? t('stock.prod.byName', { name: it.loggedByName }) : ''].filter(Boolean).join(' · ');
         return (
           <ListRow
-            key={item.id}
+            key={it.id}
             density="compact"
-            title={momoType ? momoName(lang, momoType.inventoryKey, momoType.label) : item.momoKey}
-            subtitle={`${perTypeWord} ${t('stock.prod.kg', { n: item.perTypePoolQty })}${item.globalPoolQty > 0 ? ` · ${globalWord} ${t('stock.prod.kg', { n: item.globalPoolQty })}` : ''}${by}`}
-            trailing={remove}
+            title={parts.join(' · ')}
+            subtitle={sub || undefined}
+            trailing={!disabled ? <IconButton label={t('stock.prod.remove')} icon={<Trash2 />} variant="danger-ghost" onClick={() => onDelete(it.id)} /> : undefined}
           />
         );
       })}

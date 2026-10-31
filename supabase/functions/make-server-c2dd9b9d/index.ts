@@ -27,6 +27,7 @@ import { CHECKS_FROM, CHECK_MONTHS } from './assetRules.ts';
 import { registerWorkplaceRoutes, markCheckOk } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
+import { syncTimesheet } from './attendance.ts';
 import { idempotencyMiddleware } from './idempotency.ts';
 import { registerBootstrapRoutes } from './bootstrap.ts';
 import {
@@ -5664,6 +5665,12 @@ const ALL_POOL_IDS: string[] = [
   ...PRODUCTION_MOMO_TYPES.map((t) => `${t.globalPoolField}:${t.inventoryKey}`),
 ];
 
+// Sauces are counted with the kitchen stock in the morning and at night (owner, 31 Oct 2026: "morning
+// stock count for dough, sauces or batter ... and what is left in dough and stuffing and batter or
+// sauces"). Litres, soup premix kg. Not pools: what's made comes from the day's production entry,
+// so a closed day keeps them apart as sauceLeft.
+const SAUCE_IDS: string[] = ['panfriedSauce', 'chilliChickenSauce', 'spicyKoreanSauce', 'hotGarlicSauce', 'tandooriSauce', 'soupPremix', 'greenMayoChutney', 'spicyRedChutney'].map((k) => `sauce:${k}`);
+
 function emptyPoolState() {
   return { opening: 0, prepared: 0, closingActual: null as number | null, wastage: null as number | null, wastageOverride: null as number | null };
 }
@@ -5675,6 +5682,12 @@ function emptyPoolState() {
 // globalPoolQty means "dedicated dough/batter for JUST this type" (only present when the
 // "Unique dough for this?" toggle was used) and routes to that type's own pool instead of
 // the shared one; perTypePoolQty (stuffing/coating) always accumulates within its own type.
+// Only cheese corn has a dough of its own (owner, 31 Oct 2026: "corn cheese dough is different from
+// the rest"). From 30 Oct any other type's "own" dough or batter is the shared one (30 Oct's 9 kg
+// went under chicken by a tick-box; the app no longer offers it).
+const OWN_DOUGH_TYPES = new Set(['cheeseCorn']);
+const OWN_DOUGH_ONLY_FROM = '2026-10-30';
+
 function aggregatePreparedByPool(items: any[]): Record<string, number> {
   const prepared: Record<string, number> = {};
   for (const id of ALL_POOL_IDS) prepared[id] = 0;
@@ -5684,8 +5697,9 @@ function aggregatePreparedByPool(items: any[]): Record<string, number> {
     const momoType = PRODUCTION_MOMO_TYPES.find((t) => t.key === item.momoKey);
     if (!momoType) continue;
     if (item.globalPoolQty) {
-      const uniqueGlobalPoolId = `${momoType.globalPoolField}:${momoType.inventoryKey}`;
-      prepared[uniqueGlobalPoolId] += item.globalPoolQty;
+      const shared = String(item.date || '') >= OWN_DOUGH_ONLY_FROM && !OWN_DOUGH_TYPES.has(momoType.inventoryKey);
+      const poolId = shared ? momoType.globalPoolField : `${momoType.globalPoolField}:${momoType.inventoryKey}`;
+      prepared[poolId] += item.globalPoolQty;
     }
     const perTypePoolId = `${momoType.perTypePoolField}:${momoType.inventoryKey}`;
     prepared[perTypePoolId] += item.perTypePoolQty || 0;
@@ -5728,6 +5742,7 @@ function lastCountedBefore(houseRecords: any[], mornings: Record<string, any>, d
   for (const r of houseRecords) {
     if (r.date >= date) continue;
     for (const id of ALL_POOL_IDS) if (typeof r.pools?.[id]?.closingActual === 'number') seen(id, r.date, r.pools[id].closingActual, 'night');
+    for (const [id, left] of Object.entries(r.sauceLeft || {})) if (typeof left === 'number') seen(id, r.date, left, 'night');
   }
   for (const [d, m] of Object.entries(mornings)) {
     if (d >= date) continue;
@@ -6274,7 +6289,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/morning', async 
     if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
     const body = await c.req.json().catch(() => ({}));
     const counts: Record<string, number> = {};
-    for (const id of ALL_POOL_IDS) {
+    for (const id of [...ALL_POOL_IDS, ...SAUCE_IDS]) {
       const v = Number(body?.counts?.[id]);
       if (body?.counts?.[id] !== undefined && body?.counts?.[id] !== null && Number.isFinite(v) && v >= 0) counts[id] = Math.round(v * 1000) / 1000;
     }
@@ -6438,12 +6453,19 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) {
       return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
     }
-    const { closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport: rawLeftover } = await c.req.json();
+    const { closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport: rawLeftover, sauceLeft: rawSauceLeft } = await c.req.json();
     if (!closingActuals || typeof closingActuals !== 'object') {
       return c.json({ error: 'closingActuals (per pool) is required' }, 400);
     }
+    // Sauces left (app 1.21+): litres, soup premix kg.
+    const sauceLeft: Record<string, number> = {};
+    for (const id of SAUCE_IDS) {
+      const v = Number(rawSauceLeft?.[id]);
+      if (rawSauceLeft?.[id] !== undefined && rawSauceLeft?.[id] !== null && Number.isFinite(v) && v >= 0) sauceLeft[id] = Math.round(v * 1000) / 1000;
+    }
     const gramsError = ledgerGramsError([
       ...Object.values(closingActuals),
+      ...Object.values(sauceLeft),
       ...Object.values(wastageOverrides && typeof wastageOverrides === 'object' ? wastageOverrides : {}),
       ...Object.values(manualOpeningOverride && typeof manualOpeningOverride === 'object' ? manualOpeningOverride : {}),
     ]);
@@ -6517,6 +6539,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     const record = {
       id: existing?.id || `${productionHouseId}-${date}`,
       productionHouseId, date, pools,
+      ...(Object.keys(sauceLeft).length || existing?.sauceLeft ? { sauceLeft: { ...(existing?.sauceLeft || {}), ...sauceLeft } } : {}),
       ...(leftoverReport ? { leftoverReport } : {}),
       closed: true,
       closedBy: submittedBy, closedByName: submittedByName, closedByUserId: authResult.user.id,
@@ -6594,6 +6617,8 @@ app.post('/make-server-c2dd9b9d/production-wastage-notes', async (c) => {
     if (!productionHouseId || !date || !description || typeof quantity !== 'number' || !unit) {
       return c.json({ error: 'productionHouseId, date, description, quantity, and unit are required' }, 400);
     }
+    // 30 Oct 2026: "200 kg" of dough thrown away was 200 g.
+    if ((unit === 'kg' || unit === 'L') && quantity > LEDGER_MAX_KG) return c.json({ error: ledgerGramsError([quantity]) }, 400);
     const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const loggedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
     const loggedByName = authResult.user.user_metadata?.name || authResult.user.email;
@@ -7606,6 +7631,31 @@ app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
   }
 });
 
+// "Timesheet Approval Needed" to the person's own approver - their incharge or manager (see
+// approversFor); cluster heads only for someone with neither on file.
+async function notifyTimesheetApprovers(savedTimesheet: any) {
+  // attendance-employee: is an empty/legacy collection - real employee records
+  // (with the actual name and authUserId) live under unified-employee:.
+  const employee = await kv.get(`unified-employee:${savedTimesheet.employeeId}`);
+  const employeeName = employee?.name || savedTimesheet.employeeId;
+  const recipients = await approversFor(employee);
+  const timeSummary = formatTimesheetSummary(savedTimesheet);
+  const fromPunch = savedTimesheet.source === 'punch' ? ' (from check-in and check-out away from the workplace)' : '';
+  for (const recipient of recipients) {
+    if (recipient.authUserId) {
+      await notifyUser(
+        recipient.authUserId,
+        'timesheet_pending',
+        'Timesheet Approval Needed',
+        `${employeeName} (${savedTimesheet.employeeId}) submitted timesheet for ${savedTimesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}${fromPunch}`,
+        savedTimesheet.id,
+        savedTimesheet.date,
+        { recordType: 'timesheet', recordId: savedTimesheet.id }
+      );
+    }
+  }
+}
+
 // Save single timesheet
 app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
   try {
@@ -7621,34 +7671,10 @@ app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
 
     await kv.set(key, savedTimesheet);
 
-    // Route the approval notification to the employee's own approver - their incharge or
-    // manager (see approversFor). Cluster heads are only a fallback for someone with
-    // neither on file - this route used to hardcode cluster heads unconditionally.
-    // Sent after the response (afterResponse).
+    // Route the approval notification to the employee's own approver - this route used to
+    // hardcode cluster heads unconditionally. Sent after the response (afterResponse).
     if (timesheet.status === 'pending') {
-      await afterResponse('Timesheet notifications', async () => {
-        // attendance-employee: is an empty/legacy collection - real employee records
-        // (with the actual name and authUserId) live under unified-employee:.
-        const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
-        const employeeName = employee?.name || timesheet.employeeId;
-
-        const recipients = await approversFor(employee);
-
-        const timeSummary = formatTimesheetSummary(savedTimesheet);
-        for (const recipient of recipients) {
-          if (recipient.authUserId) {
-            await notifyUser(
-              recipient.authUserId,
-              'timesheet_pending',
-              'Timesheet Approval Needed',
-              `${employeeName} (${timesheet.employeeId}) submitted timesheet for ${timesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}`,
-              id,
-              timesheet.date,
-              { recordType: 'timesheet', recordId: id }
-            );
-          }
-        }
-      });
+      await afterResponse('Timesheet notifications', () => notifyTimesheetApprovers(savedTimesheet));
     }
 
     return c.json({ success: true, id });
@@ -15537,6 +15563,14 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
       // a cut-off list would remind them about days they did fill in.
       const timesheets = await getAllByPrefixWithRetry(`timesheet:${employee.employeeId}:`);
       const filledDates = new Set(timesheets.map((t: any) => t.date));
+      // A day with a check-in and check-out fills its own timesheet (punchTimesheet.ts) - the
+      // shift clock catches up here on days it missed (the first run after it started did all five).
+      for (const d of relevantDates.filter((d) => !filledDates.has(d))) {
+        const punch: any = await kv.get(`punch:${employee.employeeId}:${d}`).catch(() => null);
+        if (!punch?.in || !punch?.out) continue;
+        await syncTimesheet(punchDeps, punch);
+        if (await kv.get(`timesheet:${employee.employeeId}:${d}`)) filledDates.add(d);
+      }
 
       const leaves = await getAllByPrefixWithRetry(`leave:${employee.employeeId}:`);
       const leaveDates = new Set(
@@ -18259,7 +18293,9 @@ registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyU
 // Recipe capture sheets, standards and cost per piece (recipes.ts).
 registerRecipeRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, getAllByPrefix: getAllByPrefixWithRetry, storage: supabase.storage });
 // Shift clock-in/out, team KPIs and variable pay (attendance.ts, kpi.ts).
-registerKpiRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate) });
+// The shift clock and KPIs; the attendance reminder uses the same deps to fill timesheets from punches.
+const punchDeps = { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => notifyUser(id, type, title, message, relatedId, relatedDate), timesheetPending: notifyTimesheetApprovers };
+registerKpiRoutes(app, punchDeps);
 // Event stalls: their own P&L, stock, cash, staff and sales (events.ts).
 registerEventsRoutes(app, eventsDeps);
 // Expense checks: flags on new entries, and the routes to list and decide them (expenseReview.ts).

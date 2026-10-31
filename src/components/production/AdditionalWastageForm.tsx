@@ -12,6 +12,7 @@ import { NativeSelect } from '../ui/select';
 import { useT } from '../../utils/i18n';
 import { reasonLabel } from '../stock/stockShared';
 import { WASTE_REASONS, isPhase1Live } from '../../utils/batches';
+import { LEDGER_MAX_KG } from './ledgerKg';
 
 const PRODUCTION_REASONS = WASTE_REASONS.filter((r) => r.where !== 'store');
 
@@ -25,8 +26,9 @@ const KNOWN_SAUCES = [
 ];
 
 const SUGGESTIONS: { label: string; unit: 'kg' | 'g' | 'L' | 'ml' | 'pcs' }[] = [
-  { label: 'Dough (shared)', unit: 'kg' },
-  { label: 'Batter (shared)', unit: 'kg' },
+  { label: 'Dough', unit: 'kg' },
+  { label: 'Cheese Corn Dough', unit: 'kg' },
+  { label: 'Batter', unit: 'kg' },
   ...MOMO_TYPES.flatMap((t) => [
     { label: `${t.label} ${t.perTypePoolField === 'coating' ? 'Coating' : 'Stuffing'}`, unit: 'kg' as const },
   ]),
@@ -70,9 +72,12 @@ export function AdditionalWastageForm({ productionHouseId, date, disabled, notes
     if (match) setUnit(match.unit);
   };
 
+  // Over 100 kg or litres thrown away is grams typed in a kg box (30 Oct 2026: "200 kg" of dough).
+  const grams = (unit === 'kg' || unit === 'L') && (parseFloat(quantity) || 0) > LEDGER_MAX_KG;
+
   const handleAdd = async () => {
     const q = parseFloat(quantity);
-    if (!description.trim() || !q || q <= 0 || (reasonRequired && !reason)) return;
+    if (!description.trim() || !q || q <= 0 || grams || (reasonRequired && !reason)) return;
     setSubmitting(true);
     try {
       await onAdd(description.trim(), q, unit, reason);
@@ -114,7 +119,7 @@ export function AdditionalWastageForm({ productionHouseId, date, disabled, notes
         {SUGGESTIONS.map((s) => <option key={s.label} value={s.label} />)}
       </datalist>
       <div className="grid grid-cols-2 gap-3">
-        <Field label={t('stock.prod.quantity')}>
+        <Field label={t('stock.prod.quantity')} error={grams ? t('stock.prod.looksLikeGrams') : undefined}>
           <Input type="text" inputMode="decimal" className="num" value={quantity} onChange={(e) => setQuantity(e.target.value.replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
         </Field>
         <Field label={t('stock.prod.unit')}>
@@ -141,7 +146,7 @@ export function AdditionalWastageForm({ productionHouseId, date, disabled, notes
         className="self-start"
         leadingIcon={<PlusCircle />}
         loading={submitting}
-        disabled={disabled || !description.trim() || !quantity || (reasonRequired && !reason)}
+        disabled={disabled || !description.trim() || !quantity || grams || (reasonRequired && !reason)}
         onClick={handleAdd}
       >
         {t('stock.prod.logWastage')}

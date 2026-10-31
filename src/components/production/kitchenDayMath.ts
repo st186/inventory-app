@@ -10,22 +10,29 @@ export type Pool = { opening: number; prepared: number; closingActual: number | 
 export type LastCounted = Record<string, { date: string; kg: number; when: 'night' | 'morning' }>;
 export type Item = { id: string; kind: 'dough' | 'batter' | 'stuffing' | 'coating'; type: string | null };
 
-// inventory key -> momo-entry key, and which shared pool each type's wrapper comes from.
-export const TYPES: { type: string; momoKey: string; shared: 'dough' | 'batter'; own: 'stuffing' | 'coating' }[] = [
-  { type: 'chicken', momoKey: 'chickenMomos', shared: 'dough', own: 'stuffing' },
-  { type: 'chickenCheese', momoKey: 'chickenCheeseMomos', shared: 'dough', own: 'stuffing' },
-  { type: 'veg', momoKey: 'vegMomos', shared: 'dough', own: 'stuffing' },
-  { type: 'cheeseCorn', momoKey: 'cheeseCornMomos', shared: 'dough', own: 'stuffing' },
-  { type: 'paneer', momoKey: 'paneerMomos', shared: 'dough', own: 'stuffing' },
-  { type: 'vegKurkure', momoKey: 'vegKurkureMomos', shared: 'batter', own: 'coating' },
-  { type: 'chickenKurkure', momoKey: 'chickenKurkureMomos', shared: 'batter', own: 'coating' },
+// inventory key -> momo-entry key, the item its wrapper comes from, and its own filling. Cheese corn
+// has a dough of its own (owner, 31 Oct 2026: "corn cheese dough is different from the rest").
+export const TYPES: { type: string; momoKey: string; wrap: 'dough' | 'dough:cheeseCorn' | 'batter'; own: 'stuffing' | 'coating' }[] = [
+  { type: 'chicken', momoKey: 'chickenMomos', wrap: 'dough', own: 'stuffing' },
+  { type: 'chickenCheese', momoKey: 'chickenCheeseMomos', wrap: 'dough', own: 'stuffing' },
+  { type: 'veg', momoKey: 'vegMomos', wrap: 'dough', own: 'stuffing' },
+  { type: 'cheeseCorn', momoKey: 'cheeseCornMomos', wrap: 'dough:cheeseCorn', own: 'stuffing' },
+  { type: 'paneer', momoKey: 'paneerMomos', wrap: 'dough', own: 'stuffing' },
+  { type: 'vegKurkure', momoKey: 'vegKurkureMomos', wrap: 'batter', own: 'coating' },
+  { type: 'chickenKurkure', momoKey: 'chickenKurkureMomos', wrap: 'batter', own: 'coating' },
 ];
 
+// In the owner's order: dough, stuffing, batter (and the kurkure coating).
 export const ALL_ITEMS: Item[] = [
   { id: 'dough', kind: 'dough', type: null },
+  { id: 'dough:cheeseCorn', kind: 'dough', type: 'cheeseCorn' },
+  ...TYPES.filter((t) => t.own === 'stuffing').map((t) => ({ id: `stuffing:${t.type}`, kind: 'stuffing' as const, type: t.type })),
   { id: 'batter', kind: 'batter', type: null },
-  ...TYPES.map((t) => ({ id: `${t.own}:${t.type}`, kind: t.own, type: t.type })),
+  ...TYPES.filter((t) => t.own === 'coating').map((t) => ({ id: `coating:${t.type}`, kind: 'coating' as const, type: t.type })),
 ];
+
+/** A momo type's own filling (stuffing or coating), as against a dough or batter. */
+export const isFilling = (it: Item) => it.kind === 'stuffing' || it.kind === 'coating';
 
 const has = (n: number | null | undefined) => typeof n === 'number' && n > 0.005;
 
@@ -42,18 +49,18 @@ export function itemsForDay(pools: Record<string, Pool | undefined>, plan: Recor
 /** Momos planned today that use this item. */
 export function planPieces(it: Item, plan: Record<string, number> | null): number {
   if (!plan) return 0;
-  if (it.type) return plan[it.type] || 0;
-  return TYPES.filter((t) => t.shared === it.kind).reduce((s, t) => s + (plan[t.type] || 0), 0);
+  if (isFilling(it)) return plan[it.type!] || 0;
+  return TYPES.filter((t) => t.wrap === it.id).reduce((s, t) => s + (plan[t.type] || 0), 0);
 }
 
 /** Momos made today that used this item (from the momo entries, by inventory key). */
 export function piecesMade(it: Item, pieces: Record<string, number>): number {
-  if (it.type) return pieces[it.type] || 0;
-  return TYPES.filter((t) => t.shared === it.kind).reduce((s, t) => s + (pieces[t.type] || 0), 0);
+  if (isFilling(it)) return pieces[it.type!] || 0;
+  return TYPES.filter((t) => t.wrap === it.id).reduce((s, t) => s + (pieces[t.type] || 0), 0);
 }
 
-/** The key momos-per-kg is learnt under (server piecesPerKg): the type, or 'dough' / 'batter'. */
-export const perKgKey = (it: Item) => it.type || it.kind;
+/** The key momos-per-kg is learnt under (server piecesPerKg): the type, or 'dough' / 'dough:cheeseCorn' / 'batter'. */
+export const perKgKey = (it: Item) => (isFilling(it) ? it.type! : it.id);
 
 /**
  * How sure the morning figure is. "last_night": counted at last night's close (or weighed this
@@ -91,6 +98,7 @@ export type ItemDay = {
   freshEarly: number | null;     // fresh needed for the folding before it thaws
   rollsOver: number | null;      // frozen stock that will still be left tonight on plan
   overMade: boolean;             // made more than the plan needed, with enough already there
+  usedPieces: number;            // momos entered that used it
   used: number | null;           // kg used for the momos entered
   shouldLeft: number | null;     // morning + made - used
   counted: number | null;        // night count
@@ -105,7 +113,7 @@ export function itemDay(it: Item, pool: Pool | undefined, plan: Record<string, n
   const planned = planPieces(it, plan);
   const need = per && planned ? r2(planned / per) : null;
   // Frozen stock covers only the folding after it thaws; the first part of the day needs fresh.
-  const frozen = !!opts.frozen && morning > 0.005 && it.type !== null;
+  const frozen = !!opts.frozen && morning > 0.005 && isFilling(it);
   const freshEarly = frozen && need !== null ? r2(need * THAW_SHARE) : null;
   const target = need === null ? null : frozen ? Math.max(freshEarly!, need - morning) : need - morning;
   const makeKg = target === null ? null : Math.max(0, halfUp(target));
@@ -122,7 +130,7 @@ export function itemDay(it: Item, pool: Pool | undefined, plan: Record<string, n
     frozen, freshEarly,
     rollsOver: frozen && need !== null ? r2(Math.max(0, morning - (need - freshEarly!))) : null,
     overMade: target !== null && made > 0 && made > Math.max(0, target) * 1.25 + 0.5,
-    used, shouldLeft, counted,
+    usedPieces, used, shouldLeft, counted,
     gap: counted !== null && shouldLeft !== null ? r2(counted - shouldLeft) : null,
   };
 }

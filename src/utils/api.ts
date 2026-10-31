@@ -727,6 +727,7 @@ export interface ProductionLedgerEntry {
   closedAt?: string;
   manualOpeningOverride?: Record<string, number>;
   leftoverReport?: LeftoverReport;
+  sauceLeft?: Record<string, number>; // sauce:key -> counted at the close (L, soup premix kg)
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -843,10 +844,10 @@ export async function deleteProductionWastageNote(accessToken: string, id: strin
   await fetchWithAuth(`${API_BASE}/production-wastage-notes/${id}`, accessToken, { method: 'DELETE' });
 }
 
-export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport): Promise<ProductionLedgerEntry> {
+export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport, sauceLeft?: Record<string, number>): Promise<ProductionLedgerEntry> {
   const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/close`, accessToken, {
     method: 'PUT',
-    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}), ...(leftoverReport ? { leftoverReport } : {}) }),
+    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}), ...(leftoverReport ? { leftoverReport } : {}), ...(sauceLeft ? { sauceLeft } : {}) }),
   });
   return data.entry;
 }

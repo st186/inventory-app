@@ -19,6 +19,7 @@ import {
   suspicionFlags, workplaceKindOf, workplacePins, hoursBetween, isWorkingDay,
   type KpiSettings, type Pin, type PunchEvent, type PunchRecord, type PunchSuggestion, type RoleGroup, type WorkplaceKind,
 } from './kpiCore.ts';
+import { timesheetFromPunch } from './punchTimesheet.ts';
 
 export type Kv = {
   get: <T = any>(key: string) => Promise<T>;
@@ -33,6 +34,8 @@ export type KpiDeps = {
   getAllByPrefix: (prefix: string) => Promise<any[]>; // paginated (plain getByPrefix stops at 1000 rows)
   // In-app + push notification to one login (index.ts notifyUser).
   notifyUser?: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<any>;
+  // A timesheet filled from the punches that waits for approval: tell the approver (index.ts).
+  timesheetPending?: (sheet: any) => Promise<any>;
 };
 
 export const P = '/make-server-c2dd9b9d';
@@ -219,6 +222,21 @@ async function notePunchStart(kv: Kv, date: string) {
   await kv.set('kpi-config', { ...cfg, punchSince: date });
 }
 
+// The day's timesheet from the check-in and check-out (punchTimesheet.ts). Never fails the punch.
+export async function syncTimesheet(deps: KpiDeps, rec: PunchRecord | null) {
+  if (!rec?.in || !rec?.out) return;
+  try {
+    const key = `timesheet:${rec.employeeId}:${rec.date}`;
+    const sheet = timesheetFromPunch(rec, await deps.kv.get<any>(key), new Date().toISOString());
+    if (!sheet) return;
+    const saved = { ...sheet, id: sheet.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+    await deps.kv.set(key, saved);
+    if (saved.status === 'pending' && deps.timesheetPending) await deps.timesheetPending(saved).catch(() => undefined);
+  } catch (err: any) {
+    console.error('[shift] timesheet', err?.message || 'error');
+  }
+}
+
 function publicPunch(rec: PunchRecord | null) {
   if (!rec) return null;
   return { ...rec, hours: hoursBetween(rec.in?.at, rec.out?.at) };
@@ -312,6 +330,7 @@ export function registerAttendanceRoutes(app: any, deps: KpiDeps) {
       else { rec.out = ev; if (rec.pending) rec.pending.exit = null; }
       await deps.kv.set(key, finish(rec));
       await notePunchStart(deps.kv, date);
+      await syncTimesheet(deps, rec);
       return c.json({ punch: publicPunch(rec) });
     } catch (err) { return fail(c, err); }
   });
@@ -389,6 +408,7 @@ export function registerAttendanceRoutes(app: any, deps: KpiDeps) {
       rec.pending = { ...(rec.pending || {}), [kind]: null };
       await deps.kv.set(key, finish(rec));
       await notePunchStart(deps.kv, date);
+      await syncTimesheet(deps, rec);
       return c.json({ punch: publicPunch(rec) });
     } catch (err) { return fail(c, err); }
   });

@@ -34,7 +34,7 @@ import { WeeklyGoalCard } from './production/WeeklyGoalCard';
 import { ProductionApprovals } from './production/ProductionApprovals';
 import { ProductionFlagsBanner } from './production/ProductionFlags';
 import { useProductionPlan } from './production/useProductionPlan';
-import { KITCHEN_DAY_FROM, KitchenDay } from './production/KitchenDay';
+import { KITCHEN_DAY_FROM, KitchenDay, sauceId } from './production/KitchenDay';
 import { ALL_ITEMS, itemDay } from './production/kitchenDayMath';
 import { CollapsibleCard, StickyActions, StockPage, bagsText, dayLabel, formatCount, momoName } from './stock/stockShared';
 
@@ -277,11 +277,11 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     }
   };
 
-  const handleCloseLedgerDay = async (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: api.LeftoverReport) => {
+  const handleCloseLedgerDay = async (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: api.LeftoverReport, sauceLeft?: Record<string, number>) => {
     if (!context.user?.accessToken || !resolvedProductionHouseId) return;
     setLedgerCloseSubmitting(true);
     try {
-      await api.closeProductionLedgerDay(context.user.accessToken, resolvedProductionHouseId, selectedDate, closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport);
+      await api.closeProductionLedgerDay(context.user.accessToken, resolvedProductionHouseId, selectedDate, closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport, sauceLeft);
       toast.success(tSaved('stock.prod.dayClosedToast'));
       await fetchLedger();
     } catch (error: any) {
@@ -441,13 +441,13 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     });
   }, [ledgerTrackingLive, derivedLedgerWastage]);
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent): Promise<boolean> => {
     e?.preventDefault();
 
     // Prevent duplicate submissions
     if (submitting) {
       logger.warn('Submission already in progress, ignoring duplicate request');
-      return;
+      return false;
     }
 
     const productionData: Omit<ProductionData, 'id'> = {
@@ -477,9 +477,11 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         await context.addProductionData(productionData);
         toast.success(tSaved('stock.prod.saved'));
       }
+      return true;
     } catch (error) {
       console.error('Error saving production data:', error);
       toast.error(tSaved('stock.prod.failed'));
+      return false;
     } finally {
       setSubmitting(false);
       setSendOpen(false);
@@ -570,13 +572,155 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
     return out;
   }, [ledgerPools, plan, piecesToday, dayContext]);
 
-  const typeWastage = (m: typeof MOMO_TYPES[number]) => {
-    const w = (ledgerPools as Record<string, api.ProductionLedgerPoolState | undefined>)[`${m.perTypePoolField}:${m.inventoryKey}`]?.wastage;
-    return typeof w === 'number' && w > 0 ? w : null;
+  // Momos and sauces typed but not yet sent (closing the day sends them first). Batch codes compare
+  // the way the form loads them: an entry saved without codes is one uncoded row per type.
+  const batchSig = (batches: ProductionData['batches'] | undefined, finals: any) => JSON.stringify(MOMO_TYPES.map((m) => {
+    const list = batches?.[m.key]?.length ? batches[m.key]! : (finals?.[m.key]?.final || 0) > 0 ? [{ code: '', pieces: finals[m.key].final }] : [];
+    return list.filter((b) => b.pieces > 0).map((b) => `${b.code || ''}:${b.pieces}`);
+  }));
+  const productionDirty = !productionForDate
+    || MOMO_TYPES.some((m) => ((formData as any)[m.key]?.final || 0) !== ((productionForDate as any)[m.key]?.final || 0))
+    || SAUCE_ITEMS.some((x) => (formData.sauces[x.key] || 0) !== (productionForDate.sauces?.[x.key] || 0))
+    || batchSig(formData.batches, formData) !== batchSig(productionForDate.batches, productionForDate);
+  const kitchenDay = !!resolvedProductionHouseId && ledgerTrackingLive && selectedDate >= KITCHEN_DAY_FROM;
+  const saucesToCount = SAUCE_ITEMS
+    .filter((x) => (morning?.counts?.[sauceId(x.key)] || 0) > 0 || (formData.sauces[x.key] || 0) > 0 || typeof ledgerEntry?.sauceLeft?.[sauceId(x.key)] === 'number')
+    .map((x) => ({ id: sauceId(x.key), label: x.label, unit: x.unit }));
+  // Closing the day first sends the momos and sauces made (the production incharge's own entry).
+  const saveMadeFirst = async (): Promise<boolean> => {
+    if (!canEdit) return true;
+    if (madeTotal === 0) return confirm({ title: t('kd.noMomosTitle'), body: t('kd.noMomosBody'), confirmLabel: t('kd.closeAnyway') });
+    return productionDirty ? handleSubmit() : true;
   };
   const setFinal = (m: typeof MOMO_TYPES[number], final: number) =>
     setFormData((prev) => ({ ...prev, [m.key]: { ...(prev as any)[m.key], final } } as typeof prev));
   const legacyFields = (m: typeof MOMO_TYPES[number]) => (m.group === 'kurkure' ? (['batter', 'coating'] as const) : (['dough', 'stuffing'] as const));
+
+  const momoRows = (
+    <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+      {MOMO_TYPES.map((m) => {
+        const typeData = (formData as any)[m.key];
+        const planned = plan ? plan[m.inventoryKey as keyof typeof plan] : null;
+        const name = momoName(lang, m.inventoryKey, m.label);
+        // (The ledger's day "wastage" is everything used, not waste, so it isn't shown here.)
+        const sub = [planned ? t('stock.prod.plan', { n: formatCount(planned) }) : null, typeData.final > 0 ? bagsText(lang, typeData.final, m.inventoryKey) : null].filter(Boolean).join(' · ');
+        if (batchTracking) {
+          const isOpen = openType === m.key;
+          return (
+            <div key={m.key} className="flex flex-col">
+              <ListRow
+                title={name}
+                subtitle={sub || undefined}
+                trailing={<span className="num text-body-md font-semibold text-text">{formatCount(typeData.final || 0)}</span>}
+                chevron="down"
+                aria-expanded={isOpen}
+                onClick={() => setOpenType(isOpen ? null : m.key)}
+              />
+              {isOpen && (
+                <div className="border-t border-border bg-surface-2/60 px-4 py-3">
+                  <BatchPiecesCard
+                    momoType={m}
+                    date={selectedDate}
+                    batches={formData.batches?.[m.key] || []}
+                    earlierBatchCodes={earlierBatchCodes[m.key] || []}
+                    disabled={!canEdit}
+                    onChange={(next: ProductionBatch[]) => setFormData((prev) => ({
+                      ...prev,
+                      batches: { ...(prev.batches || {}), [m.key]: next },
+                      [m.key]: { ...(prev as any)[m.key], final: next.reduce((sum, b) => sum + (b.pieces || 0), 0) },
+                    } as typeof prev))}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        }
+        return (
+          <div key={m.key} className="flex flex-col gap-3 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-body-md font-medium text-text">{name}</span>
+                {sub && <span className="text-label text-text-3">{sub}</span>}
+              </span>
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={String(typeData.final || 0)}
+                onChange={(e) => setFinal(m, parseInt(e.target.value.replace(/[^\d]/g, ''), 10) || 0)}
+                disabled={!canEdit}
+                aria-label={`${name} · ${t('stock.prod.finalPieces')}`}
+                className="num w-24 text-right"
+              />
+            </div>
+            {!ledgerTrackingLive && (
+              <div className="grid grid-cols-2 gap-3">
+                {legacyFields(m).map((field) => (
+                  <Field key={field} label={`${field[0].toUpperCase()}${field.slice(1)} (kg)`}>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      className="num"
+                      value={String(typeData[field] ?? 0)}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, [m.key]: { ...(prev as any)[m.key], [field]: parseFloat(e.target.value.replace(/[^\d.]/g, '')) || 0 } } as typeof prev))}
+                      disabled={!canEdit}
+                    />
+                  </Field>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const sauceRows = (
+    <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+      {SAUCE_ITEMS.map((item) => (
+        <ListRow
+          key={item.key}
+          density="compact"
+          title={item.label}
+          trailing={
+            <DecimalInput
+              className="num w-24 text-right"
+              aria-label={`${item.label} (${item.unit === 'L' ? 'litres' : 'kg'})`}
+              unit={item.unit}
+              value={formData.sauces[item.key]}
+              onChange={(n) => setFormData((f) => ({ ...f, sauces: { ...f.sauces, [item.key]: n } }))}
+              disabled={!canEdit}
+            />
+          }
+        />
+      ))}
+    </div>
+  );
+
+  // Step 3 of the production day: momos of each type and sauces made, sent for approval.
+  const madeForm = (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <h4 className="mx-1 text-label font-semibold text-text-2">{t('stock.prod.momos')}</h4>
+        {batchTracking && <p className="mx-1 text-caption text-text-3">{t('stock.prod.batchesNote')}</p>}
+        {momoRows}
+      </div>
+      <div className="flex flex-col gap-2">
+        <h4 className="mx-1 text-label font-semibold text-text-2">{t('stock.prod.sauces')}</h4>
+        <p className="mx-1 text-caption text-text-3">{t('stock.prod.saucesHint')}</p>
+        {sauceRows}
+      </div>
+      {canEdit && (productionDirty || !productionForDate) && (
+        <Button variant="secondary" className="self-start" leadingIcon={<CheckSquare />} disabled={madeTotal === 0 && !productionForDate} onClick={() => setSendOpen(true)}>
+          {productionForDate ? t('stock.prod.update') : t('stock.prod.send')}
+        </Button>
+      )}
+      {productionForDate && !productionDirty && (
+        <p className="text-caption text-text-3">
+          {productionForDate.approvalStatus === 'approved' ? t('stock.prod.approvedBy', { name: productionForDate.approvedBy || '' }) : t('stock.prod.waiting')}
+        </p>
+      )}
+    </div>
+  );
 
   const entry = (
     <div className="flex flex-col gap-6">
@@ -607,85 +751,13 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         <Callout tone="info" icon={CheckSquare} title={`Sent by ${productionForDate.createdBy} and waiting for you`} action={<Button size="sm" loading={approving} onClick={handleApprove}>Approve</Button>} />
       )}
 
-      <section className="flex flex-col gap-2">
-        <h3 className="overline-label mx-1">{t('stock.prod.momos')}</h3>
-        {batchTracking && <p className="mx-1 text-label text-text-3">{t('stock.prod.batchesNote')}</p>}
-        <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
-          {MOMO_TYPES.map((m) => {
-            const typeData = (formData as any)[m.key];
-            const planned = plan ? plan[m.inventoryKey as keyof typeof plan] : null;
-            const wasted = typeWastage(m);
-            const name = momoName(lang, m.inventoryKey, m.label);
-            const sub = [planned ? t('stock.prod.plan', { n: formatCount(planned) }) : null, typeData.final > 0 ? bagsText(lang, typeData.final, m.inventoryKey) : null, wasted ? t('stock.prod.wasted', { n: t('stock.prod.kg', { n: wasted.toFixed(2) }) }) : null].filter(Boolean).join(' · ');
-            if (batchTracking) {
-              const isOpen = openType === m.key;
-              return (
-                <div key={m.key} className="flex flex-col">
-                  <ListRow
-                    title={name}
-                    subtitle={sub || undefined}
-                    trailing={<span className="num text-body-md font-semibold text-text">{formatCount(typeData.final || 0)}</span>}
-                    chevron="down"
-                    aria-expanded={isOpen}
-                    onClick={() => setOpenType(isOpen ? null : m.key)}
-                  />
-                  {isOpen && (
-                    <div className="border-t border-border bg-surface-2/60 px-4 py-3">
-                      <BatchPiecesCard
-                        momoType={m}
-                        date={selectedDate}
-                        batches={formData.batches?.[m.key] || []}
-                        earlierBatchCodes={earlierBatchCodes[m.key] || []}
-                        disabled={!canEdit}
-                        onChange={(next: ProductionBatch[]) => setFormData((prev) => ({
-                          ...prev,
-                          batches: { ...(prev.batches || {}), [m.key]: next },
-                          [m.key]: { ...(prev as any)[m.key], final: next.reduce((sum, b) => sum + (b.pieces || 0), 0) },
-                        } as typeof prev))}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            }
-            return (
-              <div key={m.key} className="flex flex-col gap-3 px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="text-body-md font-medium text-text">{name}</span>
-                    {sub && <span className="text-label text-text-3">{sub}</span>}
-                  </span>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    value={String(typeData.final || 0)}
-                    onChange={(e) => setFinal(m, parseInt(e.target.value.replace(/[^\d]/g, ''), 10) || 0)}
-                    disabled={!canEdit}
-                    aria-label={`${name} · ${t('stock.prod.finalPieces')}`}
-                    className="num w-24 text-right"
-                  />
-                </div>
-                {!ledgerTrackingLive && (
-                  <div className="grid grid-cols-2 gap-3">
-                    {legacyFields(m).map((field) => (
-                      <Field key={field} label={`${field[0].toUpperCase()}${field.slice(1)} (kg)`}>
-                        <Input
-                          type="text"
-                          inputMode="decimal"
-                          className="num"
-                          value={String(typeData[field] ?? 0)}
-                          onChange={(e) => setFormData((prev) => ({ ...prev, [m.key]: { ...(prev as any)[m.key], [field]: parseFloat(e.target.value.replace(/[^\d.]/g, '')) || 0 } } as typeof prev))}
-                          disabled={!canEdit}
-                        />
-                      </Field>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      {!kitchenDay && (
+        <section className="flex flex-col gap-2">
+          <h3 className="overline-label mx-1">{t('stock.prod.momos')}</h3>
+          {batchTracking && <p className="mx-1 text-label text-text-3">{t('stock.prod.batchesNote')}</p>}
+          {momoRows}
+        </section>
+      )}
 
       {!resolvedProductionHouseId ? (
         <Callout tone="neutral" title={t('stock.prod.noHouse')} />
@@ -699,21 +771,26 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
             date={selectedDate} houseId={resolvedProductionHouseId} accessToken={context.user?.accessToken || ''}
             pools={ledgerPools as Record<string, api.ProductionLedgerPoolState>} morning={morning} lastCounted={lastCounted}
             plan={plan as Record<string, number> | null} pieces={piecesToday} perKg={dayContext?.perKg || {}}
+            sauces={SAUCE_ITEMS} saucesMade={formData.sauces as Record<string, number>} sauceLeft={ledgerEntry?.sauceLeft || null}
+            madeDone={!!productionForDate && !productionDirty && madeTotal > 0}
             closed={ledgerClosed} canEdit={canEditLedger} onWeighed={fetchLedger}
             makeForm={(
               <div className="flex flex-col gap-5">
-                <LogSharedPoolForm disabled={!canEditLedger} submitting={ledgerItemSubmitting} onAdd={(poolKey, qty) => handleAddLedgerItem(poolKey, qty, 0)} />
-                <PrepareLineItemForm
-                  disabled={!canEditLedger} submitting={ledgerItemSubmitting} onAdd={handleAddLedgerItem}
-                  leftoverKg={Object.fromEntries(Object.entries(ledgerPools || {}).map(([id, p]) => [id, (p as api.ProductionLedgerPoolState | undefined)?.opening || 0]))}
-                  plan={plan as Record<string, number> | null} perKg={dayContext?.perKg}
-                />
+                {canEditLedger && !ledgerClosed && (!!morning || ledgerClosed) && (
+                  <PrepareLineItemForm
+                    disabled={!canEditLedger} submitting={ledgerItemSubmitting} onAdd={handleAddLedgerItem}
+                    leftoverKg={Object.fromEntries(Object.entries(ledgerPools || {}).map(([id, p]) => [id, (p as api.ProductionLedgerPoolState | undefined)?.opening || 0]))}
+                    plan={plan as Record<string, number> | null} perKg={dayContext?.perKg}
+                  />
+                )}
                 <PreparedLineItemsList items={ledgerItems} disabled={!canEditLedger || ledgerClosed} onDelete={handleDeleteLedgerItem} />
               </div>
             )}
+            madeForm={madeForm}
             nightForm={(
               <EndOfDayCloseForm
-                pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting} dayContext={dayContext}
+                simple sauces={saucesToCount} savedSauceLeft={ledgerEntry?.sauceLeft || null} beforeSubmit={saveMadeFirst}
+                pools={ledgerPools} isFirstEverDay={!ledgerHasAnyPriorRecord} closed={ledgerClosed} submitting={ledgerCloseSubmitting || submitting} dayContext={dayContext}
                 savedReport={ledgerEntry?.leftoverReport || null} readOnly={!canEditLedger} disabled={!canEditLedger} expectedLeft={expectedLeft}
                 closedBy={ledgerEntry?.closedAt ? `${ledgerEntry.closedByName ? `${ledgerEntry.closedByName}, ` : ''}${new Date(ledgerEntry.closedAt).toLocaleString(lang === 'en' ? 'en-IN' : lang, { timeZone: 'UTC', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : null}
                 onSubmit={handleCloseLedgerDay}
@@ -785,27 +862,11 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         </CollapsibleCard>
       )}
 
-      <CollapsibleCard title={t('stock.prod.sauces')} subtitle={t('stock.prod.saucesHint')}>
-        <div className="[&>*+*]:border-t [&>*+*]:border-border">
-          {SAUCE_ITEMS.map((item) => (
-            <ListRow
-              key={item.key}
-              density="compact"
-              title={item.label}
-              trailing={
-                <DecimalInput
-                  className="num w-24 text-right"
-                  aria-label={`${item.label} (${item.unit === 'L' ? 'litres' : 'kg'})`}
-                  unit={item.unit}
-                  value={formData.sauces[item.key]}
-                  onChange={(n) => setFormData((f) => ({ ...f, sauces: { ...f.sauces, [item.key]: n } }))}
-                  disabled={!canEdit}
-                />
-              }
-            />
-          ))}
-        </div>
-      </CollapsibleCard>
+      {!kitchenDay && (
+        <CollapsibleCard title={t('stock.prod.sauces')} subtitle={t('stock.prod.saucesHint')}>
+          {sauceRows}
+        </CollapsibleCard>
+      )}
 
       <WeeklyGoalCard context={context} resolvedProductionHouseId={resolvedProductionHouseId} isClusterHead={isClusterHead} isOperationsManager={isOperationsManager} />
 
@@ -820,7 +881,7 @@ export function ProductionManagement({ context, selectedStoreId, initialTab = nu
         />
       )}
 
-      {canEdit && (
+      {canEdit && !kitchenDay && (
         <StickyActions>
           <Button size="lg" className="flex-1" onClick={() => setSendOpen(true)}>{productionForDate ? t('stock.prod.update') : t('stock.prod.send')}</Button>
         </StickyActions>

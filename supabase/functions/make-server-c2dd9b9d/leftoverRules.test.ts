@@ -19,7 +19,8 @@ test('every carried-over or made item must be counted', () => {
   assert.deepEqual(uncountedPools(day29, { 'stuffing:chicken': 10 }), ['dough', 'stuffing:veg', 'stuffing:cheeseCorn']);
   assert.deepEqual(uncountedPools(day29, { dough: 0, 'stuffing:chicken': 10, 'stuffing:veg': 0.4, 'stuffing:cheeseCorn': 2.5 }), []);
   assert.equal(poolLabel('stuffing:cheeseCorn'), 'Cheese corn stuffing');
-  assert.equal(poolLabel('dough'), 'Dough (shared)');
+  assert.equal(poolLabel('dough'), 'Dough');
+  assert.equal(poolLabel('dough:cheeseCorn'), 'Cheese corn dough');
 });
 
 test('the leftover line: how much, from what, momos it could have made, made while some was there', () => {
@@ -35,6 +36,9 @@ test('pieces per kg from recent days (median, days with at least 1 kg used)', ()
   // Shared dough: every steamed / fried momo over the dough used.
   const doughDay = { pools: { dough: { opening: 2, prepared: 10, closingActual: 1 } }, pieces: { chickenMomos: 700, vegMomos: 200, chickenKurkureMomos: 100 } };
   assert.deepEqual(piecesPerKg([doughDay]), { dough: 82 }); // 900 / 11 kg; kurkure is batter
+  // Cheese corn has its own dough (owner, 31 Oct 2026): not in the dough's count.
+  const ccDay = { pools: { dough: { opening: 0, prepared: 11, closingActual: 0 }, 'dough:cheeseCorn': { opening: 0, prepared: 2, closingActual: 0 } }, pieces: { chickenMomos: 900, cheeseCornMomos: 160 } };
+  assert.deepEqual(piecesPerKg([ccDay]), { dough: 82, 'dough:cheeseCorn': 80 });
 });
 
 test('the checklist: "Over time" is not a reason', () => {

@@ -93,10 +93,10 @@ export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, 
   // The guided production day (KitchenDay.tsx): last night's counts, cheese corn last weighed weeks
   // ago, and the morning weigh-in once saved (it becomes the day's opening).
   { method: 'GET', re: /\/production-ledger$/, reply: () => {
-    const pools: Record<string, any> = { dough: { opening: 1.2, prepared: 6, closingActual: null, wastage: null }, batter: { opening: 0.5, prepared: 2, closingActual: null, wastage: null }, 'stuffing:chicken': { opening: 0.8, prepared: 9, closingActual: null, wastage: 0.3 }, 'stuffing:cheeseCorn': { opening: 2.54, prepared: 0, closingActual: null, wastage: null }, 'coating:chickenKurkure': { opening: 0.2, prepared: 1.5, closingActual: null, wastage: null } };
+    const pools: Record<string, any> = { dough: { opening: 1.2, prepared: 6, closingActual: null, wastage: null }, batter: { opening: 0.5, prepared: 2, closingActual: null, wastage: null }, 'stuffing:chicken': { opening: 0.8, prepared: 9, closingActual: null, wastage: 0.3 }, 'stuffing:cheeseCorn': { opening: 2.54, prepared: 0, closingActual: null, wastage: null }, 'dough:cheeseCorn': { opening: 0, prepared: 2, closingActual: null, wastage: null }, 'coating:chickenKurkure': { opening: 0.2, prepared: 1.5, closingActual: null, wastage: null } };
     for (const [id, kg] of Object.entries(morningWeighIn?.counts || {})) pools[id] = { ...(pools[id] || { prepared: 0, closingActual: null, wastage: null }), opening: kg };
     return {
-      entry: null, live: { pools }, items: [{ id: 'li1', momoKey: 'GLOBAL_DOUGH', globalPoolQty: 6, perTypePoolQty: 0, loggedByName: 'Sohel' }, { id: 'li2', momoKey: 'chickenMomos', globalPoolQty: 0, perTypePoolQty: 9, loggedByName: 'Sohel' }], hasAnyPriorRecord: true,
+      entry: null, live: { pools }, items: [{ id: 'li1', momoKey: 'GLOBAL_DOUGH', globalPoolQty: 6, perTypePoolQty: 0, loggedByName: 'Sohel', loggedAt: `${today}T08:40:00.000Z` }, { id: 'li2', momoKey: 'chickenMomos', globalPoolQty: 0, perTypePoolQty: 9, loggedByName: 'Sohel', loggedAt: `${today}T09:15:00.000Z` }, { id: 'li3', momoKey: 'cheeseCornMomos', globalPoolQty: 2, perTypePoolQty: 0, loggedByName: 'Sohel', loggedAt: `${today}T11:05:00.000Z` }], hasAnyPriorRecord: true,
       morning: morningWeighIn,
       lastCounted: { dough: { date: yesterday, kg: 1.2, when: 'night' }, batter: { date: yesterday, kg: 0.5, when: 'night' }, 'stuffing:chicken': { date: yesterday, kg: 0.8, when: 'night' }, 'coating:chickenKurkure': { date: yesterday, kg: 0.2, when: 'night' }, 'stuffing:cheeseCorn': { date: addDays(today, -24), kg: 2.54, when: 'night' } },
     };
@@ -108,7 +108,7 @@ export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, 
       ? ['চিকেন স্টাফিং ০.৮ কেজি আছে, প্ল্যান ৯০০টা: আজ প্রায় ৯ কেজি বানান।', 'চিজ কর্ন স্টাফিং ২.৫ কেজি আছে: আজকের প্ল্যানে লাগবে না, আগে ওটা দিন।'].join('\n')
       : ['Chicken stuffing: 0.8 kg here, plan 900 momos. Make about 9 kg.', 'Cheese corn stuffing: 2.5 kg here covers today. Use it first, make none.'].join('\n') }) },
   // The leftover reasons form at the close: who was in (and how late) and the kitchen's machines.
-  { method: 'GET', re: /\/day-context$/, reply: () => ({ date: today, minKg: 0.5, perKg: { chicken: 92, veg: 90, cheeseCorn: 85, chickenKurkure: 80, dough: 82, batter: 400 }, staff: [
+  { method: 'GET', re: /\/day-context$/, reply: () => ({ date: today, minKg: 0.5, perKg: { chicken: 92, veg: 90, cheeseCorn: 85, chickenKurkure: 80, dough: 82, 'dough:cheeseCorn': 80, batter: 400 }, staff: [
     { id: 'P1', name: 'Sohel', shiftStart: '08:00', checkInAt: at(today, '09:42'), lateMin: 102, onLeave: false },
     { id: 'P2', name: 'Rina', shiftStart: '08:00', checkInAt: at(today, '07:58'), lateMin: 0, onLeave: false },
     { id: 'P3', name: 'Bablu', shiftStart: '08:00', checkInAt: null, lateMin: 0, onLeave: true },
