@@ -16,7 +16,10 @@ const query = new URLSearchParams(window.location.search);
 if (query.get('theme') === 'dark') document.documentElement.dataset.theme = 'dark';
 
 function ChatPreview() {
-  const [stack, setStack] = useState<Record<string, string>[]>(() => (query.get('room') ? [{}, { room: query.get('room')! }] : [{}]));
+  const [stack, setStack] = useState((): Record<string, string>[] => {
+    const room = query.get('room');
+    return room ? [{}, { room }] : [{}];
+  });
   const params = stack[stack.length - 1];
   const value = useMemo(() => ({
     user: { accessToken: 'preview', name: 'Subham Tewari', role: 'cluster_head' },
@@ -32,9 +35,9 @@ function ChatPreview() {
   return (
     <ShellProvider value={value}>
       <div className="min-h-dvh bg-bg">
-        <div className="border-b border-border bg-surface px-4 py-3 text-body-md font-semibold text-text">App top bar (the chat should cover this)</div>
+        <div className="sticky top-0 z-(--z-sticky) border-b border-border bg-surface px-4 py-3 text-body-md font-semibold text-text">App top bar (the chat should cover this)</div>
         <ChatScreen params={params} />
-        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface px-4 py-4 text-center text-body-sm text-text-2">Bottom menu (the chat should cover this)</div>
+        <div className="fixed inset-x-0 bottom-0 z-(--z-nav) border-t border-border bg-surface px-4 py-4 text-center text-body-sm text-text-2">Bottom menu (the chat should cover this)</div>
       </div>
     </ShellProvider>
   );
