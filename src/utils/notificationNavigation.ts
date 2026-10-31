@@ -110,6 +110,8 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   stockout_explain: { view: 'home' }, // the store incharge's Home: pick why each item was out of stock
   stockout_explained: { view: 'home' }, // the owner's Right now card
   steam_now: { view: 'home' }, // the store: put momos in the steamer before the rush
+  chat_direct: { view: 'chat' }, // opens the room (relatedId)
+  chat_group: { view: 'chat' },
   asset_missing: { view: 'assets' },
   equipment_check_due: { view: 'assets' },
   equipment_check_done: { view: 'assets' },

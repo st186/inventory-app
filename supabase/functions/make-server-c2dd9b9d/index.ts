@@ -42,6 +42,7 @@ import * as stockCheck from './stockCheck.ts';
 import * as liveOrders from './liveOrders.ts';
 import * as onlineStock from './onlineStock.ts';
 import * as rush from './rushInsights.ts';
+import { registerChatRoutes } from './chat.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -19369,6 +19370,8 @@ registerRepairRoutes(app, expenseReviewDeps);
 // Customer complaints: photos, Bunny's reading, explanations, decisions (complaints.ts).
 registerComplaintRoutes(app, { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST });
 registerPaperworkRoutes(app, { kv: kvWithRetry, rows: getAllByPrefixWithRetry, verifyUser, storage: supabase.storage });
+// Team chat: groups and one-to-ones, read and sent from the phones; the server keeps the groups and sends notifications (chat.ts).
+registerChatRoutes(app, { kv: kvWithRetry, db: supabase, verifyUser, staff: staffForNotifications, rows: getAllByPrefixWithRetry, notifyUser });
 registerSiteAuditRoutes(app, {
   kv: kvWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST,
   // A sign-in for an independent auditor: role audit, designation site_auditor (trusted keys are

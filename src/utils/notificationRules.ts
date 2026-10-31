@@ -36,6 +36,7 @@ const ACTION = new Set([
   'stockout_explain', // why each item was out of stock today, to the store incharge (onlineStock.ts)
   'stockout_explained', // the day's out-of-stock items with the reasons, to the owner
   'steam_now', // put momos in the steamer now: the rush is coming (rushInsights.ts)
+  'chat_direct', // a one-to-one chat message (chat.ts); group messages (chat_group) are updates, bundled
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
@@ -88,6 +89,7 @@ const OWNER_BUZZ = new Set([
   'leave_pending', 'stock_request_missed', 'complaint_answered', 'audit_report', 'test_notification',
   'orders_unbilled',
   'stockout_explained',
+  'chat_direct',
 ]);
 export const ownerBuzzes = (type: string) => notificationCategory(type) === 'urgent' || OWNER_BUZZ.has(type);
 // Reminders that come back by themselves on a timetable aren't also sent to the owner as "Not seen
@@ -126,6 +128,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   online_items_off: 'অনলাইনে আইটেম বন্ধ আছে',
   stockout_explain: 'কেন স্টক শেষ ছিল লিখুন',
   steam_now: 'এখন স্টিমারে মোমো দিন',
+  chat_direct: 'নতুন মেসেজ', chat_group: 'গ্রুপে মেসেজ',
 };
 
 export const DEFAULT_PREFS = { quietOn: true, quietFrom: '23:00', quietTo: '07:00', muted: {} as Partial<Record<NotificationCategory, boolean>>, digest: false };

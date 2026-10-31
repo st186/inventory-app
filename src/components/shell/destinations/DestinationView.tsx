@@ -28,6 +28,7 @@ const ContactsScreen = lazy(() => import('../../contacts/ContactsScreen').then((
 const ComplianceScreen = lazy(() => import('../../compliance/ComplianceScreen').then((m) => ({ default: m.ComplianceScreen })));
 const PayslipsScreen = lazy(() => import('../../performance/PayslipsScreen').then((m) => ({ default: m.PayslipsScreen })));
 const CamerasScreen = lazy(() => import('../../cameras/CamerasScreen').then((m) => ({ default: m.CamerasScreen })));
+const ChatScreen = lazy(() => import('../../chat/ChatScreen').then((m) => ({ default: m.ChatScreen })));
 const PerformanceScreen = lazy(() => import('../../performance/PerformanceScreen').then((m) => ({ default: m.PerformanceScreen })));
 const ShoppingListsScreen = lazy(() => import('../../supplies/ShoppingLists').then((m) => ({ default: m.ShoppingListsScreen })));
 const PhotoGuideScreen = lazy(() => import('../../workplace/PhotoGuide').then((m) => ({ default: m.PhotoGuideScreen })));
@@ -176,6 +177,9 @@ export const DestinationView = memo(function DestinationView({ dest, params, ren
         break;
       case 'Cameras':
         content = <CamerasScreen />;
+        break;
+      case 'Chat':
+        content = <ChatScreen params={params} />;
         break;
       case 'AppTour':
         content = <LearnScreen />;

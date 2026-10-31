@@ -8,6 +8,7 @@ import { setScreenPage } from '../../utils/screenContext';
 import { useT, type I18nKey } from '../../utils/i18n';
 import { StoreSelector } from '../StoreSelector';
 import { NotificationsProvider, useNotifications, type NotificationsSource } from '../Notifications';
+import { useChatUnread } from '../chat/chatApi';
 import type { BadgeKey, Destination, NavModel } from './navConfig';
 import { roleLabelKey, tabForPath } from './navConfig';
 import type { LegacyTarget, Route } from './router';
@@ -67,10 +68,12 @@ export function AppShell(props: AppShellProps) {
   );
 }
 
-/** The top bar with the bell's unread count: the only part that re-renders when the inbox polls. */
-function TopBarWithInbox(props: Omit<ComponentProps<typeof TopBar>, 'unread'>) {
+/** The top bar with the bell's unread count: the only part that re-renders when the inbox polls.
+ *  The chat button's count comes live from the chat tables (chat/chatApi.ts). */
+function TopBarWithInbox(props: Omit<ComponentProps<typeof TopBar>, 'unread' | 'chatUnread'>) {
   const feed = useNotifications();
-  return <TopBar {...props} unread={feed.unreadCount} />;
+  const chatUnread = useChatUnread(!!props.onChat && !props.preview, null);
+  return <TopBar {...props} unread={feed.unreadCount} chatUnread={chatUnread} />;
 }
 
 // Pull down: the business data (if this login loads it), the Inbox, whatever the screen in view
@@ -259,6 +262,8 @@ function ShellFrame(props: AppShellProps) {
             onAskBunny={openBunny}
             onInbox={() => router.push('inbox')}
             showBell={route.path !== 'inbox'}
+            onChat={nav.destinations.chat && route.path !== 'chat' ? () => router.push('chat') : undefined}
+            preview={!!preview}
             userName={user.name}
             onAccount={openAccount}
             onRefresh={onRefresh ? refreshButton : undefined}

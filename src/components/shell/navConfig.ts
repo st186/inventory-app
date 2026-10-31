@@ -86,7 +86,7 @@ export type IconKey =
   | 'home' | 'insights' | 'money' | 'stock' | 'production' | 'team' | 'more' | 'me' | 'pay' | 'inbox'
   | 'sales' | 'expenses' | 'cash' | 'payouts' | 'loans' | 'requests' | 'batches' | 'on-hand' | 'out-of-stock'
   | 'riders' | 'receive' | 'people' | 'attendance' | 'kpis' | 'checks' | 'equipment' | 'investments' | 'items'
-  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance' | 'payslips' | 'performance' | 'cameras';
+  | 'stores' | 'hierarchy' | 'reports' | 'audit' | 'backup' | 'profile' | 'events' | 'recipes' | 'complaints' | 'contacts' | 'tour' | 'compliance' | 'payslips' | 'performance' | 'cameras' | 'chat';
 
 export type ScreenSpec =
   | { screen: 'Home'; home: HomeKind; embeds?: ScreenSpec }
@@ -125,6 +125,7 @@ export type ScreenSpec =
   | { screen: 'Payslips' }
   | { screen: 'Performance' }
   | { screen: 'Cameras' }
+  | { screen: 'Chat' }
   | { screen: 'AppTour' }
   | { screen: 'ShoppingLists' }
   | { screen: 'PhotoGuide' }
@@ -290,6 +291,8 @@ export function buildNav(user: NavUser, options: { today: string; storeCount: nu
   add('home', 'nav.today', 'home', homeSpec,
     kind === 'rider' ? L('riders', ridersSpec) : null, kind === 'rider' ? 'riders' : 'analytics');
   add('inbox', 'nav.inbox', 'inbox', { screen: 'Inbox' }, null);
+  // Team chat: groups and one-to-ones (owner, 1 Nov 2026; chat/ChatScreen.tsx), from the top bar.
+  add('chat', 'nav.chat', 'chat', { screen: 'Chat' }, null);
 
   const stockTab = kind === 'production-incharge' ? 'production' : 'stock';
   if (can.analytics) {

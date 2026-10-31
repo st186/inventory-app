@@ -947,6 +947,18 @@ export async function saveSteamerSettings(storeId: string, settings: Partial<Ste
   return fetchWithAuth(`${API_BASE}/insights/rush/settings`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ storeId, ...settings }) });
 }
 
+// Team chat (server chat.ts): the groups kept in step with the staff list, who you can message,
+// and opening a one-to-one room. Messages themselves go straight to the database (chat/chatApi.ts).
+export async function chatSync(accessToken?: string): Promise<{ success: boolean; skipped?: boolean }> {
+  return fetchWithAuth(`${API_BASE}/chat/sync`, await tokenOr(accessToken), { method: 'POST' });
+}
+export async function chatPeople(accessToken?: string): Promise<{ people: { userId: string; name: string; role: string }[] }> {
+  return fetchWithAuth(`${API_BASE}/chat/people`, await tokenOr(accessToken));
+}
+export async function chatDirect(userId: string, accessToken?: string): Promise<{ roomId: string; name: string }> {
+  return fetchWithAuth(`${API_BASE}/chat/direct`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ userId }) });
+}
+
 export async function getStockOutDaysToExplain(accessToken?: string): Promise<{ reports: OutOfStockDay[]; reasons: { value: string; label: string }[] }> {
   return fetchWithAuth(`${API_BASE}/stock-out-day/mine`, await tokenOr(accessToken));
 }

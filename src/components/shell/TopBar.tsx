@@ -5,7 +5,7 @@
 // Right side: Refresh (from 768 px; phones pull down), Ask Bunny (owner and managers), the bell with the unread count (opens the Inbox) and
 // the avatar (opens the Account sheet; on the rail / in the sidebar from 768 px).
 import type { ReactNode } from 'react';
-import { Bell, RefreshCw } from 'lucide-react';
+import { Bell, MessageCircle, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../ui/page-header';
 import { IconButton } from '../ui/icon-button';
 import { InitialsAvatar } from '../ui/avatar';
@@ -32,6 +32,8 @@ export function TopBar({
   onAccount,
   onRefresh,
   refreshing = false,
+  onChat,
+  chatUnread = 0,
 }: {
   title: ReactNode;
   caption?: ReactNode;
@@ -53,6 +55,11 @@ export function TopBar({
    *  only: phones pull the screen down instead (PullToRefresh). */
   onRefresh?: () => void;
   refreshing?: boolean;
+  /** Team chat (owner, 1 Nov 2026): the button, with unread messages; none on the chat page. */
+  onChat?: () => void;
+  chatUnread?: number;
+  /** A made-up preview: no live chat count. */
+  preview?: boolean;
 }) {
   const { t } = useT();
   const actions = (
@@ -66,6 +73,7 @@ export function TopBar({
           icon={<img src="/bunny-logo.png" alt="" className="size-7 object-contain" draggable={false} />}
         />
       )}
+      {onChat && <IconButton label={t('nav.chat')} icon={<MessageCircle />} badge={chatUnread} onClick={onChat} />}
       {showBell && <IconButton label={t('nav.inbox')} data-tour="inbox" icon={<Bell />} badge={unread} onClick={onInbox} />}
       <IconButton
         label={t('account.yours')}
