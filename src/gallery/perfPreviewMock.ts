@@ -92,11 +92,38 @@ function setWho(b: { slot: string; name: string; confirm?: string }) {
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+// The owner's "Right now" card (server liveOrders.ts): an evening with 3 open orders, one waiting
+// long, and last night's closing check.
+function liveNow() {
+  const ago = (min: number) => new Date(Date.now() - min * 60000).toISOString();
+  const orders = [
+    { key: 'sn:ZT-1907', type: 'HomeDelivery', serial: 'ZT-1907', table: null, placedAt: ago(31), ageMin: 31, total: 412, stuck: true, old: false,
+      items: [{ name: 'Chicken Steamed Momos', qty: 2, total: 240 }, { name: 'Peri Peri Momos', qty: 1, total: 132 }, { name: 'Coke', qty: 1, total: 40 }] },
+    { key: 'sn:58', type: 'DineIn', serial: '58', table: 'T3', placedAt: ago(18), ageMin: 18, total: 300, stuck: false, old: false,
+      items: [{ name: 'Veg Momos', qty: 3, total: 300 }] },
+    { key: 'sn:59', type: 'TakeAway', serial: '59', table: null, placedAt: ago(4), ageMin: 4, total: 180, stuck: false, old: false,
+      items: [{ name: 'Chicken Kurkure Momos', qty: 1, total: 180 }] },
+  ];
+  const findings = [
+    { kind: 'not_billed', key: 'sn:41', type: 'DineIn', serial: '41', table: 'T2', placedAt: '2026-10-31T14:40:00Z', firstSeen: '2026-10-31T14:42:00Z', lastSeen: '2026-10-31T15:21:00Z', total: 360,
+      items: [{ name: 'Chicken Momos', qty: 2, total: 240 }, { name: 'Lemon Soda', qty: 2, total: 120 }] },
+    { kind: 'billed_less', key: 'sn:47', type: 'TakeAway', serial: '47', table: null, placedAt: '2026-10-31T15:10:00Z', firstSeen: '2026-10-31T15:12:00Z', lastSeen: '2026-10-31T15:18:00Z', total: 250, billed: 150,
+      items: [{ name: 'Paneer Momos', qty: 2, total: 250 }] },
+  ];
+  return {
+    date: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), open: true,
+    stores: [{ storeId: 'STORE-1', storeName: 'Bunny Momos 1', open: 3, openTotal: 892, stuck: 1, orders, lastPoll: ago(1), error: null,
+      check: { date: '2026-10-31', at: '2026-10-31T18:15:00Z', seen: 56, matched: 55, findings,
+        summary: { notBilled: 1, notBilledTotal: 360, billedLess: 1, lessBy: 100, openAtClose: 0, openTotal: 0 } } }],
+  };
+}
+
 export function installPerfPreviewMock() {
   const real = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.includes('/cctv/activity')) return json(activity);
+    if (url.includes('/live-orders/now')) return json(liveNow());
     if (url.includes('/cctv/whois') && init?.method === 'POST') return json(setWho(JSON.parse(String(init.body || '{}'))));
     if (url.includes('/cctv/whois')) return json(whois());
     if (url.includes('/cctv/cameras') && !init?.method) return json({ cameras, canManage: true });

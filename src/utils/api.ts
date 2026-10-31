@@ -891,6 +891,23 @@ export interface RepairAlert {
   reportedBy: string; reportedAt: string; fixedBy?: string; fixedAt?: string; fixNote?: string; repairCost?: number | null;
 }
 
+// Live orders from Ciferon (server liveOrders.ts): what is open in each store now, and the closing
+// check of orders that never became a bill (owner, 31 Oct 2026).
+export interface LiveItem { name: string; qty: number; total: number }
+export interface LiveOrderNow { key: string; type: string; serial: string | null; table: string | null; placedAt: string | null; ageMin: number; total: number; items: LiveItem[]; stuck: boolean; old: boolean }
+export interface LiveCheckFinding { kind: 'not_billed' | 'billed_less' | 'open_at_close'; key: string; type: string; serial: string | null; table: string | null; placedAt: string | null; firstSeen: string; lastSeen: string; total: number; billed?: number; items: LiveItem[] }
+export interface LiveStoreNow {
+  storeId: string; storeName: string;
+  open: number; openTotal: number; stuck: number; orders: LiveOrderNow[]; lastPoll: string | null; error: string | null;
+  check: null | { date: string; at: string; seen: number; matched: number; findings: LiveCheckFinding[];
+    summary: { notBilled: number; notBilledTotal: number; billedLess: number; lessBy: number; openAtClose: number; openTotal: number } };
+}
+export interface LiveOrdersNow { date: string; open: boolean; stores: LiveStoreNow[] }
+
+export async function getLiveOrdersNow(fresh = false, accessToken?: string): Promise<LiveOrdersNow> {
+  return fetchWithAuth(`${API_BASE}/live-orders/now${fresh ? '?fresh=1' : ''}`, await tokenOr(accessToken));
+}
+
 export async function getRepairAlerts(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<RepairAlert[]> {
   const data = await fetchWithAuth(`${API_BASE}/repair-alerts?status=${status}`, await tokenOr(accessToken));
   return data.alerts || [];

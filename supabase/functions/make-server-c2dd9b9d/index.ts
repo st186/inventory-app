@@ -39,6 +39,7 @@ import {
 } from './events.ts';
 import { registerRecipeRoutes } from './recipes.ts';
 import * as stockCheck from './stockCheck.ts';
+import * as liveOrders from './liveOrders.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -15839,6 +15840,233 @@ app.get('/make-server-c2dd9b9d/stock-check', async (c) => {
   for (let d = from; d <= to; d = addDaysToDateString(d, 1)) dates.push(d);
   const days = (await kv.mget(dates.map((d) => `stock-check:${d}`))).filter(Boolean);
   return c.json({ from, to, days });
+});
+
+// ============================================
+// LIVE ORDERS (owner, 31 Oct 2026: "Build 1, 2 and 3") - liveOrders.ts
+// ============================================
+// Ciferon's admin Live Status list (GET Api/OrderReport/GetLiveOrderDetail, the same admin login
+// as OrderReport/Sale) every 3 minutes from 3 PM to 11:45 PM IST (pg_cron live-orders):
+//   1. at 11:45 PM (live-orders-close, before Ciferon's 11:50 PM day close) each order seen open is
+//      checked against the day's bills: never billed, billed for less, or still open -> the owner
+//   2. an order open past its limit -> the store incharge (order_stuck, urgent: escalates)
+//   3. GET /live-orders/now -> the "Right now" card on the owner's Home
+// Saved per store and day as live-orders:{storeId}:{date} and live-orders-check:{storeId}:{date}.
+const LIVE_FROM_MIN = 15 * 60;
+const LIVE_TO_MIN = 23 * 60 + 45;
+function istMinutesNow(): number {
+  const now = getNowIST();
+  return parseInt(now.substring(11, 13), 10) * 60 + parseInt(now.substring(14, 16), 10);
+}
+
+// One admin login kept while this server copy is warm (each poll would otherwise log in again).
+let ciferonAdminSession: { authkey: string; at: number } | null = null;
+async function ciferonAdminAuth(fresh = false): Promise<string> {
+  if (!fresh && ciferonAdminSession && Date.now() - ciferonAdminSession.at < 20 * 60 * 1000) return ciferonAdminSession.authkey;
+  const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+  const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+  if (!adminEmail || !adminPassword) throw new Error('CIFERON_ADMIN_EMAIL/PASSWORD not configured');
+  const loginRes = await fetch('https://api.ciferon.com/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ UserName: adminEmail, Password: adminPassword }),
+  });
+  if (!loginRes.ok) throw new Error(`Ciferon login returned HTTP ${loginRes.status}`);
+  const loginData = await loginRes.json();
+  const authkey = loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey || loginData?.AuthKey || loginData?.token || loginData?.Token;
+  if (!authkey) throw new Error('Ciferon login did not return an authkey');
+  ciferonAdminSession = { authkey, at: Date.now() };
+  return authkey;
+}
+
+async function ciferonAdminGet(store: any, url: string): Promise<any> {
+  const call = async (authkey: string) => fetch(url, {
+    headers: { Authorization: `Bearer ${authkey}`, StoreId: String(store.ciferonStoreId), BrandId: '0', Accept: 'application/json' },
+  });
+  let res = await call(await ciferonAdminAuth());
+  if (res.status === 401 || res.status === 403) res = await call(await ciferonAdminAuth(true));
+  if (!res.ok) throw new Error(`Ciferon returned HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data?.IsSuccess) throw new Error('Ciferon responded with IsSuccess=false');
+  return data;
+}
+
+// The day's bills (OrderReport/Sale, as Step D of runPosSync): only orders that weren't cancelled.
+async function fetchBilledOrders(store: any, date: string): Promise<liveOrders.FinalOrder[]> {
+  const day = new Date(`${date}T00:00:00Z`).toUTCString();
+  const params = new URLSearchParams({
+    StartDate: day, EndDate: day, ReportType: 'SaleReport', IsAllVisible: 'true', IsSplitPaymentMode: 'false', SaleOrderType: 'undefined',
+    IsCancel: 'false', IsComplementary: 'false', IsPending: 'false', IsSettle: 'false', IsInit: 'false', PaymentModeIds: 'undefined',
+    StoreIds: 'undefined', PaymentFilter: 'undefined', IsEdit: 'false', IsReprint: 'false', IsCustomerGst: 'false', IsDiscount: 'false',
+    CompanyBrandId: '0', IsDeliveryApp: 'false', TerminalId: '0',
+  });
+  const data = await ciferonAdminGet(store, `https://api.ciferon.com/api/OrderReport/Sale?${params.toString()}`);
+  const all = data.Result?.OrderList || [];
+  const sameDay = all.filter((o: any) => { const d = getCiferonOrderEntryDateIST(o); return !d || d === date; });
+  if (all.length > 0 && sameDay.length === 0) throw new Error(`OrderReport/Sale returned ${all.length} orders, none dated ${date}`);
+  return sameDay.map((o: any) => ({
+    orderId: o.OrderId ?? null, serialNo: o.SerialNo ?? null, externalId: o.ExternalId ?? null,
+    grandTotal: Number(o.GrandTotal) || 0, orderType: o.SaleOrderType || null, entryDate: o.EntryDate || null,
+  }));
+}
+
+const liveStores = async () => (await kv.getByPrefix('store:'))
+  .filter((s: any) => s?.id && s.ciferonStoreId && s.status !== 'inactive' && s.status !== 'closed');
+
+// Tells the store incharge (else the operations managers) about orders open too long, once each.
+async function alertStuckOrders(store: any, date: string, stuck: liveOrders.SeenOrder[]): Promise<number> {
+  const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+  let to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+  if (!to.length) to = staff.filter((u: any) => u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation));
+  let sent = 0;
+  for (const o of stuck) {
+    const onceKey = `live-order-alert:${store.id}:${date}:${o.key}`;
+    if (await kv.get(onceKey)) continue;
+    const mins = liveOrders.ageMin(o, Date.now());
+    const what = [`${liveOrders.typeWord(o.type)} order`, o.serial ? `#${o.serial}` : '', o.table ? `(table ${o.table})` : ''].filter(Boolean).join(' ');
+    const title = `Order open ${mins} min: ${what}`;
+    const items = liveOrders.itemsLine(o.items);
+    const message = `${store.name}: ${what}, Rs ${Math.round(o.total)}, has been open in Ciferon for ${mins} minutes${items ? ` - ${items}` : ''}. If it has gone out, settle it in Ciferon; if it is still being made, hurry it along.`;
+    for (const u of to) await notifyUser(u.authUserId, 'order_stuck', title, message, o.key, date).catch(() => undefined);
+    await kv.set(onceKey, { at: new Date().toISOString(), mins, to: to.map((u: any) => u.id) });
+    sent++;
+  }
+  return sent;
+}
+
+// One look at each store's open orders, added to the day. Only the cron's look sends alerts; the
+// owner's pull down only refreshes the list.
+async function pollLiveOrders(opts: { alert: boolean; storeIds?: string[] }) {
+  const date = getTodayIST();
+  const nowIso = new Date().toISOString();
+  const results: any[] = [];
+  for (const store of await liveStores()) {
+    if (opts.storeIds && !opts.storeIds.includes(store.id)) continue;
+    const key = `live-orders:${store.id}:${date}`;
+    const prev = await kv.get(key) as liveOrders.LiveDay | null;
+    try {
+      const { orders, fields } = liveOrders.parseLive(await ciferonAdminGet(store, 'https://api.ciferon.com/Api/OrderReport/GetLiveOrderDetail'));
+      const day = liveOrders.mergePoll(prev, { storeId: store.id, date }, orders, nowIso, fields);
+      let alerted = 0;
+      const settings = (await kv.get('live-orders:settings')) as { alerts?: boolean } | null;
+      if (opts.alert && settings?.alerts !== false) {
+        const stuck = liveOrders.stuckToAlert(day, Date.now());
+        if (stuck.length) {
+          alerted = await alertStuckOrders(store, date, stuck);
+          for (const o of stuck) day.orders[o.key] = { ...day.orders[o.key], alertedAt: nowIso };
+        }
+      }
+      await kv.set(key, day);
+      const view = liveOrders.nowView(day, Date.now());
+      results.push({ store: store.name, open: view.open, openTotal: view.openTotal, stuck: view.stuck, alerted });
+    } catch (error: any) {
+      await kv.set(key, { ...(prev || { storeId: store.id, date, orders: {}, lastPoll: null, polls: 0 }), error: error?.message || String(error) }).catch(() => undefined);
+      results.push({ store: store.name, error: error?.message || String(error) });
+    }
+  }
+  return results;
+}
+
+app.post('/make-server-c2dd9b9d/cron/live-orders', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  const minutes = istMinutesNow();
+  if (c.req.query('force') !== '1' && (minutes < LIVE_FROM_MIN || minutes >= LIVE_TO_MIN)) return c.json({ success: true, skipped: true });
+  try {
+    return c.json({ success: true, stores: await pollLiveOrders({ alert: c.req.query('alert') !== '0' }) });
+  } catch (error: any) {
+    console.error('Error checking live orders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// 11:45 PM: a last look, then every order seen today against the day's bills. ?date= checks another
+// day's saved orders; ?dry=1 neither saves nor tells anyone.
+app.post('/make-server-c2dd9b9d/cron/live-orders-close', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const today = getTodayIST();
+    const q = c.req.query('date') || '';
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : today;
+    const dry = c.req.query('dry') === '1';
+    if (date === today && !dry && !inPosQuietHours()) await pollLiveOrders({ alert: false });
+    const nowIso = new Date().toISOString();
+    const results: any[] = [];
+    const owners = (await staffForNotifications()).filter((u: any) => u.role === 'cluster_head' && u.authUserId && u.status !== 'inactive');
+    for (const store of await liveStores()) {
+      const day = await kv.get(`live-orders:${store.id}:${date}`) as liveOrders.LiveDay | null;
+      if (!day || !Object.keys(day.orders || {}).length) { results.push({ store: store.name, seen: 0 }); continue; }
+      let check: liveOrders.CloseCheck;
+      try {
+        check = liveOrders.closeCheck(day, await fetchBilledOrders(store, date), nowIso);
+      } catch (error: any) {
+        results.push({ store: store.name, error: `Bills not read: ${error?.message || error}` });
+        continue;
+      }
+      const s = liveOrders.checkSummary(check.findings);
+      results.push({ store: store.name, seen: check.seen, matched: check.matched, bills: check.finals, ...s });
+      if (dry) continue;
+      await kv.set(`live-orders-check:${store.id}:${date}`, check);
+      const onceKey = `live-orders-check-sent:${store.id}:${date}`;
+      if (!check.findings.length || await kv.get(onceKey)) continue;
+      const parts = [
+        s.notBilled ? `${s.notBilled} order${s.notBilled > 1 ? 's were' : ' was'} open but never became a bill (Rs ${s.notBilledTotal})` : '',
+        s.billedLess ? `${s.billedLess} ${s.billedLess > 1 ? 'were' : 'was'} billed Rs ${s.lessBy} less than ${s.billedLess > 1 ? 'they' : 'it'} came to` : '',
+        s.openAtClose ? `${s.openAtClose} ${s.openAtClose > 1 ? 'are' : 'is'} still open in Ciferon (Rs ${s.openTotal})` : '',
+      ].filter(Boolean);
+      const message = `${store.name}, ${date}: ${parts.join(', ')}. Open Home > Right now to see which.`;
+      for (const u of owners) await notifyUser(u.authUserId, 'orders_unbilled', `Orders to check: ${store.name}`, message, undefined, date).catch(() => undefined);
+      await kv.set(onceKey, { at: nowIso, findings: check.findings.length });
+    }
+    console.log(`Live orders closing check ${date}:`, JSON.stringify(results));
+    return c.json({ success: true, date, stores: results });
+  } catch (error: any) {
+    console.error('Error running the live orders closing check:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// GET /live-orders/now - the owner and operations managers: what is open now in each store, and the
+// latest closing check (today's, else last night's). ?fresh=1 (a pull down) looks again when the last
+// look is over a minute old.
+app.get('/make-server-c2dd9b9d/live-orders/now', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  const role = auth.user.user_metadata?.role;
+  const designation = auth.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (role !== 'cluster_head' && !isOperationsManager) return c.json({ error: 'Only the owner and operations see live orders' }, 403);
+  try {
+    const date = getTodayIST();
+    const minutes = istMinutesNow();
+    const open = minutes >= LIVE_FROM_MIN && minutes < LIVE_TO_MIN;
+    const stores = await liveStores();
+    const keys = stores.map((s: any) => `live-orders:${s.id}:${date}`);
+    if (c.req.query('fresh') === '1' && open) {
+      const prev = await kv.mget(keys) as (liveOrders.LiveDay | null)[];
+      const stale = stores.filter((_: any, i: number) => !prev[i]?.lastPoll || Date.now() - Date.parse(prev[i]!.lastPoll!) > 60 * 1000);
+      if (stale.length) await pollLiveOrders({ alert: false, storeIds: stale.map((s: any) => s.id) }).catch(() => undefined);
+    }
+    const days = await kv.mget(keys) as (liveOrders.LiveDay | null)[];
+    const yesterday = addDaysToDateString(date, -1);
+    const checks = await kv.mget(stores.flatMap((s: any) => [`live-orders-check:${s.id}:${date}`, `live-orders-check:${s.id}:${yesterday}`])) as (liveOrders.CloseCheck | null)[];
+    return c.json({
+      date, open,
+      stores: stores.map((s: any, i: number) => {
+        const check = checks[2 * i] || checks[2 * i + 1] || null;
+        return {
+          storeId: s.id, storeName: s.name,
+          ...liveOrders.nowView(days[i], Date.now()),
+          error: days[i]?.error || null,
+          check: check ? { ...check, summary: liveOrders.checkSummary(check.findings) } : null,
+        };
+      }),
+    });
+  } catch (error: any) {
+    console.error('Error reading live orders:', error);
+    return c.json({ error: error.message }, 500);
+  }
 });
 
 // ============================================

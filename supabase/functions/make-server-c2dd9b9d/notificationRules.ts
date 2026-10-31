@@ -20,6 +20,7 @@ const URGENT = new Set([
   'stock_count_reminder', // the month-end momo count not entered yet (owner, 29 Oct 2026: urgent, up to 5 times)
   'compliance_overdue', // a licence, safety check or certificate past its due date (compliance.ts)
   'cctv_intruder', // a camera saw someone after working hours, nobody checked in there (cctv.ts)
+  'order_stuck', // an order open in Ciferon too long, to the store incharge (liveOrders.ts)
 ]);
 const ACTION = new Set([
   'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'expense_approval', 'expense_rejected', 'opening_late', 'opening_pick', 'audit_assigned', 'audit_report', 'supply_low', 'shopping_list', 'shopping_done', 'shift_checkin', 'delivery_incoming',
@@ -30,6 +31,7 @@ const ACTION = new Set([
   'cctv_ppe_still', // the same, 3 camera checks in a row (cctv.ts, roundupRules.ts)
   'asset_missing', 'equipment_check_due', // lost equipment, and the 3-monthly equipment check (assets.ts)
   'burger_check', // burger buns bought and burgers sold don't add up (burgerCheck.ts)
+  'orders_unbilled', // the closing check: orders seen open that never became a bill, or a smaller one (liveOrders.ts)
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
@@ -80,6 +82,7 @@ export const oneRowPerRecord = (type: string) => type.startsWith('production_req
 const OWNER_BUZZ = new Set([
   'expense_approval', 'cash_topup_request', 'loan_requested', 'discrepancy_request', 'production_cash_discrepancy_request',
   'leave_pending', 'stock_request_missed', 'complaint_answered', 'audit_report', 'test_notification',
+  'orders_unbilled',
 ]);
 export const ownerBuzzes = (type: string) => notificationCategory(type) === 'urgent' || OWNER_BUZZ.has(type);
 // Reminders that come back by themselves on a timetable aren't also sent to the owner as "Not seen
@@ -114,6 +117,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   asset_missing: 'যন্ত্রপাতি হারিয়েছে', equipment_check_due: 'যন্ত্রপাতি মিলিয়ে দেখুন', equipment_check_done: 'যন্ত্রপাতি মেলানো হয়েছে',
   opening_due: 'দোকান খোলার চেকলিস্ট', opening_late: 'চেকলিস্ট বাকি আছে',
   supply_low: 'জিনিস কম আছে', supply_sorted: 'জিনিসের খবর', shopping_list: 'কেনাকাটার তালিকা',
+  order_stuck: 'অর্ডার অনেকক্ষণ খোলা পড়ে আছে',
 };
 
 export const DEFAULT_PREFS = { quietOn: true, quietFrom: '23:00', quietTo: '07:00', muted: {} as Partial<Record<NotificationCategory, boolean>>, digest: false };

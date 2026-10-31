@@ -33,6 +33,7 @@ import { fmt12 } from '../workplace/workplaceUtils';
 import { useOwnerHome } from './useOwnerHome';
 import { useFocusProfile } from './HomeShortcuts';
 import { TeamLeaveRow } from './TeamLeaveRow';
+import { LiveOrdersCard, liveCardShown, useLiveOrders } from './LiveOrdersCard';
 import { productionApprovalsPending, salesApprovalsPending } from './homeFigures';
 
 export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) {
@@ -83,6 +84,8 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
   const x = home.extras;
   const opening = useOpeningToday();
   const [openingOpen, setOpeningOpen] = useState(false);
+  // What is open in Ciferon now and the closing check (server liveOrders.ts): the owner's Home only.
+  const live = useLiveOrders(variant === 'owner' && nav.perms.isClusterHead, token);
 
   const attention = useMemo(() => {
     const items: AttentionItem[] = [];
@@ -313,6 +316,11 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
             }}
           />
         </div>
+        {liveCardShown(live.data) && (
+          <div className="lg:col-span-12">
+            <LiveOrdersCard data={live.data} />
+          </div>
+        )}
 
         <div className="lg:col-span-6">
           <AttentionInbox items={attention} loading={x.loading && attention.length === 0} />
