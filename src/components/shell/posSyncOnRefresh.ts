@@ -10,6 +10,11 @@ import { triggerPosSync } from '../../utils/api';
 import { useT } from '../../utils/i18n';
 import type { Permissions } from './navConfig';
 
+// Only the screens that show sales (owner, 31 Oct 2026: "when I pull down the screen in other
+// screens does it still try to sync the pos data?" - Yes, limit it): Home, Money > Sales, and the
+// stock requests page (the store's stock on hand there uses the day's item sales).
+export const POS_SYNC_PATHS = new Set(['home', 'money/sales', 'stock/requests', 'production/requests']);
+
 const OPENS_MIN = 15 * 60;
 const PAUSE_MIN = 23 * 60 + 50;
 const WAIT_MS = 8000; // usually 3-5 s; a slow POS finishes after the arrow has gone

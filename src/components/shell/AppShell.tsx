@@ -16,7 +16,7 @@ import { ShellProvider, type ShellContextValue, type ShellUser } from './ShellCo
 import { TopBar } from './TopBar';
 import { PullToRefresh } from './PullToRefresh';
 import { sendRefresh } from './refreshSignal';
-import { reloadWithSales, usePosSyncOnRefresh } from './posSyncOnRefresh';
+import { POS_SYNC_PATHS, reloadWithSales, usePosSyncOnRefresh } from './posSyncOnRefresh';
 import { BottomNav } from './BottomNav';
 import { NavRail } from './NavRail';
 import { Sidebar } from './Sidebar';
@@ -203,7 +203,8 @@ function ShellFrame(props: AppShellProps) {
   const columnRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const { onRefresh } = props;
-  const posSync = usePosSyncOnRefresh(nav.perms, user.accessToken, !!preview);
+  const posSyncAnywhere = usePosSyncOnRefresh(nav.perms, user.accessToken, !!preview);
+  const posSync = POS_SYNC_PATHS.has(route.path) ? posSyncAnywhere : undefined;
   // The button spins while the POS sync runs too (App's `refreshing` is only the reload).
   const [salesBusy, setSalesBusy] = useState(false);
   const refreshButton = useCallback(async () => {
