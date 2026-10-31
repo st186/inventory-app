@@ -848,7 +848,13 @@ async function fetchRecalibrationAndCalculateOpeningBalance() {
  : isInWindow(item?.date, periodRange)
  ), [overheadData, timeFilter, periodRange]);
 
- const timeFilteredFixedCostsData = useMemo(() => filterByTimeRange(fixedCostsData), [fixedCostsData, periodRange]);
+ // Rent and electricity count in the month they are for (forMonth, asked since 28 Oct 2026): October's
+ // rent paid on 5 November is an October cost (owner, 1 Nov 2026). Other bills go by their date.
+ const timeFilteredFixedCostsData = useMemo(() => (fixedCostsData || []).filter((item: any) =>
+ (item?.category === 'rent' || item?.category === 'electricity') && item.forMonth
+ ? monthInPeriod(item.forMonth, timeFilter, periodRange)
+ : isInWindow(item?.date, periodRange)
+ ), [fixedCostsData, timeFilter, periodRange]);
 
  // Payouts with a forMonth set (backlogged/late salaries, e.g. paid on the 5th for the prior
  // month) are bucketed by forMonth instead of the payment date, mirroring expenseMonth above.

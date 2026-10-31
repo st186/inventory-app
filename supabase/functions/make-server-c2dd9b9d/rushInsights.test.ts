@@ -1,7 +1,7 @@
 // Tests for rushInsights.ts. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/rushInsights.test.ts
 import assert from 'node:assert/strict';
-import { forecastDays, ordersOfDay, parseDish, plateBuffer, rushMix, rushWindows, slotLabel, slotOf, SLOTS, steamerPlan, trendFactor, weekdayProfiles } from './rushInsights.ts';
+import { forecastDays, ordersOfDay, parseDish, plateBuffer, rushMix, rushWindows, slotLabel, slotOf, SLOTS, steamerPlan, steamNudges, trendFactor, weekdayProfiles } from './rushInsights.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -82,6 +82,14 @@ test('Saturday profile: the rush, steamer plates, channels', () => {
   assert.equal(weekdayProfiles(days)[1].days, 0);
 });
 
+test('an order known only to the hour is spread over its four 15 minutes', () => {
+  const hourOnly = ['2026-09-06', '2026-09-13'].map((date) => ordersOfDay({ date, orders: Array.from({ length: 8 }, () => ({ orderHourIST: 19, orderType: 'DineIn', rawItems: [{ productName: 'Steamed Chicken Momos', quantity: 1 }] })) }));
+  const p = weekdayProfiles(hourOnly)[0];
+  assert.deepEqual(p.orders.slice(16, 20), [2, 2, 2, 2]);
+  assert.equal(p.orders[15], 0);
+  assert.deepEqual(p.steamer.chicken.slice(16, 20), [2, 2, 2, 2]);
+});
+
 test('what goes out in the rush', () => {
   const profiles = weekdayProfiles(days);
   const mix = rushMix(days, profiles);
@@ -119,6 +127,20 @@ test('the plates to keep ready', () => {
   // Momos that stay good for 30 minutes: twice the window, bigger batches, half as many.
   const longer = steamerPlan(weekdayProfiles(days)[6], 1, { steamMin: 12, holdMin: 30, serviceLevel: 0.8 });
   assert.equal(longer.runs.find((r) => r.filling === 'chicken')!.batches, 3);
+});
+
+test('steam now: the rush push, and getting ready only when well ahead', () => {
+  const plan = steamerPlan(weekdayProfiles(days)[6], 1);
+  const nudges = steamNudges(plan);
+  assert.equal(nudges.length, 1); // chicken's stretch starts with the rush: one push
+  assert.equal(nudges[0].at, '18:48');
+  assert.equal(nudges[0].title, 'Rush at 7:00 PM: steam now');
+  assert.match(nudges[0].message, /^Put 10 chicken, \d veg plates in the steamer now, ready by 7:00 PM\. A fresh batch every 15 min till 8:30 PM/);
+  // A stretch that starts an hour before the rush adds a getting-ready push first.
+  const early = { ...plan, runs: plan.runs.map((r) => (r.filling === 'chicken' ? { ...r, from: '18:00', usual: 2 } : r)) };
+  assert.deepEqual(steamNudges(early).map((n) => n.at), ['17:48', '18:48']);
+  // No real rush: nothing.
+  assert.deepEqual(steamNudges({ ...plan, runs: plan.runs.map((r) => ({ ...r, keep: 1 })) }), []);
 });
 
 console.log(`rushInsights: ${passed} tests passed`);

@@ -224,7 +224,9 @@ export function ownerMonthProfit(input: MonthProfitInput): MonthProfit {
   const inventory = (input.inventory || []).filter((i) => inWindow(i?.date, start, end) && inScopeCost(i));
   const overheads = (input.overheads || []).filter((i) =>
     (i?.category === 'personal_expense' && i.expenseMonth ? monthInWindow(i.expenseMonth, start, end) : inWindow(i?.date, start, end)) && inScopeCost(i));
-  const fixed = (input.fixedCosts || []).filter((i) => inWindow(i?.date, start, end) && inScopeCost(i));
+  // Rent and electricity by the month they are for (owner, 1 Nov 2026: October's rent paid in November).
+  const fixed = (input.fixedCosts || []).filter((i) =>
+    ((i?.category === 'rent' || i?.category === 'electricity') && i.forMonth ? monthInWindow(i.forMonth, start, end) : inWindow(i?.date, start, end)) && inScopeCost(i));
 
   const pick = (items: Row[], amountOf: (x: Row) => number) => (items || [])
     .filter((x) => x?.date && isSpreadCategory(x.category || '') && inScopeCost(x))

@@ -3107,6 +3107,8 @@ const expenseReviewDeps: ExpenseReviewDeps = {
   rows: (prefix, range) => getAllByPrefixWithRetry(prefix, range),
   verifyUser,
   notifyUser: (authUserId, type, title, message, relatedId, relatedDate, quickAction) => notifyUser(authUserId, type, title, message, relatedId, relatedDate, quickAction),
+  // Bill photos are read and checked against the entry (billCheck.ts).
+  storage: supabase.storage,
 };
 
 // From 1 November 2026 staff food is Rs 500 a month in salary (owner, 28 Oct): meals are no longer
@@ -16003,6 +16005,8 @@ async function pollLiveOrders(opts: { alert: boolean; storeIds?: string[] }) {
     // The cron's look also notes which items are switched off on Zomato and Swiggy, for the day's
     // out-of-stock report (onlineStock.trackStatus). Saved only when something changed.
     if (opts.alert) await trackOnlineStock(store, date, nowIso).catch((e) => console.error(`[online stock] ${store.name}:`, e?.message || e));
+    // And sends the store its "steam now" pushes when they're due (rushInsights.steamNudges).
+    if (opts.alert) await steamNudgeCheck(store, date).catch((e) => console.error(`[steam now] ${store.name}:`, e?.message || e));
   }
   return results;
 }
@@ -16405,6 +16409,47 @@ async function rushViewer(auth: any, storeId: string) {
 }
 const r2 = (x: number) => Math.round(x * 100) / 100;
 
+// The last `weeks` weeks of a store's bills as orders (to the minute where known), today left out.
+async function loadRushDays(store: any, today: string, weeks: number): Promise<{ days: rush.Day[]; dates: string[] }> {
+  const dates: string[] = [];
+  for (let i = 1; i <= weeks * 7; i++) dates.push(addDaysToDateString(today, -i));
+  const [records, times] = await Promise.all([
+    kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`)),
+    kv.mget(dates.map((d) => `order-times:${store.id}:${d}`)),
+  ]) as [any[], any[]];
+  const days = records.map((r, i) => (r ? rush.ordersOfDay({ date: dates[i], orders: r.orders || [] }, times[i]?.minutes || {}) : null)).filter((d): d is rush.Day => !!d);
+  return { days, dates };
+}
+
+// "Steam now" to the store before the rush (owner, 1 Nov 2026): today's plan is worked out once
+// (steam-plan:{store}:{date}), then each push goes to the store incharge and the store crew at its
+// time. Runs with the live-orders cron (3 PM - 11:45 PM), so pushes before 3 PM are skipped.
+async function steamNudgeCheck(store: any, date: string) {
+  const key = `steam-plan:${store.id}:${date}`;
+  let rec = await kv.get(key) as { date: string; nudges: rush.SteamNudge[]; sent: string[] } | null;
+  if (!rec) {
+    const { days } = await loadRushDays(store, date, 12);
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const profiles = rush.weekdayProfiles(days);
+    const plan = rush.steamerPlan(profiles[weekday], rush.trendFactor(days, weekday), await rushSettings(store.id));
+    rec = { date, nudges: rush.steamNudges(plan), sent: [] };
+    await kv.set(key, rec);
+  }
+  const now = istMinutesNow();
+  const due = rec.nudges.filter((n) => {
+    const m = Number(n.at.slice(0, 2)) * 60 + Number(n.at.slice(3, 5));
+    return now >= m && now < m + 10 && !rec!.sent.includes(n.at);
+  });
+  if (!due.length) return;
+  const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+  const to = staff.filter((u: any) => ['store_incharge', 'store_ops'].includes(u.designation) && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+  for (const n of due) {
+    for (const u of to) await notifyUser(u.authUserId, 'steam_now', n.title, `${store.name}: ${n.message}`, undefined, date).catch(() => undefined);
+    rec.sent.push(n.at);
+  }
+  await kv.set(key, rec);
+}
+
 // GET /insights/rush?storeId=&weeks=12&date= - the owner, operations, and the store's own incharge.
 app.get('/make-server-c2dd9b9d/insights/rush', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
@@ -16417,14 +16462,8 @@ app.get('/make-server-c2dd9b9d/insights/rush', async (c) => {
     if (!(await rushViewer(auth, store.id))) return c.json({ error: 'Not your store' }, 403);
     const weeks = Math.min(26, Math.max(2, Number(c.req.query('weeks')) || 12));
     const today = getTodayIST();
-    const dates: string[] = [];
-    for (let i = 1; i <= weeks * 7; i++) dates.push(addDaysToDateString(today, -i));
-    const [records, times, lives] = await Promise.all([
-      kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`)),
-      kv.mget(dates.map((d) => `order-times:${store.id}:${d}`)),
-      kv.mget([today, ...dates.slice(0, 13)].map((d) => `live-orders:${store.id}:${d}`)),
-    ]) as [any[], any[], (liveOrders.LiveDay | null)[]];
-    const days = records.map((r, i) => (r ? rush.ordersOfDay({ date: dates[i], orders: r.orders || [] }, times[i]?.minutes || {}) : null)).filter((d): d is rush.Day => !!d);
+    const { days, dates } = await loadRushDays(store, today, weeks);
+    const lives = await kv.mget([today, ...dates.slice(0, 13)].map((d) => `live-orders:${store.id}:${d}`)) as (liveOrders.LiveDay | null)[];
     const allOrders = days.flatMap((d) => d.orders);
     const profiles = rush.weekdayProfiles(days);
     const mix = rush.rushMix(days, profiles);

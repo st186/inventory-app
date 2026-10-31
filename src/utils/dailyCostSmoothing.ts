@@ -73,7 +73,8 @@ export function buildSmoothedCosts(opts: {
   const fixed = new Map<string, Map<string, number>>();
   for (const f of fixedCosts) {
     if (!SMOOTHED_FIXED_CATEGORIES.includes(f.category)) continue;
-    const month = (f.date || '').slice(0, 7);
+    // The month the bill is for (rent and electricity ask), else the month it was paid.
+    const month = f.forMonth || (f.date || '').slice(0, 7);
     if (!month) continue;
     const perCat = fixed.get(month) || new Map();
     perCat.set(f.category, (perCat.get(f.category) || 0) + (f.amount || 0));

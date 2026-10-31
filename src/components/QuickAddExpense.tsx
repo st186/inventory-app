@@ -475,7 +475,8 @@ export function QuickAddExpense({
     setIsSubmitting(true);
     try {
       // The bill photo goes up first; its path is saved with the expense.
-      const billPhotoPath = paperwork && billPhoto ? await uploadBill(billPhoto) : null;
+      // Any expense may carry its bill; the server reads it and checks it against the entry (billCheck.ts).
+      const billPhotoPath = billPhoto ? await uploadBill(billPhoto) : null;
       const paperworkFields = {
         ...(billPhotoPath ? { billPhotoPath } : {}),
         ...(serviceKind ? { repair: { ...repairInfo, machine: repairInfo.machine.trim(), fault: repairInfo.fault.trim() } } : {}),
@@ -814,7 +815,9 @@ export function QuickAddExpense({
           <Callout tone="warning" title="Meals aren't expenses any more">{MEALS_STOPPED_TEXT}</Callout>
         )}
         {serviceKind && <RepairFields kind={serviceKind} place={repairPlace} value={repairInfo} onChange={setRepairInfo} />}
-        {paperwork && <BillPhotoField value={billPhoto} onChange={setBillPhoto} required={billRequired} />}
+        {/* Every expense can have its bill photo (owner, 1 Nov 2026: validate the bills); repairs,
+            labour and equipment above ₹500 must. */}
+        {!!currentCategory && <BillPhotoField value={billPhoto} onChange={setBillPhoto} required={billRequired} />}
         {needsOwnerOk && (
           <Callout tone="info" title="The owner will be asked to OK this">{`Repairs, labour and equipment above ${formatINR(APPROVAL_ABOVE)} wait for the owner's OK. It is saved and counted now.`}</Callout>
         )}

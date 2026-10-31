@@ -155,11 +155,16 @@ export function weekdayProfiles(days: Day[]): WeekdayProfile[] {
       const st = Object.fromEntries(FILLINGS.map((f) => [f, zeros()])) as Record<Filling, number[]>;
       const ch: Record<Channel, number[]> = { counter: zeros(), zomato: zeros(), swiggy: zeros() };
       for (const ord of d.orders) {
-        const i = slotOf(ord.min);
-        if (i < 0) continue;
-        o[i]++;
-        ch[ord.channel][i]++;
-        for (const x of ord.dishes) if (x.dish.steamer) for (const f of FILLINGS) st[f][i] += plates(x.dish, x.qty, f);
+        // An order known only to the hour counts a quarter in each of its hour's four 15 minutes
+        // (all of it at :30 made a false spike: "15 chicken plates at 7:30", 1 Nov 2026).
+        const hourStart = Math.floor(ord.min / 60) * 60;
+        const parts = ord.exact ? [[slotOf(ord.min), 1]] : [0, 15, 30, 45].map((m) => [slotOf(hourStart + m), 0.25]);
+        for (const [i, w] of parts) {
+          if (i < 0) continue;
+          o[i] += w;
+          ch[ord.channel][i] += w;
+          for (const x of ord.dishes) if (x.dish.steamer) for (const f of FILLINGS) st[f][i] += plates(x.dish, x.qty, f) * w;
+        }
       }
       return { o, st, ch, total: d.orders.length };
     });
@@ -294,4 +299,41 @@ export function steamerPlan(profile: WeekdayProfile, factor: number, settings: S
   }
   runs.sort((a, b) => a.from.localeCompare(b.from) || FILLINGS.indexOf(a.filling) - FILLINGS.indexOf(b.filling));
   return { settings: { ...settings, holdMin: hold }, slots, runs };
+}
+
+// ---- "Steam now" to the store (owner, 1 Nov 2026: yes to a push before each predicted rush) ----
+export type SteamNudge = { at: string; title: string; message: string };
+const FILLING_NAME: Record<Filling, string> = { chicken: 'chicken', chicken_cheese: 'chicken cheese', veg: 'veg', paneer: 'paneer', corn_cheese: 'corn cheese' };
+const toMin = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+const toHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const clock12 = (hhmm: string) => { const m = toMin(hhmm), h = Math.floor(m / 60); return `${h % 12 || 12}:${String(m % 60).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`; };
+
+/** At most two pushes a day, each steamMin before it's needed: the rush (every filling's plates for
+ *  the main filling's busy part), and, when the main filling needs plates ready well before that
+ *  (half an hour or more, from 4 PM), getting ready for it. Nothing on a day without a real rush
+ *  (fewer than 2 plates at the most). */
+export function steamNudges(plan: ReturnType<typeof steamerPlan>): SteamNudge[] {
+  const { steamMin, holdMin } = plan.settings;
+  if (!plan.runs.length) return [];
+  const main = [...plan.runs].sort((a, b) => b.keep - a.keep)[0];
+  if (main.keep < 2) return [];
+  const plates = (n: number) => `${n} plate${n > 1 ? 's' : ''}`;
+  const inPeak = plan.runs
+    .filter((r) => r.from < main.peakTo && r.to > main.peakFrom)
+    .sort((a, b) => b.keep - a.keep || FILLINGS.indexOf(a.filling) - FILLINGS.indexOf(b.filling));
+  const list = inPeak.map((r) => `${r.keep} ${FILLING_NAME[r.filling]}`).join(', ');
+  const nudges: SteamNudge[] = [{
+    at: toHHMM(toMin(main.peakFrom) - steamMin),
+    title: `Rush at ${clock12(main.peakFrom)}: steam now`,
+    message: `Put ${list} plates in the steamer now, ready by ${clock12(main.peakFrom)}. A fresh batch every ${holdMin} min till ${clock12(main.peakTo)} - steamed orders go out within 2 minutes.`,
+  }];
+  const readyAt = toMin(main.from) - steamMin;
+  if (main.usual >= 1 && main.from >= '16:00' && toMin(nudges[0].at) - readyAt >= 30) {
+    nudges.unshift({
+      at: toHHMM(readyAt),
+      title: `Steam now for ${clock12(main.from)}`,
+      message: `Keep ${plates(main.usual)} of ${FILLING_NAME[main.filling]} steamed momos ready from ${clock12(main.from)}, a fresh batch every ${holdMin} min. The rush starts at ${clock12(main.peakFrom)}.`,
+    });
+  }
+  return nudges;
 }

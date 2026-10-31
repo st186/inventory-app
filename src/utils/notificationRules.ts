@@ -35,6 +35,7 @@ const ACTION = new Set([
   'online_items_off', // items switched off on Zomato and Swiggy that still sell (onlineStock.ts)
   'stockout_explain', // why each item was out of stock today, to the store incharge (onlineStock.ts)
   'stockout_explained', // the day's out-of-stock items with the reasons, to the owner
+  'steam_now', // put momos in the steamer now: the rush is coming (rushInsights.ts)
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
@@ -124,6 +125,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   order_stuck: 'অর্ডার অনেকক্ষণ খোলা পড়ে আছে',
   online_items_off: 'অনলাইনে আইটেম বন্ধ আছে',
   stockout_explain: 'কেন স্টক শেষ ছিল লিখুন',
+  steam_now: 'এখন স্টিমারে মোমো দিন',
 };
 
 export const DEFAULT_PREFS = { quietOn: true, quietFrom: '23:00', quietTo: '07:00', muted: {} as Partial<Record<NotificationCategory, boolean>>, digest: false };
