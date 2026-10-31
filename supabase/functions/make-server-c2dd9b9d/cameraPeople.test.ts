@@ -1,7 +1,7 @@
 // Tests for cameraPeople.ts. Run with plain node:
 //   node --experimental-strip-types supabase/functions/make-server-c2dd9b9d/cameraPeople.test.ts
 import assert from 'node:assert/strict';
-import { addRef, addSpot, assign, cleanNumbered, dropBoxes, inSpot, mergeSamePerson, objectBoxes, spotOf, toShow, MAX_REFS } from './cameraPeople.ts';
+import { addRef, addSpot, assign, cleanNumbered, dropBoxes, inSpot, mergeSamePerson, objectBoxes, spotOf, toShow, trustBoxes, MAX_REFS } from './cameraPeople.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -88,6 +88,24 @@ test('not a person: the sack on the water jar (31 Oct 2026) is dropped in its sp
   // A spot already covered isn't added twice.
   assert.equal(addSpot(spots, { box: [0.70, 0.41, 0.81, 0.80], from: '2026-11-01', slot: 'p2', by: 'Vijay' }).length, 1);
   assert.equal(addSpot(spots, { box: [0.10, 0.40, 0.21, 0.80], from: '2026-11-01', slot: 'p2', by: 'Vijay' }).length, 2);
+});
+
+
+test('the boxes over the guess: 31 Oct 11:05, Rudra walked past in 3 of 20 frames but was given 11 frames of folding', () => {
+  const frames: { n: number; box: number[] }[][] = Array.from({ length: 20 }, () => []);
+  frames[7] = [{ n: 2, box: [0.37, 0.56, 0.57, 1.0] }];
+  frames[9] = [{ n: 2, box: [0.51, 0.52, 0.64, 0.99] }];
+  frames[10] = [{ n: 2, box: [0.26, 0.66, 0.47, 1.0] }];
+  const said = ['away', 'away', 'away', 'away', 'idle', 'prep', 'prep', 'cooking', 'cooking', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding', 'folding'];
+  const [out] = trustBoxes([{ box: 2, activities: said, phoneFrames: [15] }], { frames, crops: {}, photos: {} });
+  assert.deepEqual(out.activities, ['away', 'away', 'away', 'away', 'away', 'away', 'prep', 'cooking', 'cooking', 'other', 'other', 'away', 'away', 'away', 'away', 'away', 'away', 'away', 'away', 'away']);
+  assert.equal(out.activities.filter((a) => a === 'folding').length, 0);
+  assert.deepEqual(out.phoneFrames, []);
+  // Someone folding in place, hidden for one frame: kept.
+  const still: { n: number; box: number[] }[][] = [[{ n: 1, box: [0.2, 0.5, 0.3, 0.9] }], [], [{ n: 1, box: [0.21, 0.5, 0.31, 0.9] }]];
+  assert.deepEqual(trustBoxes([{ box: 1, activities: ['folding', 'folding', 'folding'] }], { frames: still, crops: {}, photos: {} })[0].activities, ['folding', 'folding', 'folding']);
+  // Someone the boxing never caught (box 0) is left as Bunny said.
+  assert.deepEqual(trustBoxes([{ box: 0, activities: ['folding'] }], { frames: [[]], crops: {}, photos: {} })[0].activities, ['folding']);
 });
 
 console.log(`cameraPeople: ${passed} tests passed`);

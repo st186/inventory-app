@@ -170,3 +170,43 @@ export function addSpot(spots: IgnoreSpot[], spot: IgnoreSpot): IgnoreSpot[] {
   if (spots.some((s) => inSpot(spot.box, s.box))) return spots;
   return [...spots, spot].slice(-MAX_SPOTS);
 }
+
+// ---- What a person did in frames where their box isn't drawn ----
+
+// Steady work (owner, 31 Oct 2026: "no folding has started, then how is folding shown"): at 11:05 the
+// PC drew Rudra's box in 3 of 20 frames as he walked past, and Bunny gave him 16 frames of activity,
+// 11 of them folding. The boxes are trusted over the guess: a frame more than one away from a drawn
+// box is away; folding or the machine in a frame without the box only between two drawn frames (a
+// moment hidden); and folding while the box crosses the picture is walking.
+const STEADY = new Set(['folding', 'machine', 'filling']);
+const WALKED = 0.12; // share of the picture's width the box's centre moved to or from the nearest drawn frame
+
+export function trustBoxes<T extends { box?: number; activities: string[]; phoneFrames?: number[] }>(people: T[], numbered: NumberedBody): T[] {
+  return people.map((p) => {
+    if (!p.box) return p;
+    const at = new Map<number, number[]>(); // frame index -> this person's box
+    numbered.frames.forEach((f, i) => { const b = f.find((x) => x.n === p.box); if (b) at.set(i, b.box); });
+    if (!at.size) return p;
+    const drawn = [...at.keys()].sort((a, b) => a - b);
+    const near = (i: number) => drawn.some((d) => Math.abs(d - i) <= 1);
+    const cx = (b: number[]) => (b[0] + b[2]) / 2;
+    const activities = p.activities.map((a, i) => {
+      if (a === 'away') return a;
+      if (!at.has(i)) {
+        if (!near(i)) return 'away';
+        if (STEADY.has(a) && !(at.has(i - 1) && at.has(i + 1))) return 'away';
+        return a;
+      }
+      if (a === 'folding') {
+        // Moving to or from this frame's spot across the picture: walking, not folding.
+        const prev = drawn.filter((d) => d < i).pop();
+        const next = drawn.find((d) => d > i);
+        const moved = Math.max(...[prev, next].filter((d) => d !== undefined).map((d) => Math.abs(cx(at.get(i)!) - cx(at.get(d!)!))), 0);
+        if (moved > WALKED) return 'other';
+      }
+      return a;
+    });
+    return { ...p, activities, phoneFrames: (p.phoneFrames || []).filter((f) => activities[f - 1] !== 'away') };
+  });
+}
+
