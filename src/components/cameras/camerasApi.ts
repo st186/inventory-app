@@ -32,7 +32,13 @@ export type Activity = {
 };
 export type WhoIs = {
   date: string; staff: string[];
-  cameras: { cameraId: string; cameraName: string; date: string; slots: { slot: string; name: string | null; first: string; last: string; photoUrl: string | null }[] }[];
+  cameras: {
+    cameraId: string; cameraName: string; date: string;
+    // Tags per name, numbers unnamed, named once with a later photo to confirm, names short of two
+    // tags, and whether the day is complete (server cameraPeople.ts tagState).
+    tags: Record<string, number>; open: string[]; ask: string[]; short: string[]; complete: boolean;
+    slots: { slot: string; name: string | null; first: string; last: string; photoUrl: string | null; confirmUrl?: string | null; confirmAt?: string; confirmed?: boolean }[];
+  }[];
 };
 export type CameraDraft = { name: string; placeKind: 'production' | 'store'; placeId: string; checks: PpeItem[]; from: string; to: string; everyMin: number; active?: boolean; afterHours?: boolean };
 
@@ -60,5 +66,5 @@ export const addCamera = (d: CameraDraft) => call<{ camera: Camera; key: string 
 export const updateCamera = (id: string, d: Partial<CameraDraft>) => call<{ camera: Camera }>(`/cctv/cameras/${id}`, { method: 'PUT', body: JSON.stringify(d) });
 export const getActivity = (from: string, to: string) => call<Activity>(`/cctv/activity?from=${from}&to=${to}`);
 export const getWhoIs = (date: string) => call<WhoIs>(`/cctv/whois?date=${date}`);
-export const setWhoIs = (b: { cameraId: string; date: string; slot: string; name: string }) => call<{ names: Record<string, string> }>('/cctv/whois', { method: 'POST', body: JSON.stringify(b) });
+export const setWhoIs = (b: { cameraId: string; date: string; slot: string; name: string; confirm?: 'yes' | 'no' }) => call<{ names: Record<string, string> }>('/cctv/whois', { method: 'POST', body: JSON.stringify(b) });
 export const newKey = (id: string) => call<{ key: string }>(`/cctv/cameras/${id}/key`, { method: 'POST', body: '{}' });

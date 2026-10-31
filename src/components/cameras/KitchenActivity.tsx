@@ -1,6 +1,7 @@
 // Kitchen activity from the camera stills (owner, 29 Oct 2026; server cctv.ts + activityRules.ts):
-//  - WhoIsWho: the day's people by the colour of their top, with a photo, for the owner, the
-//    operations manager or the place's incharge to put a name to each (once a day);
+//  - WhoIsWho: the day's people by number, with a photo, for the owner, the operations manager or
+//    the place's incharge to put a name to each - only the unnamed ones, until everyone has two tags;
+//    WhoIsEditor, the Who is who tab, to change any name;
 //  - KitchenActivity (owner only): per person, minutes folding, at other kitchen work, cleaning, on
 //    the phone and idle, how often on the phone, PPE share; for the kitchen, folding hours and
 //    pieces made per folding hour. Work sampling: the camera takes bursts of 20 frames 15 seconds
@@ -45,61 +46,181 @@ export function useTopName() {
   };
 }
 
-export function WhoIsWho() {
+/** The names to pick from: staff, Someone else, and for a numbered box Not a person. */
+function NameOptions({ staff, slot, skip }: { staff: string[]; slot: string; skip?: string | null }) {
+  const { t } = useT();
+  return (
+    <>
+      {staff.filter((n) => n !== skip).map((n) => <option key={n} value={n}>{n}</option>)}
+      {skip !== SOMEONE_ELSE && <option value={SOMEONE_ELSE}>{t('cam.whoSomeoneElse')}</option>}
+      {isNumbered(slot) && skip !== NOT_A_PERSON && <option value={NOT_A_PERSON}>{t('cam.whoNotPerson')}</option>}
+    </>
+  );
+}
+
+/** "Rudra Mahato 2/2 · Aniket Prasad 1/2": each name's tags today (server cameraPeople.ts tagState). */
+function TagLine({ cameras }: { cameras: api.WhoIs['cameras'] }) {
+  const { t } = useT();
+  const tags: Record<string, number> = {};
+  for (const c of cameras) for (const [n, k] of Object.entries(c.tags || {})) tags[n] = (tags[n] || 0) + k;
+  const names = Object.keys(tags).sort();
+  if (!names.length) return null;
+  return (
+    <p className="text-body-sm text-text-2">
+      {t('cam.whoTags')}: {names.map((n, i) => (
+        <span key={n}>{i > 0 && ' · '}<span className={tags[n] >= TAGS_NEEDED ? 'font-semibold text-success' : 'font-semibold text-text'}>{n} <span className="num">{Math.min(tags[n], TAGS_NEEDED)}/{TAGS_NEEDED}</span>{tags[n] >= TAGS_NEEDED && ' ✓'}</span></span>
+      ))}
+    </p>
+  );
+}
+const TAGS_NEEDED = 2; // server cameraPeople.ts TAGS_NEEDED
+
+/**
+ * Who is who today (owner, 31 Oct 2026: "once marked don't show those, come up with new ones... mark
+ * complete when all persons are tagged at least twice"): only people without a name are asked, and
+ * someone named once is asked once more on a later photo ("Still Aniket?"). Each name needs two
+ * tags - two numbers, or one number and a confirmed later photo; then the day is complete and the
+ * card is one line. Every name can be changed in the Who is who tab (WhoIsEditor).
+ */
+export function WhoIsWho({ data, onSaved, onEdit }: { data: api.WhoIs | null; onSaved: () => void; onEdit?: () => void }) {
   const { t } = useT();
   const topName = useTopName();
-  const [data, setData] = useState<api.WhoIs | null>(null);
-  const [changing, setChanging] = useState(false);
-  const load = useCallback(() => { api.getWhoIs(getTodayIST()).then(setData).catch(() => setData(null)); }, []);
-  useEffect(() => { load(); }, [load]);
+  const [busy, setBusy] = useState<string | null>(null);
   if (!data || !data.cameras.some((c) => c.slots.length)) return null;
-  // Everyone named: one line with the names (owner, 30 Oct 2026: the named card kept showing). Opens
-  // again by itself when the camera sees a new top colour; tomorrow's people start unnamed.
-  const slots = data.cameras.flatMap((c) => c.slots);
-  if (!changing && slots.every((s) => s.name)) {
+  const save = async (cameraId: string, slot: string, name: string, confirm?: 'yes' | 'no') => {
+    if (!name && confirm !== 'yes') return;
+    setBusy(`${cameraId}-${slot}`);
+    try {
+      await api.setWhoIs({ cameraId, date: data.date, slot, name, confirm });
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('cam.failed'));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const asks = data.cameras.flatMap((c) => [
+    ...c.slots.filter((s) => (c.open || []).includes(s.slot)).map((s) => ({ c, s, confirm: false })),
+    ...c.slots.filter((s) => (c.ask || []).includes(s.slot)).map((s) => ({ c, s, confirm: true })),
+  ]);
+  const editButton = onEdit && <Button size="sm" variant="secondary" onClick={onEdit}>{t('cam.whoEdit')}</Button>;
+  if (!asks.length) {
+    const complete = data.cameras.filter((c) => c.slots.length).every((c) => c.complete);
+    const short = [...new Set(data.cameras.flatMap((c) => c.short || []))];
     return (
       <section className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-surface p-4" aria-label={t('cam.whoTitle')}>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <h2 className="text-body-md font-semibold text-text">{t('cam.whoDone')}</h2>
-          <p className="text-body-sm text-text">{slots.map((s) => `${topName(s.slot)}: ${s.name === SOMEONE_ELSE ? t('cam.whoSomeoneElseShort') : s.name === NOT_A_PERSON ? t('cam.whoNotPersonShort') : s.name}`).join(' · ')}</p>
-          <p className="text-body-sm text-text-2">{t('cam.whoDoneNote')}</p>
+          <h2 className="text-body-md font-semibold text-text">{t(complete ? 'cam.whoComplete' : 'cam.whoDone')}</h2>
+          <TagLine cameras={data.cameras} />
+          <p className="text-body-sm text-text-2">{complete ? t('cam.whoCompleteNote') : short.length ? t('cam.whoWaitingNote', { names: short.join(', ') }) : t('cam.whoDoneNote')}</p>
         </div>
-        <Button size="sm" variant="secondary" onClick={() => setChanging(true)}>{t('cam.whoChange')}</Button>
+        {editButton}
       </section>
     );
   }
-  const save = async (cameraId: string, slot: string, name: string) => {
-    try {
-      await api.setWhoIs({ cameraId, date: data.date, slot, name });
-      setData({ ...data, cameras: data.cameras.map((c) => (c.cameraId !== cameraId ? c : { ...c, slots: c.slots.map((s) => (s.slot === slot ? { ...s, name: name || null } : s)) })) });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('cam.failed'));
-    }
-  };
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4" aria-label={t('cam.whoTitle')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <h2 className="text-body-md font-semibold text-text">{t('cam.whoTitle')}</h2>
-          <p className="text-body-sm text-text-2">{t(slots.some((s) => isNumbered(s.slot)) ? 'cam.whoBodyBox' : 'cam.whoBody')}</p>
+          <p className="text-body-sm text-text-2">{t('cam.whoBodyNew')}</p>
+          <TagLine cameras={data.cameras} />
         </div>
-        {changing && <Button size="sm" variant="secondary" onClick={() => setChanging(false)}>{t('cam.whoFinished')}</Button>}
+        {editButton}
       </div>
-      {data.cameras.map((c) => c.slots.map((s) => (
-        <div key={`${c.cameraId}-${s.slot}`} className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
-          {s.photoUrl && <img src={s.photoUrl} alt={t(isNumbered(s.slot) ? 'cam.whoPhotoBox' : 'cam.whoPhoto', { top: topName(s.slot) })} className="max-h-72 w-full rounded-md bg-surface-2 object-contain" loading="lazy" />}
-          <label className="flex flex-col gap-1">
-            <span className="text-body-sm font-medium text-text">{t('cam.whoPerson', { top: topName(s.slot), from: s.first, to: s.last })}</span>
-            <NativeSelect value={s.name || ''} onChange={(e) => save(c.cameraId, s.slot, e.target.value)}>
-              <option value="">{t('cam.whoPick')}</option>
-              {data.staff.map((n) => <option key={n} value={n}>{n}</option>)}
-              <option value={SOMEONE_ELSE}>{t('cam.whoSomeoneElse')}</option>
-              {isNumbered(s.slot) && <option value={NOT_A_PERSON}>{t('cam.whoNotPerson')}</option>}
-            </NativeSelect>
-          </label>
-        </div>
-      )))}
+      {asks.map(({ c, s, confirm }) => {
+        const id = `${c.cameraId}-${s.slot}`;
+        const photo = confirm ? s.confirmUrl : s.photoUrl;
+        return (
+          <div key={`${id}-${confirm ? 'c' : 'n'}`} className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
+            {photo && <img src={photo} alt={t(isNumbered(s.slot) ? 'cam.whoPhotoBox' : 'cam.whoPhoto', { top: topName(s.slot) })} className="max-h-72 w-full rounded-md bg-surface-2 object-contain" loading="lazy" />}
+            {confirm ? (
+              <div className="flex flex-col gap-2">
+                <span className="text-body-sm font-medium text-text">{t('cam.whoConfirm', { name: s.name || '', at: s.confirmAt || '' })}</span>
+                <div className="grid grid-cols-[auto_1fr] items-center gap-2">
+                  <Button disabled={busy === id} onClick={() => save(c.cameraId, s.slot, s.name || '', 'yes')}>{t('cam.whoYes')}</Button>
+                  <NativeSelect aria-label={t('cam.whoNo')} value="" disabled={busy === id} onChange={(e) => save(c.cameraId, s.slot, e.target.value, 'no')}>
+                    <option value="">{t('cam.whoNo')}</option>
+                    <NameOptions staff={data.staff} slot={s.slot} skip={s.name} />
+                  </NativeSelect>
+                </div>
+              </div>
+            ) : (
+              <label className="flex flex-col gap-1">
+                <span className="text-body-sm font-medium text-text">{t('cam.whoPerson', { top: topName(s.slot), from: s.first, to: s.last })}</span>
+                <NativeSelect value="" disabled={busy === id} onChange={(e) => save(c.cameraId, s.slot, e.target.value)}>
+                  <option value="">{t('cam.whoPick')}</option>
+                  <NameOptions staff={data.staff} slot={s.slot} />
+                </NativeSelect>
+              </label>
+            )}
+          </div>
+        );
+      })}
     </section>
+  );
+}
+
+/** The Who is who tab: every person the camera numbered today or yesterday, with their photos, to
+ *  change a name (owner, 31 Oct 2026: "keep an option to edit it in a different tab"). */
+export function WhoIsEditor() {
+  const { t } = useT();
+  const topName = useTopName();
+  const [day, setDay] = useState<'today' | 'yesterday'>('today');
+  const date = day === 'today' ? getTodayIST() : addDays(getTodayIST(), -1);
+  const [data, setData] = useState<api.WhoIs | null>(null);
+  const [error, setError] = useState(false);
+  const load = useCallback(() => {
+    setError(false);
+    setData(null);
+    api.getWhoIs(date).then(setData).catch(() => setError(true));
+  }, [date]);
+  useEffect(() => { load(); }, [load]);
+  const save = async (cameraId: string, slot: string, name: string) => {
+    if (!data) return;
+    try {
+      await api.setWhoIs({ cameraId, date: data.date, slot, name });
+      api.getWhoIs(date).then(setData).catch(() => undefined); // the tags move with the name
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('cam.failed'));
+    }
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      <FilterChips aria-label={t('cam.whoTab')} value={day} onValueChange={(v) => setDay(v as typeof day)}
+        options={[{ value: 'today', label: t('cam.whoToday') }, { value: 'yesterday', label: t('cam.whoYesterday') }]} />
+      <p className="text-body-sm text-text-2">{t('cam.whoEditBody')}</p>
+      {error ? <ErrorState onRetry={load} /> : !data ? <p className="text-body-sm text-text-3">…</p> : !data.cameras.some((c) => c.slots.length) ? (
+        <EmptyState compact icon={Users} title={t('cam.whoNone')} />
+      ) : data.cameras.filter((c) => c.slots.length).map((c) => (
+        <section key={c.cameraId} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-body-md font-semibold text-text">{c.cameraName}</h2>
+            <TagLine cameras={[c]} />
+          </div>
+          {c.slots.map((s) => (
+            <div key={s.slot} className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
+              <div className={s.confirmUrl ? 'grid grid-cols-2 gap-2' : 'grid gap-2'}>
+                {s.photoUrl && <img src={s.photoUrl} alt={t(isNumbered(s.slot) ? 'cam.whoPhotoBox' : 'cam.whoPhoto', { top: topName(s.slot) })} className="max-h-48 w-full rounded-md bg-surface-2 object-contain" loading="lazy" />}
+                {s.confirmUrl && (
+                  <figure className="flex flex-col gap-1">
+                    <img src={s.confirmUrl} alt={t('cam.whoLater', { at: s.confirmAt || '' })} className="max-h-48 w-full rounded-md bg-surface-2 object-contain" loading="lazy" />
+                    <figcaption className="text-body-sm text-text-2">{t('cam.whoLater', { at: s.confirmAt || '' })}{s.confirmed && ' ✓'}</figcaption>
+                  </figure>
+                )}
+              </div>
+              <label className="flex flex-col gap-1">
+                <span className="text-body-sm font-medium text-text">{t('cam.whoPerson', { top: topName(s.slot), from: s.first, to: s.last })}</span>
+                <NativeSelect value={s.name || ''} onChange={(e) => save(c.cameraId, s.slot, e.target.value)}>
+                  <option value="">{t('cam.whoPick')}</option>
+                  <NameOptions staff={data.staff} slot={s.slot} />
+                </NativeSelect>
+              </label>
+            </div>
+          ))}
+        </section>
+      ))}
+    </div>
   );
 }
 

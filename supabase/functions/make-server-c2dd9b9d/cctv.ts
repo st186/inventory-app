@@ -22,6 +22,8 @@
 //                                           the owner, the operations manager or the place's incharge
 //   cctv-people:{cameraId}:{date}           the day's numbered people and their reference crops
 //                                           (cameraPeople.ts; 7 days)
+//   cctv-confirm:{cameraId}:{date}          a later photo of someone named once, to confirm (their
+//                                           second tag; cameraPeople.ts tagState; 7 days)
 // Kitchen activity (owner, 29 Oct 2026): with `activity` on, every scheduled look also counts what
 // each person is doing; only the owner sees the numbers. Such a camera looks in bursts ("for better
 // detection"): the PC takes 20 frames 15 seconds apart and sends them together, the AI follows each
@@ -40,7 +42,7 @@ import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtBurst, aiLookAtCamera, type BurstLook } from './insights.ts';
 import { BURST, PPE_ITEMS, burstInHours, cleanFaces, decide, inHours, istClock, minutesPerFrame, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
 import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson } from './activityRules.ts';
-import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, toShow, trustBoxes, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
+import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, tagState, toShow, trustBoxes, wantsConfirm, type Confirm, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
 import { emptyPpeDay, ppeStep, type PpeDay } from './roundupRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
@@ -264,12 +266,35 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       if (!error) for (const s of slots) photos[s] = path;
     }
     if (byPhoto.size) await deps.kv.set(pKey, photos);
+    // Someone named once and seen again an hour or more later: this burst's photo of them, to confirm
+    // it is still them - their second tag (owner, 31 Oct 2026).
+    if (boxPhotos) {
+      const cKey = `cctv-confirm:${cam.id}:${date}`;
+      const [names, confirms] = await Promise.all([
+        deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`), deps.kv.get<Record<string, Confirm>>(cKey),
+      ]).then(([n, c]) => [n || {}, c || {}] as const);
+      const { tags } = tagState(whoSlots(day, names), confirms);
+      const clock = istClock(nowMs);
+      let added = false;
+      for (let i = 0; i < people.length; i++) {
+        const slot = keys[i];
+        const b64 = people[i].box ? boxPhotos[people[i].box!] : undefined;
+        if (!b64 || !day.slots[slot] || !wantsConfirm(slot, names[slot], tags, confirms[slot], day.slots[slot].first, clock)) continue;
+        const path = `activity/${cam.id}/${date}/${newId(6)}.jpg`;
+        const { error } = await storage().from(BUCKET).upload(path, bytesOf(b64), { contentType: 'image/jpeg', upsert: false }).catch((e: any) => ({ error: e }));
+        if (!error) { confirms[slot] = { photo: path, at: clock }; added = true; }
+      }
+      if (added) await deps.kv.set(cKey, confirms);
+    }
     if (!before) cleanupActivity(cam.id, date).catch(() => undefined); // once a day
   }
+  // The day's people to put names to: seen in at least two frames (once is likely someone passing).
+  const whoSlots = (day: ActivityDay, names: Record<string, string>) =>
+    Object.entries(day.slots).filter(([, s]) => s.samples >= 2).map(([slot]) => ({ slot, name: names[slot] || null }));
   // The reference crops of the day's people that go to Bunny with a numbered burst.
-  async function referenceCrops(day: DayPeople | null) {
+  async function referenceCrops(day: DayPeople | null, names: Record<string, string>) {
     const out: { id: number; images: string[] }[] = [];
-    for (const s of toShow(day)) {
+    for (const s of toShow(day, names)) {
       const images: string[] = [];
       for (const path of s.paths) {
         const { data } = await storage().from(BUCKET).download(path).catch(() => ({ data: null }));
@@ -331,6 +356,14 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const paths = (d.people || []).flatMap((p) => p.refs.map((r) => r.path));
       if (paths.length) await storage().from(BUCKET).remove(paths).catch(() => undefined);
       await deps.kv.del(`cctv-people:${cameraId}:${d.date}`);
+    }
+    for (const row of await deps.getAllByPrefix(`cctv-confirm:${cameraId}:`) as Record<string, Confirm>[]) {
+      const paths = Object.values(row || {}).map((c) => c?.photo).filter((p): p is string => !!p);
+      const date = paths[0]?.split('/')[2];
+      if (date && date < photoCut) {
+        await storage().from(BUCKET).remove(paths).catch(() => undefined);
+        await deps.kv.del(`cctv-confirm:${cameraId}:${date}`);
+      }
     }
     for (const d of await deps.getAllByPrefix(`cctv-activity:${cameraId}:`)) {
       if (d?.date && d.date < dayCut) await deps.kv.del(`cctv-activity:${cameraId}:${d.date}`);
@@ -427,9 +460,10 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       // Objects boxed as people before (Who is who: Not a person) are left out (cameraPeople.ts).
       if (numbered) numbered = dropBoxes(numbered, objectBoxes(numbered, (await deps.kv.get<IgnoreSpot[]>(`cctv-ignore:${cam.id}`)) || []));
       const dayPeople = numbered ? await deps.kv.get<DayPeople>(`cctv-people:${cam.id}:${istDate(nowMs)}`) : null;
+      const dayNames = numbered ? (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${istDate(nowMs)}`)) || {} : {};
       const burst = isBurst ? await aiLookAtBurst(deps.kv as any, {
         frames: images, gapSec: BURST.gapSec, place: `${cam.name}, ${place}`, notes: cam.notes,
-        numbered: numbered ? { boxes: numbered.frames.map((f) => f.map((b) => b.n)), known: await referenceCrops(dayPeople) } : undefined,
+        numbered: numbered ? { boxes: numbered.frames.map((f) => f.map((b) => b.n)), known: await referenceCrops(dayPeople, dayNames) } : undefined,
       }) : null;
       // Where the PC drew someone's box is trusted over Bunny's frame-by-frame guess (cameraPeople.ts).
       if (burst && numbered) burst.people = trustBoxes(burst.people, numbered);
@@ -705,24 +739,34 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         if (!day) continue;
         const names = (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`)) || {};
         const photos = (await deps.kv.get<Record<string, string>>(`cctv-activity-photos:${cam.id}:${date}`)) || {};
-        const paths = [...new Set(Object.values(photos))];
+        const confirms = (await deps.kv.get<Record<string, Confirm>>(`cctv-confirm:${cam.id}:${date}`)) || {};
+        const paths = [...new Set([...Object.values(photos), ...Object.values(confirms).map((x) => x.photo).filter((p): p is string => !!p)])];
         const urls = new Map<string, string>();
         if (paths.length) {
           const { data } = await storage().from(BUCKET).createSignedUrls(paths, 3600);
           for (const x of data || []) if (x?.path && x.signedUrl) urls.set(x.path, x.signedUrl);
         }
+        const listed = whoSlots(day, names);
+        const { tags, open, ask, short, complete } = tagState(listed, confirms);
         out.push({
-          cameraId: cam.id, cameraName: cam.name, date,
-          slots: Object.entries(day.slots)
-            .filter(([, s]) => s.samples >= 2) // seen once: likely someone passing through
-            .map(([slot, s]) => ({ slot, name: names[slot] || null, first: s.first, last: s.last, photoUrl: photos[slot] ? urls.get(photos[slot]) || null : null })),
+          cameraId: cam.id, cameraName: cam.name, date, tags, open, ask, short, complete,
+          slots: listed.map(({ slot, name }) => {
+            const s = day.slots[slot];
+            const cf = confirms[slot];
+            return {
+              slot, name, first: s.first, last: s.last, photoUrl: photos[slot] ? urls.get(photos[slot]) || null : null,
+              ...(cf?.photo ? { confirmUrl: urls.get(cf.photo) || null, confirmAt: cf.at, confirmed: !!cf.name && cf.name === name } : {}),
+            };
+          }),
         });
       }
       return c.json({ date, cameras: out, staff });
     } catch (err) { return fail(c, err); }
   });
 
-  // POST /cctv/whois {cameraId, date, slot, name} - name a colour for the day (name null clears it).
+  // POST /cctv/whois {cameraId, date, slot, name, confirm?} - name a person for the day (name null
+  // clears it). confirm 'yes': the later photo is still them (their second tag); 'no': it is `name` -
+  // the number takes that name and keeps only the looks from that photo on, asked again later.
   app.post(`${P}/cctv/whois`, async (c: any) => {
     const r = await actorOf(deps, c);
     if (r.error) return r.error;
@@ -736,8 +780,31 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const name = clip(body.name, 60);
       const slot = clip(body.slot, 20);
       const was = names[slot];
+      const cKey = `cctv-confirm:${cam.id}:${body.date}`;
+      const confirms = (await deps.kv.get<Record<string, Confirm>>(cKey)) || {};
+      const cf = confirms[slot];
+      if (body.confirm === 'yes') {
+        if (!was || !cf?.photo) return c.json({ error: 'Nothing to confirm' }, 400);
+        confirms[slot] = { ...cf, name: was, by: r.actor!.name, on: new Date().toISOString() };
+        await deps.kv.set(cKey, confirms);
+        return c.json({ names });
+      }
       if (name) names[slot] = name; else delete names[slot];
       await deps.kv.set(key, names);
+      if (body.confirm === 'no' && cf?.photo && cf.at) {
+        confirms[slot] = { after: cf.at };
+        await deps.kv.set(cKey, confirms);
+        // Bunny had two people under this number: keep only the looks from the later photo on.
+        const pKey = `cctv-people:${cam.id}:${body.date}`;
+        const day = await deps.kv.get<DayPeople>(pKey);
+        const person = day?.people.find((p) => slotOf(p.id) === slot);
+        if (day && person) {
+          const gone = person.refs.filter((x) => x.at < cf.at!).map((x) => x.path);
+          person.refs = person.refs.filter((x) => x.at >= cf.at!);
+          await deps.kv.set(pKey, day);
+          if (gone.length) await storage().from(BUCKET).remove(gone).catch(() => undefined);
+        }
+      }
       // Not a person: keep the box's spot, so the object is left out from the next burst on; taking it
       // back removes the spot saved for it that day.
       if (/^p\d+$/.test(slot) && (name === NOT_A_PERSON || was === NOT_A_PERSON)) {

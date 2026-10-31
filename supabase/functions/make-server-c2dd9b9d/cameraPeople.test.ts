@@ -1,7 +1,7 @@
 // Tests for cameraPeople.ts. Run with plain node:
 //   node --experimental-strip-types supabase/functions/make-server-c2dd9b9d/cameraPeople.test.ts
 import assert from 'node:assert/strict';
-import { addRef, addSpot, assign, cleanNumbered, dropBoxes, inSpot, mergeSamePerson, objectBoxes, spotOf, toShow, trustBoxes, MAX_REFS } from './cameraPeople.ts';
+import { addRef, addSpot, assign, cleanNumbered, dropBoxes, inSpot, mergeSamePerson, objectBoxes, spotOf, tagState, toShow, trustBoxes, wantsConfirm, MAX_REFS, type DayPeople } from './cameraPeople.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -106,6 +106,44 @@ test('the boxes over the guess: 31 Oct 11:05, Rudra walked past in 3 of 20 frame
   assert.deepEqual(trustBoxes([{ box: 1, activities: ['folding', 'folding', 'folding'] }], { frames: still, crops: {}, photos: {} })[0].activities, ['folding', 'folding', 'folding']);
   // Someone the boxing never caught (box 0) is left as Bunny said.
   assert.deepEqual(trustBoxes([{ box: 0, activities: ['folding'] }], { frames: [[]], crops: {}, photos: {} })[0].activities, ['folding']);
+});
+
+test('tags: 31 Oct, Rudra on two numbers is done, Aniket once needs a later photo confirmed', () => {
+  const slots = [{ slot: 'p1', name: 'Rudra Mahato' }, { slot: 'p2', name: 'Rudra Mahato' }, { slot: 'p4', name: 'Aniket Prasad' }, { slot: 'p5', name: 'Someone else' }, { slot: 'p6', name: null }];
+  let s = tagState(slots, {});
+  assert.deepEqual(s.tags, { 'Rudra Mahato': 2, 'Aniket Prasad': 1 });
+  assert.deepEqual(s.open, ['p6']);
+  assert.deepEqual(s.short, ['Aniket Prasad']);
+  assert.equal(s.complete, false);
+  // A later photo of Person 4 is due an hour after they were first seen; never for Rudra (2 tags) or Someone else.
+  assert.equal(wantsConfirm('p4', 'Aniket Prasad', s.tags, undefined, '09:25', '10:00'), false);
+  assert.equal(wantsConfirm('p4', 'Aniket Prasad', s.tags, undefined, '09:25', '11:45'), true);
+  assert.equal(wantsConfirm('p1', 'Rudra Mahato', s.tags, undefined, '08:50', '11:45'), false);
+  assert.equal(wantsConfirm('p5', 'Someone else', s.tags, undefined, '10:00', '11:45'), false);
+  const waiting = { p4: { photo: 'a.jpg', at: '11:45' } };
+  assert.deepEqual(tagState(slots, waiting).ask, ['p4']);
+  assert.equal(wantsConfirm('p4', 'Aniket Prasad', s.tags, waiting.p4, '09:25', '12:20'), false); // asked already
+  // Person 6 named Not a person, Person 4's later photo confirmed: complete.
+  s = tagState(slots.map((x) => (x.slot === 'p6' ? { ...x, name: 'Not a person' } : x)), { p4: { photo: 'a.jpg', at: '11:45', name: 'Aniket Prasad' } });
+  assert.deepEqual(s.ask, []);
+  assert.equal(s.complete, true);
+  // The later photo was someone else: asked again an hour after that photo.
+  assert.equal(wantsConfirm('p4', 'Aniket Prasad', { 'Aniket Prasad': 1 }, { after: '11:45' }, '09:25', '12:20'), false);
+  assert.equal(wantsConfirm('p4', 'Aniket Prasad', { 'Aniket Prasad': 1 }, { after: '11:45' }, '09:25', '12:50'), true);
+});
+
+test('references: a person named on two numbers goes to Bunny once, under the first, with both looks', () => {
+  const ref = (path: string, at: string) => ({ path, at });
+  const day: DayPeople = { date: '2026-10-31', next: 5, people: [
+    { id: 1, refs: [ref('1a', '08:50'), ref('1b', '10:35')], first: '08:50', last: '10:35', top: 'red' },
+    { id: 2, refs: [ref('2a', '08:50'), ref('2b', '10:35')], first: '08:50', last: '11:10', top: 'red' },
+    { id: 4, refs: [ref('4a', '09:25'), ref('4b', '11:10')], first: '09:25', last: '11:10', top: 'yellow' },
+  ] };
+  assert.deepEqual(toShow(day), [{ id: 2, paths: ['2a', '2b'] }, { id: 4, paths: ['4a', '4b'] }, { id: 1, paths: ['1a', '1b'] }]);
+  // Rudra: each number's newest look (1b, 2b), then the older ones - three, oldest first.
+  assert.deepEqual(toShow(day, { p1: 'Rudra Mahato', p2: 'Rudra Mahato', p4: 'Aniket Prasad' }), [{ id: 1, paths: ['1a', '2b', '1b'] }, { id: 4, paths: ['4a', '4b'] }]);
+  // Someone else is never merged: two visitors are two people.
+  assert.equal(toShow(day, { p1: 'Someone else', p2: 'Someone else' }).length, 3);
 });
 
 console.log(`cameraPeople: ${passed} tests passed`);

@@ -61,13 +61,34 @@ const activity = {
     perDay: [{ date: '2026-10-30', foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 240, bursts: 12, folding: { from: '10:35', to: '16:20', mostPeople: 3 } }],
   }],
 };
-const whois = {
-  date: '2026-10-30', staff: ['Aniket Prasad', 'Nabendu', 'Rider 1', 'Rohan Rajbanshi', 'Rudra Mahato', 'Saniya Parvin', 'Vijay Das'],
-  cameras: [{ cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', date: '2026-10-30', slots: [
-    { slot: 'teal', name: 'Vijay Das', first: '09:10', last: '16:40', photoUrl: '/bunny-logo.png' },
-    { slot: 'p3', name: null, first: '10:05', last: '16:30', photoUrl: '/bunny-logo.png' },
-  ] }],
-};
+// 31 Oct 2026 as it was: Rudra on two numbers, Aniket once with a later photo to confirm, one new person.
+const whoNames: Record<string, string> = { p1: 'Rudra Mahato', p2: 'Rudra Mahato', p4: 'Aniket Prasad', p5: 'Someone else' };
+const whoConfirms: Record<string, { photo?: string; at?: string; name?: string }> = { p4: { photo: '/bunny-logo.png', at: '11:45' } };
+const whoSeen = [['p1', '08:50', '10:35'], ['p2', '08:50', '11:10'], ['p4', '09:25', '11:45'], ['p5', '10:00', '11:10'], ['p6', '11:45', '12:20']];
+const isStaff = (n?: string) => !!n && n !== 'Someone else' && n !== 'Not a person';
+function whois() {
+  const slots = whoSeen.map(([slot, first, last]) => ({ slot, name: whoNames[slot] || null, first, last, photoUrl: '/bunny-logo.png' }));
+  const tags: Record<string, number> = {};
+  for (const s of slots) if (isStaff(s.name ?? undefined)) tags[s.name!] = (tags[s.name!] || 0) + 1 + (whoConfirms[s.slot]?.name === s.name ? 1 : 0);
+  const open = slots.filter((s) => !s.name).map((s) => s.slot);
+  const ask = slots.filter((s) => isStaff(s.name ?? undefined) && tags[s.name!] < 2 && whoConfirms[s.slot]?.photo && !whoConfirms[s.slot].name).map((s) => s.slot);
+  const short = Object.keys(tags).filter((n) => tags[n] < 2);
+  return {
+    date: '2026-10-31', staff: ['Aniket Prasad', 'Nabendu', 'Rider 1', 'Rohan Rajbanshi', 'Rudra Mahato', 'Saniya Parvin', 'Vijay Das'],
+    cameras: [{
+      cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', date: '2026-10-31', tags, open, ask, short, complete: !open.length && !short.length,
+      slots: slots.map((s) => ({ ...s, ...(whoConfirms[s.slot]?.photo ? { confirmUrl: whoConfirms[s.slot].photo, confirmAt: whoConfirms[s.slot].at, confirmed: whoConfirms[s.slot].name === s.name } : {}) })),
+    }],
+  };
+}
+function setWho(b: { slot: string; name: string; confirm?: string }) {
+  if (b.confirm === 'yes') whoConfirms[b.slot] = { ...whoConfirms[b.slot], name: whoNames[b.slot] };
+  else {
+    if (b.name) whoNames[b.slot] = b.name; else delete whoNames[b.slot];
+    if (b.confirm === 'no') whoConfirms[b.slot] = {};
+  }
+  return { names: whoNames };
+}
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
@@ -76,8 +97,8 @@ export function installPerfPreviewMock() {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.includes('/cctv/activity')) return json(activity);
-    if (url.includes('/cctv/whois') && init?.method === 'POST') return json({ names: {} });
-    if (url.includes('/cctv/whois')) return json(whois);
+    if (url.includes('/cctv/whois') && init?.method === 'POST') return json(setWho(JSON.parse(String(init.body || '{}'))));
+    if (url.includes('/cctv/whois')) return json(whois());
     if (url.includes('/cctv/cameras') && !init?.method) return json({ cameras, canManage: true });
     if (url.includes('/cctv/alerts') && /\/mark$/.test(url)) return json({ alert: {} });
     if (url.includes('/cctv/alerts')) return json({ alerts });

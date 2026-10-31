@@ -12,11 +12,23 @@
 // roundup) and keeps the box's spot; later boxes the same size in the same spot are dropped before
 // Bunny reads the burst. The person finder was 76% sure of the sack - as sure as of real people - so
 // a score cut-off can't tell; a person standing there is a taller box and still counts.
+//
+// Tags (owner, 31 Oct 2026: "once marked don't show those, come up with new ones... mark complete
+// when all persons are tagged at least twice"): Who is who asks only about numbers without a name.
+// A name counts one tag per number it was given, and one more when a later photo of that number is
+// confirmed (when Bunny kept them on one number all day). Two tags each and nothing unnamed is a
+// complete day. A person named on two numbers goes to Bunny as one, with looks from both.
+//   cctv-confirm:{cameraId}:{date}  slot -> {photo, at} a later photo to confirm; {name, by, on} once
+//                                   confirmed; {after} when it was someone else (asked again later)
 
 export type DayPerson = { id: number; refs: { path: string; at: string }[]; first: string; last: string; top: string; spot?: number[] };
 export type IgnoreSpot = { box: number[]; from: string; slot: string; by: string };
 export const NOT_A_PERSON = 'Not a person';
+export const SOMEONE_ELSE = 'Someone else'; // visitors, delivery, a technician: no tags needed
 export const MAX_SPOTS = 20;
+export const TAGS_NEEDED = 2;
+export const CONFIRM_AFTER_MIN = 60; // a later photo to confirm is at least this long after the first
+export type Confirm = { photo?: string; at?: string; after?: string; name?: string; by?: string; on?: string };
 export type DayPeople = { date: string; next: number; people: DayPerson[] };
 export type NumberedBody = {
   frames: { n: number; box: number[] }[][]; // per frame, the boxes drawn on it (0-1 of the frame)
@@ -27,12 +39,13 @@ export type NumberedBody = {
 export const MAX_REFS = 3; // reference crops kept per person
 export const REF_EVERY_MIN = 90; // a fresh one at most this often (apron on, sleeves rolled up...)
 export const SEND_REFS = 2; // the newest this many go to Bunny
+export const SEND_NAMED_REFS = 3; // ...for someone named on two or more numbers, from all of them
 export const SEND_PEOPLE = 8; // the people seen most recently
 const MAX_CROP_CHARS = 150_000;
 const MAX_PHOTO_CHARS = 400_000;
 const B64 = /^[A-Za-z0-9+/=]+$/;
 
-const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+export const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 export const slotOf = (id: number) => `p${id}`;
 
 /** The PC's numbered boxes, checked; null when absent or not one entry per frame (then the burst is
@@ -55,11 +68,42 @@ export function cleanNumbered(raw: any, frames: number): NumberedBody | null {
   return out;
 }
 
-/** The people whose reference crops go to Bunny with this burst: seen most recently first. */
-export function toShow(day: DayPeople | null): { id: number; paths: string[] }[] {
-  return [...(day?.people || [])].filter((p) => p.refs.length)
-    .sort((a, b) => b.last.localeCompare(a.last)).slice(0, SEND_PEOPLE)
-    .map((p) => ({ id: p.id, paths: p.refs.slice(-SEND_REFS).map((r) => r.path) }));
+export const isStaffName = (name?: string | null): name is string => !!name && name !== NOT_A_PERSON && name !== SOMEONE_ELSE;
+
+/** The people whose reference crops go to Bunny with this burst: seen most recently first. Numbers
+ *  given the same name are one person, under the first number, with each number's newest look. */
+export function toShow(day: DayPeople | null, names: Record<string, string> = {}): { id: number; paths: string[] }[] {
+  const groups = new Map<string, DayPerson[]>();
+  for (const p of day?.people || []) {
+    if (!p.refs.length) continue;
+    const name = names[slotOf(p.id)];
+    const k = isStaffName(name) ? `n:${name}` : `p:${p.id}`;
+    groups.set(k, [...(groups.get(k) || []), p]);
+  }
+  const newestFirst = (a: { at: string }, b: { at: string }) => b.at.localeCompare(a.at);
+  return [...groups.values()].map((g) => {
+    const refs = g.length === 1 ? g[0].refs.slice(-SEND_REFS).reverse()
+      : [...g.map((p) => p.refs[p.refs.length - 1]).sort(newestFirst), ...g.flatMap((p) => p.refs.slice(0, -1)).sort(newestFirst)].slice(0, SEND_NAMED_REFS);
+    return { id: Math.min(...g.map((p) => p.id)), last: g.reduce((m, p) => (p.last > m ? p.last : m), ''), paths: refs.reverse().map((r) => r.path) };
+  }).sort((a, b) => b.last.localeCompare(a.last)).slice(0, SEND_PEOPLE).map(({ id, paths }) => ({ id, paths }));
+}
+
+/** The day's tags: per name, how many; the numbers still unnamed (open); named once with a later photo
+ *  waiting (ask); names short of TAGS_NEEDED; complete when nothing is open and every name has enough.
+ *  Someone else and Not a person need no tags. */
+export function tagState(slots: { slot: string; name: string | null }[], confirms: Record<string, Confirm>) {
+  const tags: Record<string, number> = {};
+  for (const s of slots) if (isStaffName(s.name)) tags[s.name] = (tags[s.name] || 0) + 1 + (confirms[s.slot]?.name === s.name ? 1 : 0);
+  const open = slots.filter((s) => !s.name).map((s) => s.slot);
+  const ask = slots.filter((s) => isStaffName(s.name) && tags[s.name] < TAGS_NEEDED && confirms[s.slot]?.photo && !confirms[s.slot].name).map((s) => s.slot);
+  const short = Object.keys(tags).filter((n) => tags[n] < TAGS_NEEDED).sort();
+  return { tags, open, ask, short, complete: !open.length && !short.length && Object.keys(tags).length > 0 };
+}
+
+/** Whether this sighting of a named number is due a photo to confirm it (a second tag). */
+export function wantsConfirm(slot: string, name: string | undefined, tags: Record<string, number>, c: Confirm | undefined, first: string, clock: string): boolean {
+  if (!/^p\d+$/.test(slot) || !isStaffName(name) || (tags[name] || 0) >= TAGS_NEEDED || c?.photo) return false;
+  return toMin(clock) - toMin(c?.after || first) >= CONFIRM_AFTER_MIN;
 }
 
 /**
