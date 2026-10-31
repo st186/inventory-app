@@ -64,20 +64,21 @@ function useTimesheetsWaiting(enabled: boolean, employeeId: string | null) {
 // The month-end momo count (owner, 29 Oct 2026: due on the month's last day; reminders from 6 PM
 // the day before, server send-stock-count-reminders). Shown from 6 PM the day before until it is
 // in; the store's latest count is fetched only on those two days.
-function useMonthEndCount(store: string | null, today: string, now: number, token: string) {
+// `place`: the store, or the production house (owner, 31 Oct 2026: the production house counts too).
+function useMonthEndCount(place: string | null, today: string, now: number, token: string, kind: 'store' | 'production_house' = 'store') {
   const nextMonth = new Date(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) + 32 * 86400000).toISOString().slice(0, 7);
   const last = new Date(Date.parse(`${nextMonth}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
   const eve = new Date(Date.parse(`${last}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
-  const show = !!store && (today === last || (today === eve && now >= 18 * 60));
+  const show = !!place && (today === last || (today === eve && now >= 18 * 60));
   const [countedAt, setCountedAt] = useState<string | null>(null);
   useEffect(() => {
-    if (!show || !store || !token) return;
+    if (!show || !place || !token) return;
     let alive = true;
-    getLastRecalibration(token, store, 'store')
+    getLastRecalibration(token, place, kind)
       .then((r: any) => { if (alive) setCountedAt(typeof r?.lastRecalibration === 'string' ? r.lastRecalibration : null); })
       .catch(() => undefined);
     return () => { alive = false; };
-  }, [show, store, token]);
+  }, [show, place, token, kind]);
   return { show, isLastDay: today === last, last, done: !!countedAt && countedAt >= `${eve}T18:00` };
 }
 
@@ -95,7 +96,7 @@ function InchargeHome() {
   const suppliedStoreIds = useMemo(() => (isProduction ? getAssignedStoreIds(user as any, stores as any) : []), [isProduction, user, stores]);
   const today = clock.today;
   const now = clock.minutes;
-  const monthEnd = useMonthEndCount(store, today, now, token);
+  const monthEnd = useMonthEndCount(isProduction ? houseIds[0] || null : store, today, now, token, isProduction ? 'production_house' : 'store');
 
   const profile = useProfileCompletion(token);
   const focusProfile = useFocusProfile();
@@ -184,7 +185,7 @@ function InchargeHome() {
         key: 'stock-count', icon: ListChecks, title: t('home.task.stockCount'), due: monthEnd.isLastDay ? 1320 : 1439,
         meta: monthEnd.done ? t('home.task.stockCountDone') : monthEnd.isLastDay ? t('home.task.stockCountToday') : t('home.task.stockCountTomorrow'),
         status: monthEnd.done ? 'done' : monthEnd.isLastDay ? (now >= 20 * 60 ? 'late' : 'due') : 'later',
-        onOpen: () => open('stock/requests'),
+        onOpen: () => open(isProduction ? 'production/requests' : 'stock/requests', { tab: 'count' }),
       });
     }
     if (!isProduction && store) {

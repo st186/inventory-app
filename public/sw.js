@@ -120,7 +120,7 @@ const NOTIFICATION_VIEW_MAP = {
   stock_request_partial: { view: 'analytics', tab: 'production-requests' },
   stock_request_cancelled: { view: 'analytics', tab: 'production-requests' },
   stock_request_reminder: { view: 'analytics', tab: 'production-requests' },
-  stock_count_reminder: { view: 'analytics', tab: 'production-requests' },
+  stock_count_reminder: { view: 'stock-requests', tab: 'count' }, // opens the count itself (31 Oct 2026)
   compliance_due: { view: 'compliance' },
   compliance_overdue: { view: 'compliance' },
   stock_request_missed: { view: 'analytics', tab: 'production-requests' },

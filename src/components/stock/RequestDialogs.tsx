@@ -83,7 +83,7 @@ export function ReviewRequestSheet({ vm }: { vm: StockRequestsVM }) {
 
 export function RequestDialogs({ vm }: { vm: StockRequestsVM }) {
   const {
-    context, singleScopedStoreId, showStoreRecalibration, setShowStoreRecalibration, showThresholdSettings, setShowThresholdSettings, stockThresholds,
+    context, singleScopedStoreId, showStoreRecalibration, setShowStoreRecalibration, showHouseRecalibration, setShowHouseRecalibration, myHouseIds, showThresholdSettings, setShowThresholdSettings, stockThresholds,
     setStockThresholds, showRecalibrationReports, setShowRecalibrationReports, showStockWastageModal, setShowStockWastageModal, finishedProducts,
     showPlateConfigModal, setShowPlateConfigModal, momosPerPlate, setMomosPerPlate, receivingRequest, setReceivingRequest, loadRequests,
   } = vm;
@@ -99,6 +99,15 @@ export function RequestDialogs({ vm }: { vm: StockRequestsVM }) {
           onClose={() => setShowStoreRecalibration(false)}
           isProductionHouse={false}
           isStoreFinishedProducts={true}
+        />
+      )}
+
+      {showHouseRecalibration && myHouseIds[0] && (
+        <MonthlyStockRecalibration
+          context={context}
+          selectedStoreId={myHouseIds[0]}
+          onClose={() => setShowHouseRecalibration(false)}
+          isProductionHouse={true}
         />
       )}
 

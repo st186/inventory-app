@@ -15681,9 +15681,9 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
     if (!def || today !== (def.day === 'eve' ? eve : last)) return c.json({ success: true, skipped: 'not a count reminder time', today, slot: slot || null });
     // Counted: a stock count for the store saved since 6 PM the day before the last day (IST).
     const since = `${eve}T18:00`;
-    const counted = new Set((await getAllByPrefixWithRetry('recalibration_'))
-      .filter((r: any) => r?.locationType === 'store' && typeof r.date === 'string' && r.date >= since)
-      .map((r: any) => r.locationId));
+    const recentCounts = (await getAllByPrefixWithRetry('recalibration_'))
+      .filter((r: any) => typeof r?.date === 'string' && r.date >= since && r.status !== 'rejected');
+    const counted = new Set(recentCounts.filter((r: any) => r.locationType === 'store').map((r: any) => r.locationId));
     const stores = (await kv.getByPrefix('store:')).filter((st: any) => st?.id && st.status !== 'inactive' && st.status !== 'closed');
     const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
     const lastName = new Date(`${last}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -15698,12 +15698,36 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
         continue;
       }
       const title = def.day === 'eve' ? `Month-end momo count tomorrow (${lastName})` : `Count the momos today: month-end stock count`;
+      // Tapping it opens the count (notificationNavigation: stock_count_reminder, 31 Oct 2026).
       const message = def.day === 'eve'
         ? `${store.name}: tomorrow is the month-end stock count. Count every momo type in the freezer and enter it in Stock > Count stock. Reminder ${def.n} of 5.`
-        : `${store.name}: count every momo type in the freezer and enter it in Stock > Count stock today. It shows how many momos went missing this month. Reminder ${def.n} of 5.`;
+        : `${store.name}: count every momo type in the freezer and enter it today - tap here to open the count. It shows how many momos went missing this month. Reminder ${def.n} of 5.`;
       for (const u of to) await notifyUser(u.authUserId, 'stock_count_reminder', title, message, undefined, last).catch(() => undefined);
       await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
       results.push({ store: store.name, to: to.map((u: any) => u.name) });
+    }
+    // The production house's count too (owner, 31 Oct 2026: Vijay was never reminded): to its
+    // production incharge, the same five times, until a count is saved for the house - after the
+    // day's momos have gone. A count saved under a store id the house supplies (older records) counts.
+    const countHouses = (await getAllByPrefixWithRetry('production_house_')).filter((h: any) => h?.id && h.status !== 'inactive');
+    for (const house of countHouses) {
+      const storeIds = new Set(stores.filter((st: any) => st.productionHouseId === house.id).map((st: any) => st.id));
+      if (recentCounts.some((r: any) => r.locationType === 'production_house' && (r.locationId === house.id || storeIds.has(r.locationId)))) continue;
+      const onceKey = `stock-count-reminder:${house.id}:${last.slice(0, 7)}:${slot}`;
+      if (await kv.get(onceKey)) continue;
+      const to = staff.filter((u: any) => u.designation === 'production_incharge'
+        && (u.storeId === house.id || u.productionHouseId === house.id || (u.assignedProductionHouseIds || []).includes(house.id)));
+      if (dry) {
+        results.push({ house: house.name, to: to.map((u: any) => u.name), dry: true });
+        continue;
+      }
+      const title = def.day === 'eve' ? `Month-end momo count tomorrow (${lastName})` : `Count the momos today: month-end stock count`;
+      const message = def.day === 'eve'
+        ? `${house.name}: tomorrow is the month-end stock count. After the day's momos have gone, count every momo type in the freezer and enter it in Production > Requests > Count stock. Reminder ${def.n} of 5.`
+        : `${house.name}: after the day's momos have gone, count every momo type in the freezer and enter it today - tap here to open the count. Reminder ${def.n} of 5.`;
+      for (const u of to) await notifyUser(u.authUserId, 'stock_count_reminder', title, message, undefined, last).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+      results.push({ house: house.name, to: to.map((u: any) => u.name) });
     }
     // Every 3 months the equipment check goes with the momo count (owner, 30 Oct 2026): each store
     // and production house incharge, same five reminders, until their place's check is saved.

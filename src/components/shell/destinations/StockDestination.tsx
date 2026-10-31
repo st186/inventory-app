@@ -37,6 +37,7 @@ export function StockDestination({ spec, params }: { spec: ScreenSpec; params: R
           <ProductionRequests
             context={context}
             highlightRequestId={params.highlight || null}
+            openCount={params.tab === 'count'}
             selectedStoreId={stockRequestsStoreId(user, stores, selectedStoreId)}
             onNavigateToManageItems={callbacks.toManageItems}
           />

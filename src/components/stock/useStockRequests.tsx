@@ -29,6 +29,8 @@ import { dayLabel, requestStatusWord } from './stockShared';
 export interface StockRequestsProps {
   context: InventoryContextType;
   highlightRequestId?: string | null;
+  /** A month-end count reminder was tapped (route tab=count): open the count once loaded. */
+  openCount?: boolean;
   selectedStoreId?: string | null;
   onNavigateToManageItems?: () => void;
 }
@@ -134,6 +136,8 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   
   // Store recalibration modal state
   const [showStoreRecalibration, setShowStoreRecalibration] = useState(false);
+  // The production house's month-end count (owner, 31 Oct 2026: from the stock jobs, like the store's).
+  const [showHouseRecalibration, setShowHouseRecalibration] = useState(false);
   
   // Each store in scope: its last stock count that wasn't rejected and the wastage logged since
   // (stock/countMath.ts). null while loading.
@@ -1155,6 +1159,8 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     setExpandedDates,
     showStoreRecalibration,
     setShowStoreRecalibration,
+    showHouseRecalibration,
+    setShowHouseRecalibration,
     storeBases,
     showThresholdSettings,
     setShowThresholdSettings,

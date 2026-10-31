@@ -95,7 +95,7 @@ export function StoreStockOnHand({ vm, defaultOpen = false }: { vm: StockRequest
 export function StockJobs({ vm }: { vm: StockRequestsVM }) {
   const { t } = useT();
   const {
-    canViewWorkflowSummary, isStoreIncharge, isClusterHead, singleScopedStoreId, setShowStockWastageModal, setShowStoreRecalibration,
+    canViewWorkflowSummary, isStoreIncharge, isProductionHead, myHouseIds, setShowHouseRecalibration, isClusterHead, singleScopedStoreId, setShowStockWastageModal, setShowStoreRecalibration,
     setShowThresholdSettings, setShowPlateConfigModal, setShowRecalibrationReports, onNavigateToManageItems, momosPerPlate,
   } = vm;
   const needStore = (open: () => void, message: string) => () => {
@@ -111,6 +111,10 @@ export function StockJobs({ vm }: { vm: StockRequestsVM }) {
   }
   if (isStoreIncharge) {
     rows.push(<ListRow key="count" icon={ClipboardCheck} title={t('stock.count.title')} subtitle={t('stock.count.caption')} onClick={() => setShowStoreRecalibration(true)} />);
+  }
+  // The production house's month-end count (owner, 31 Oct 2026): it was only under Insights.
+  if (isProductionHead && myHouseIds.length > 0) {
+    rows.push(<ListRow key="count-house" icon={ClipboardCheck} title={t('stock.count.title')} subtitle={t('stock.count.houseCaption')} onClick={() => setShowHouseRecalibration(true)} />);
   }
   if (isClusterHead) {
     rows.push(<ListRow key="alerts" icon={SlidersHorizontal} title="Stock alert levels" subtitle="When a momo shows Low or Critical" onClick={needStore(() => setShowThresholdSettings(true), 'Pick one store to edit its alert levels')} />);
