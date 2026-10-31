@@ -915,6 +915,38 @@ export interface OutItem {
 }
 export interface OutOfStockDay { storeId: string; storeName: string; date: string; at: string; items: OutItem[]; ownerToldAt?: string }
 
+// Insights > Rush hours (server rushInsights.ts): when orders come, the rush, what sells in it, the
+// next 7 days and the steamer plan (owner, 1 Nov 2026).
+export type RushFilling = 'chicken' | 'chicken_cheese' | 'veg' | 'paneer' | 'corn_cheese';
+export interface RushWindow { from: string; to: string; ordersPerHour: number }
+export interface RushProfile {
+  weekday: number; days: number; ordersPerDay: number; rush: RushWindow[]; orders: number[]; high: number[];
+  steamer: Record<RushFilling, number[]>; channels: { counter: number[]; zomato: number[]; swiggy: number[] };
+}
+export interface RushMixSide { orders: number; pieces: number; byFilling: Record<RushFilling, number>; byStyle: Record<string, number>; steamerPieces: number }
+export interface SteamerRun { filling: RushFilling; from: string; to: string; keep: number; usual: number; peakLow: number; peakFrom: string; peakTo: string; firstBatchAt: string; batches: number }
+export interface SteamerSettings { steamMin: number; holdMin: number; serviceLevel: number }
+export interface RushInsights {
+  storeId: string; storeName: string; today: string; weeks: number; days: number; orders: number; exactShare: number;
+  slots: string[];
+  profiles: RushProfile[];
+  mix: { rush: RushMixSide; other: RushMixSide; top: { name: string; qty: number }[] };
+  forecast: { date: string; weekday: number; factor: number; orders: number[]; totalOrders: number; rush: RushWindow[] }[];
+  plan: { date: string; weekday: number; settings: SteamerSettings; runs: SteamerRun[];
+    slots: { slot: string; orders: number; plates: Record<RushFilling, number>; keep: Record<RushFilling, number>; startAt: string }[] };
+  live: { today: [number, number][]; avgOpen: (number | null)[]; daysWithLooks: number };
+  steamerStyles: string[];
+}
+
+export async function getRushInsights(storeId: string | null, date?: string, accessToken?: string): Promise<RushInsights> {
+  const q = new URLSearchParams({ ...(storeId ? { storeId } : {}), ...(date ? { date } : {}) });
+  return fetchWithAuth(`${API_BASE}/insights/rush?${q.toString()}`, await tokenOr(accessToken));
+}
+
+export async function saveSteamerSettings(storeId: string, settings: Partial<SteamerSettings>, accessToken?: string): Promise<{ settings: SteamerSettings }> {
+  return fetchWithAuth(`${API_BASE}/insights/rush/settings`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ storeId, ...settings }) });
+}
+
 export async function getStockOutDaysToExplain(accessToken?: string): Promise<{ reports: OutOfStockDay[]; reasons: { value: string; label: string }[] }> {
   return fetchWithAuth(`${API_BASE}/stock-out-day/mine`, await tokenOr(accessToken));
 }

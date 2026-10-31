@@ -41,6 +41,7 @@ import { registerRecipeRoutes } from './recipes.ts';
 import * as stockCheck from './stockCheck.ts';
 import * as liveOrders from './liveOrders.ts';
 import * as onlineStock from './onlineStock.ts';
+import * as rush from './rushInsights.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -263,6 +264,13 @@ function getCiferonOrderEntryDateIST(order: any): string | null {
   const raw = String(order?.EntryDate || '').trim();
   const m = raw.match(/^(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : null;
+}
+
+// Minutes since midnight India time of an order's EntryDate ("2026-07-28T16:40:15" -> 1000), for the
+// rush-hours page (rushInsights.ts); null when there is no time in it.
+function getCiferonOrderEntryMinIST(order: any): number | null {
+  const m = String(order?.EntryDate || '').trim().match(/^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
 function getCiferonOrderHourIST(order: any): number | null {
@@ -15983,6 +15991,8 @@ async function pollLiveOrders(opts: { alert: boolean; storeIds?: string[] }) {
           for (const o of stuck) day.orders[o.key] = { ...day.orders[o.key], alertedAt: nowIso };
         }
       }
+      // The cron's looks make the day's line of open orders (Insights > Rush hours).
+      if (opts.alert) day.timeline = [...(day.timeline || []), [istMinutesNow(), Object.values(day.orders).filter((o) => !o.goneAt).length]];
       await kv.set(key, day);
       const view = liveOrders.nowView(day, Date.now());
       results.push({ store: store.name, open: view.open, openTotal: view.openTotal, stuck: view.stuck, alerted });
@@ -16344,6 +16354,139 @@ app.post('/make-server-c2dd9b9d/stock-out-day/explain', async (c) => {
     return c.json({ success: true, report });
   } catch (error: any) {
     console.error('Error saving an out-of-stock reason:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// RUSH HOURS AND THE STEAMER PLAN (owner, 1 Nov 2026) - rushInsights.ts
+// ============================================
+// Insights > Rush hours: when the orders come (weekday x 15 minutes), the rush windows, what goes out
+// in the rush, the next 7 days' rush, and how many steamer plates to keep ready when. Orders are to
+// the minute where it's known: Step D saves entryMin from 1 Nov 2026, and order-times:{store}:{date}
+// (POST /cron/order-times) has the minutes of earlier days by order id - kept apart so the stored
+// days themselves are never rewritten (see Step D's CONFIRMED RISK).
+
+// POST /cron/order-times?from=&to= - the minutes of each order of past days (up to 20 a call).
+app.post('/make-server-c2dd9b9d/cron/order-times', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  if (inPosQuietHours()) return c.json({ error: 'Ciferon is closing its day (11:50 PM - 6:10 AM); try after 6:10 AM' }, 423);
+  const from = c.req.query('from') || '', to = c.req.query('to') || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to || addDaysToDateString(from, 19) < to) return c.json({ error: 'from and to, up to 20 days' }, 400);
+  const results: any[] = [];
+  for (const store of await liveStores()) {
+    for (let d = from; d <= to; d = addDaysToDateString(d, 1)) {
+      try {
+        const bills = await fetchBilledOrders(store, d);
+        const minutes: Record<string, number> = {};
+        for (const b of bills) {
+          const min = getCiferonOrderEntryMinIST({ EntryDate: b.entryDate });
+          if (b.orderId !== null && b.orderId !== undefined && min !== null) minutes[String(b.orderId)] = min;
+        }
+        await kv.set(`order-times:${store.id}:${d}`, { date: d, at: new Date().toISOString(), minutes });
+        results.push({ store: store.name, date: d, orders: Object.keys(minutes).length });
+      } catch (error: any) {
+        results.push({ store: store.name, date: d, error: error?.message || String(error) });
+      }
+    }
+  }
+  return c.json({ success: true, results });
+});
+
+const RUSH_KEYS = ['steamMin', 'holdMin', 'serviceLevel'] as const;
+async function rushSettings(storeId: string): Promise<rush.SteamerSettings> {
+  const saved = ((await kv.get(`rush-settings:${storeId}`)) || {}) as Partial<rush.SteamerSettings>;
+  return { ...rush.DEFAULT_STEAMER, ...Object.fromEntries(RUSH_KEYS.filter((k) => Number.isFinite(saved[k])).map((k) => [k, saved[k]])) };
+}
+async function rushViewer(auth: any, storeId: string) {
+  const actor = await stockOutActor(auth);
+  return actor.isOversight || actor.storeId === storeId;
+}
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+// GET /insights/rush?storeId=&weeks=12&date= - the owner, operations, and the store's own incharge.
+app.get('/make-server-c2dd9b9d/insights/rush', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const stores = await liveStores();
+    const storeId = c.req.query('storeId') || stores[0]?.id;
+    const store = stores.find((s: any) => s.id === storeId) || (await kv.get(`store:${storeId}`));
+    if (!store) return c.json({ error: 'Store not found' }, 404);
+    if (!(await rushViewer(auth, store.id))) return c.json({ error: 'Not your store' }, 403);
+    const weeks = Math.min(26, Math.max(2, Number(c.req.query('weeks')) || 12));
+    const today = getTodayIST();
+    const dates: string[] = [];
+    for (let i = 1; i <= weeks * 7; i++) dates.push(addDaysToDateString(today, -i));
+    const [records, times, lives] = await Promise.all([
+      kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`)),
+      kv.mget(dates.map((d) => `order-times:${store.id}:${d}`)),
+      kv.mget([today, ...dates.slice(0, 13)].map((d) => `live-orders:${store.id}:${d}`)),
+    ]) as [any[], any[], (liveOrders.LiveDay | null)[]];
+    const days = records.map((r, i) => (r ? rush.ordersOfDay({ date: dates[i], orders: r.orders || [] }, times[i]?.minutes || {}) : null)).filter((d): d is rush.Day => !!d);
+    const allOrders = days.flatMap((d) => d.orders);
+    const profiles = rush.weekdayProfiles(days);
+    const mix = rush.rushMix(days, profiles);
+    const ahead = Array.from({ length: 7 }, (_, i) => addDaysToDateString(today, i));
+    const forecast = rush.forecastDays(days, profiles, ahead);
+    const planDate = ahead.includes(c.req.query('date') || '') ? c.req.query('date')! : today;
+    const planDay = forecast.find((f) => f.date === planDate)!;
+    const settings = await rushSettings(store.id);
+    const plan = rush.steamerPlan(profiles[planDay.weekday], planDay.factor, settings);
+    // Orders open at once, from the live looks: today's line, and the last two weeks by slot.
+    const openSum = new Array(rush.SLOTS).fill(0), openN = new Array(rush.SLOTS).fill(0);
+    for (const day of lives.slice(1)) for (const [m, n] of day?.timeline || []) { const i = rush.slotOf(m); if (i >= 0) { openSum[i] += n; openN[i]++; } }
+    const round = (xs: number[]) => xs.map(r2);
+    return c.json({
+      storeId: store.id, storeName: store.name, today, weeks,
+      days: days.filter((d) => d.orders.length >= 5).length,
+      orders: allOrders.length,
+      exactShare: allOrders.length ? r2(allOrders.filter((o) => o.exact).length / allOrders.length) : 0,
+      slots: Array.from({ length: rush.SLOTS }, (_, i) => rush.slotLabel(i)),
+      profiles: profiles.map((p) => ({
+        weekday: p.weekday, days: p.days, ordersPerDay: r2(p.ordersPerDay), rush: p.rush,
+        orders: round(p.orders), high: round(p.high),
+        steamer: Object.fromEntries(rush.FILLINGS.map((f) => [f, round(p.steamer[f])])),
+        channels: { counter: round(p.channels.counter), zomato: round(p.channels.zomato), swiggy: round(p.channels.swiggy) },
+      })),
+      mix,
+      forecast: forecast.map((f) => ({ ...f, factor: r2(f.factor), orders: round(f.orders) })),
+      plan: { date: planDate, weekday: planDay.weekday, settings: plan.settings, runs: plan.runs,
+        slots: plan.slots.map((s) => ({ ...s, orders: r2(s.orders), plates: Object.fromEntries(rush.FILLINGS.map((f) => [f, r2(s.plates[f])])) })) },
+      live: {
+        today: lives[0]?.timeline || [],
+        avgOpen: openSum.map((s, i) => (openN[i] ? r2(s / openN[i]) : null)),
+        daysWithLooks: lives.slice(1).filter((d) => d?.timeline?.length).length,
+      },
+      steamerStyles: rush.STEAMER_STYLES,
+    });
+  } catch (error: any) {
+    console.error('Error building the rush hours page:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /insights/rush/settings { storeId, steamMin, holdMin, serviceLevel } - the owner and operations.
+app.post('/make-server-c2dd9b9d/insights/rush/settings', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const actor = await stockOutActor(auth);
+    if (!actor.isOversight) return c.json({ error: 'Only the owner or operations change these' }, 403);
+    const body = await c.req.json();
+    if (!body.storeId) return c.json({ error: 'storeId is needed' }, 400);
+    const clamp = (v: any, lo: number, hi: number) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : undefined);
+    const next = {
+      ...(await rushSettings(body.storeId)),
+      ...(clamp(body.steamMin, 3, 40) !== undefined ? { steamMin: clamp(body.steamMin, 3, 40) } : {}),
+      ...(clamp(body.holdMin, 5, 60) !== undefined ? { holdMin: clamp(body.holdMin, 5, 60) } : {}),
+      ...(clamp(body.serviceLevel, 0.5, 0.95) !== undefined ? { serviceLevel: clamp(body.serviceLevel, 0.5, 0.95) } : {}),
+    };
+    await kv.set(`rush-settings:${body.storeId}`, next);
+    return c.json({ success: true, settings: next });
+  } catch (error: any) {
+    console.error('Error saving the steamer settings:', error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -17702,6 +17845,8 @@ async function runPosSync(targetDate?: string) {
           // (TakeAway+HomeDelivery) vs tray (DineIn) usage per order.
           orderType: o.SaleOrderType || null,
           orderHourIST: getCiferonOrderHourIST(o),
+          // To the minute, for the rush-hours page (owner, 1 Nov 2026).
+          entryMin: getCiferonOrderEntryMinIST(o),
           items: classifyOrderItems((o.OrderItemWrapperList || []).map((i: any) => ({
             ProductId: i.ProductId, ProductName: i.ProductName, Quantity: i.Quantity, Rate: i.Rate, Total: i.Total
           }))),

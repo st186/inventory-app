@@ -154,7 +154,7 @@ export const settlementAnalyticsReportingDate = (settlement: SettlementPeriodLik
  // and each view's content changed. 'datacapture' (Performance Tracker) is no longer a
  // top-level tab - it's now a collapsible section inside 'overview' (see the Analytics
  // page redesign).
- export type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends';
+ export type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends' | 'rush';
  
  // Production date range selector
  export type DateRangeType = 'today' | 'yesterday' | 'thisWeek' | 'previousWeek' | 'thisMonth' | 'previousMonth' | 'thisYear' | 'previousYear' | 'custom';
@@ -314,7 +314,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  logger.debugStore('Analytics effectiveStoreId:', effectiveStoreId);
  logger.debugStore('Analytics mode:', analyticsMode);
  const [activeView, setActiveView] = useState<ActiveView>(
- highlightRequestId || initialTab === 'production-requests' ? 'production-requests' : initialTab === 'trends' ? 'trends' : initialTab === 'cash-reconciliation' ? 'cash-reconciliation' : 'overview'
+ highlightRequestId || initialTab === 'production-requests' ? 'production-requests' : initialTab === 'trends' ? 'trends' : initialTab === 'rush' ? 'rush' : initialTab === 'cash-reconciliation' ? 'cash-reconciliation' : 'overview'
  );
  
  // Expense breakdown modal state

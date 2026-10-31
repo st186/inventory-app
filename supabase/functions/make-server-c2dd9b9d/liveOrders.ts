@@ -40,6 +40,8 @@ export type LiveDay = {
   /** The order fields Ciferon sent (names only), to see what's there */
   fields?: string[];
   error?: string | null;
+  /** [minutes since midnight India time, orders open] at each of the cron's looks (rushInsights.ts) */
+  timeline?: [number, number][];
 };
 
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -114,7 +116,7 @@ export function mergePoll(prev: LiveDay | null, at: { storeId: string; date: str
   for (const k of Object.keys(orders)) {
     if (!seenNow.has(k) && !orders[k].goneAt) orders[k] = { ...orders[k], goneAt: nowIso };
   }
-  return { storeId: at.storeId, date: at.date, orders, lastPoll: nowIso, polls: (prev?.polls || 0) + 1, fields: fields.length ? fields : prev?.fields, error: null };
+  return { storeId: at.storeId, date: at.date, orders, lastPoll: nowIso, polls: (prev?.polls || 0) + 1, fields: fields.length ? fields : prev?.fields, error: null, ...(prev?.timeline ? { timeline: prev.timeline } : {}) };
 }
 
 /** Minutes it has been open: from when it was placed, or first seen when Ciferon gave no time. */
