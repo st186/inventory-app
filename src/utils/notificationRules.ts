@@ -27,6 +27,7 @@ const ACTION = new Set([
   'compliance_due',
   'payslip_ready', 'performance_report', 'performance_due', // payslips and monthly performance notes (performance.ts)
   'cctv_ppe', // a camera saw someone without cap, gloves or apron (cctv.ts)
+  'cctv_ppe_still', // the same, 3 camera checks in a row (cctv.ts, roundupRules.ts)
   'asset_missing', 'equipment_check_due', // lost equipment, and the 3-monthly equipment check (assets.ts)
   'burger_check', // burger buns bought and burgers sold don't add up (burgerCheck.ts)
 ]);
@@ -109,6 +110,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   workplace_due: 'ছবি তোলার সময়', workplace_checked: 'ছবি দেখা হয়েছে',
   payslip_ready: 'বেতনের স্লিপ তৈরি', performance_report: 'কাজের মূল্যায়ন', performance_due: 'মূল্যায়ন লিখুন',
   cctv_ppe: 'টুপি / গ্লাভস / অ্যাপ্রন নেই', cctv_intruder: 'কাজের সময়ের বাইরে কেউ ঢুকেছে',
+  cctv_ppe_still: 'এখনও টুপি / অ্যাপ্রন নেই', ppe_reminder: 'টুপি, গ্লাভস, অ্যাপ্রন পরুন', bunny_roundup: 'বানির সারাংশ',
   asset_missing: 'যন্ত্রপাতি হারিয়েছে', equipment_check_due: 'যন্ত্রপাতি মিলিয়ে দেখুন', equipment_check_done: 'যন্ত্রপাতি মেলানো হয়েছে',
   opening_due: 'দোকান খোলার চেকলিস্ট', opening_late: 'চেকলিস্ট বাকি আছে',
   supply_low: 'জিনিস কম আছে', supply_sorted: 'জিনিসের খবর', shopping_list: 'কেনাকাটার তালিকা',

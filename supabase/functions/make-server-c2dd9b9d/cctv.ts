@@ -29,12 +29,19 @@
 // Numbered people (owner, 30 Oct 2026): a PC with tools/kitchen-ai draws a numbered box round each
 // person and sends the boxes too; Bunny then says which of the day's people each box is, from their
 // reference crops, so everyone keeps one number ("p3") all day and Who is who shows their box.
+// Who hears about PPE (owner, 31 Oct 2026, roundupRules.ts): the place's incharge - the day's first
+// problem buzzes, later ones add to that row; after 2 bad checks in a row the crew on shift get a
+// Bengali reminder (at most hourly; the incharge can also tap Remind); after 3, the incharge and the
+// operations managers get one firmer alert. The owner and operations read it in Bunny's roundup
+// (1 PM, 9 PM) instead of each alert. After-hours alerts still go to everyone at once.
+//   ppe-day:{cameraId}:{date}   the day's run of bad checks, first problem, reminders sent
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtBurst, aiLookAtCamera, type BurstLook } from './insights.ts';
 import { BURST, PPE_ITEMS, burstInHours, cleanFaces, decide, inHours, istClock, minutesPerFrame, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
 import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson } from './activityRules.ts';
 import { addRef, assign, cleanNumbered, mergeSamePerson, slotOf, toShow, type DayPeople, type NumberedBody } from './cameraPeople.ts';
+import { emptyPpeDay, ppeStep, type PpeDay } from './roundupRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
 const KEEP_DAYS = 30;
@@ -139,6 +146,46 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       || (e.designation === designation && [e.storeId, e.productionHouseId, ...(e.assignedStoreIds || []), ...(e.assignedProductionHouseIds || [])].map(String).includes(cam.placeId))
     ));
   }
+  const inchargeDesignation = (cam: Camera) => (cam.placeKind === 'store' ? 'store_incharge' : 'production_incharge');
+  // The place's incharge (or, with none, the operations managers) and the operations managers.
+  async function inchargesOf(cam: Camera) {
+    const all = await recipients(cam);
+    const inc = all.filter((e: any) => e.designation === inchargeDesignation(cam));
+    return inc.length ? inc : all.filter((e: any) => e.role === 'manager' && !['store_incharge', 'production_incharge'].includes(e.designation));
+  }
+  async function opsOf(cam: Camera) {
+    return (await recipients(cam)).filter((e: any) => e.role === 'manager' && !['store_incharge', 'production_incharge'].includes(e.designation));
+  }
+  // The crew checked in at the place now: not the incharge, a manager or the owner.
+  async function crewOnShift(cam: Camera): Promise<any[]> {
+    const all = await deps.getAllByPrefix('unified-employee:');
+    const here = all.filter((e: any) => e?.employeeId && e.authUserId && !['inactive', 'archived'].includes(e.status) && e.role !== 'cluster_head' && e.role !== 'manager'
+      && e.designation !== inchargeDesignation(cam)
+      && [e.storeId, e.productionHouseId, ...(e.assignedStoreIds || []), ...(e.assignedProductionHouseIds || [])].map(String).includes(cam.placeId));
+    const today = istDate(Date.now());
+    const yesterday = addDays(today, -1);
+    const out: any[] = [];
+    for (const e of here) {
+      const recs = await Promise.all([today, yesterday].map((d) => deps.kv.get<any>(`punch:${e.employeeId}:${d}`)));
+      if (recs.some((x) => x?.in && !x?.out)) out.push(e);
+    }
+    return out;
+  }
+  const ITEM_BN: Record<string, string> = { cap: 'টুপি', gloves: 'গ্লাভস', apron: 'অ্যাপ্রন' };
+  // A Bengali reminder to the crew on shift: what the camera saw missing, and when.
+  async function remindCrew(cam: Camera, missing: Partial<Record<PpeItem, number>>, atIso: string): Promise<number> {
+    const crew = await crewOnShift(cam);
+    const items = (PPE_ITEMS.filter((i) => (missing[i] || 0) > 0) as string[]);
+    const list = items.length ? items : cam.checks;
+    const at = istClock(Date.parse(atIso));
+    for (const e of crew) {
+      await deps.notifyUser?.(e.authUserId, 'ppe_reminder', `${list.map((i) => ITEM_BN[i] || i).join(', ')} পরে নিন`,
+        `ক্যামেরায় দেখা গেছে কেউ কেউ ${list.map((i) => ITEM_BN[i] || i).join(', ')} ছাড়া কাজ করছেন (${at})। এখনই পরে নিন। · The camera saw people without ${list.join(', ')} at ${at}. Please put them on now.`,
+        undefined, atIso.slice(0, 10)).catch(() => undefined);
+    }
+    return crew.length;
+  }
+
   // Who is checked in at the camera's place right now (shift clock: in and not yet out, today or a
   // shift that started yesterday).
   async function onShift(cam: Camera): Promise<string[]> {
@@ -375,7 +422,18 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       // Someone checked in here after hours is staff working late; so is a recognised colleague.
       if (d.alert === 'intruder' && (staff.length || onlyKnownStaff(faces, look.peopleCount))) d.alert = null;
       const seen = faces?.names || [];
-      await deps.kv.set(`cctv-check:${cam.id}:${now}`, { at: now, kind, peopleCount: look.peopleCount, missing: d.missing, alert: d.alert, note: look.note, onShift: staff, seen, unknownFaces: faces?.unknown || 0, ...(burst ? { frames: images.length } : {}) });
+      // Who was missing what, by the day's numbers (Who is who names them in the roundup).
+      const missingBy = kind === 'scheduled'
+        ? ((look as any).people || []).map((p: any) => ({ id: typeof p.id === 'number' ? p.id : null, items: cam.checks.filter((i) => p?.[i] === 'no') })).filter((m: any) => m.items.length)
+        : [];
+      await deps.kv.set(`cctv-check:${cam.id}:${now}`, { at: now, kind, peopleCount: look.peopleCount, missing: d.missing, ...(missingBy.length ? { missingBy } : {}), alert: d.alert, note: look.note, onShift: staff, seen, unknownFaces: faces?.unknown || 0, ...(burst ? { frames: images.length } : {}) });
+      // The day's run of bad PPE checks (roundupRules.ts): who is told, and whether the crew are reminded.
+      let ppe: ReturnType<typeof ppeStep> | null = null;
+      if (kind === 'scheduled' && cam.checks.length) {
+        const dayKey = `ppe-day:${cam.id}:${istDate(nowMs)}`;
+        ppe = ppeStep((await deps.kv.get<PpeDay>(dayKey)) || emptyPpeDay(), { at: now, peopleCount: look.peopleCount, missing: d.missing }, nowMs);
+        await deps.kv.set(dayKey, ppe.day);
+      }
       if (kind === 'scheduled' && cam.activity) {
         await (burst ? recordBurst(cam, nowMs, burst, images, numbered?.photos) : recordActivity(cam, nowMs, (look as any).people, image))
           .catch((e) => console.error('[cctv] activity not counted:', String(e?.message || e).slice(0, 120)));
@@ -398,11 +456,23 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         const message = d.alert === 'intruder'
           ? `${look.peopleCount} ${look.peopleCount === 1 ? 'person' : 'people'} seen by ${cam.name} at ${at} (working hours ${cam.from}-${cam.to})${faces?.unknown ? `, ${faces.unknown} face${faces.unknown === 1 ? '' : 's'} not recognised` : ''}${seen.length ? `; recognised: ${seen.join(', ')}` : ''}. Open Cameras to see the photo. · কাজের সময়ের বাইরে কেউ ঢুকেছে`
           : `${missingText(d.missing)} at ${at} (${cam.name}).${seen.length ? ` Seen: ${seen.join(', ')}.` : ''}${staff.length ? ` On shift: ${staff.join(', ')}.` : ''} Open Cameras to see the photo. · টুপি / গ্লাভস / অ্যাপ্রন নেই`;
-        for (const r of await recipients(cam)) {
+        // After hours: everyone at once. PPE: the place's incharge (the day's first buzzes, the rest add to that row).
+        for (const r of d.alert === 'intruder' ? await recipients(cam) : await inchargesOf(cam)) {
           await deps.notifyUser?.(r.authUserId, d.alert === 'intruder' ? 'cctv_intruder' : 'cctv_ppe', title, message, id, now.slice(0, 10)).catch(() => undefined);
         }
         cleanup(cam.id).catch(() => undefined);
       }
+      if (ppe?.tell === 'still') {
+        const runFrom = istClock(Date.parse(ppe.day.badAt[ppe.day.badAt.length - ppe.day.streak] || now));
+        const to = new Map<string, any>();
+        for (const e of [...await inchargesOf(cam), ...await opsOf(cam)]) to.set(e.authUserId, e);
+        for (const authUserId of to.keys()) {
+          await deps.notifyUser?.(authUserId, 'cctv_ppe_still', `Still no ${missingText(d.missing).replace(/^\d+ (people|person) without /, '').split(',')[0]} at ${place}`,
+            `${ppe.day.streak} camera checks in a row since ${runFrom}: ${missingText(d.missing)} at the last one.${ppe.day.reminders.length ? ` The crew were reminded at ${ppe.day.reminders.map((x) => istClock(Date.parse(x))).join(', ')}.` : ''} Check it in person.`,
+            alert?.id, now.slice(0, 10)).catch(() => undefined);
+        }
+      }
+      if (ppe?.remindCrew) await remindCrew(cam, d.missing, now).catch(() => 0);
       // A burst's per-frame reading goes back to the camera PC, which keeps it with the frames as
       // first labels for the kitchen model it trains (tools/kitchen-ai; owner, 30 Oct 2026).
       // Numbered: each box's day number too (the same person all day, for the model to learn who is who).
@@ -535,6 +605,28 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const next = { ...a, mark: body.mark, markedBy: r.actor!.name, markedAt: new Date().toISOString() };
       await deps.kv.set(`cctv-alert:${a.id}`, next);
       return c.json({ alert: next });
+    } catch (err) { return fail(c, err); }
+  });
+
+  // POST /cctv/alerts/:id/remind - the incharge (or operations, or the owner) reminds the crew on
+  // shift at the alert's place, in Bengali. At most once in 10 minutes a place.
+  app.post(`${P}/cctv/alerts/:id/remind`, async (c: any) => {
+    const r = await actorOf(deps, c);
+    if (r.error) return r.error;
+    try {
+      const a = await deps.kv.get<Alert>(`cctv-alert:${c.req.param('id')}`);
+      if (!a) return c.json({ error: 'Alert not found' }, 404);
+      const cam = await deps.kv.get<Camera>(`cctv-camera:${a.cameraId}`);
+      if (!cam || !seesPlace(r.actor!, cam)) return c.json({ error: 'Not allowed' }, 403);
+      const nowMs = Date.now();
+      const dayKey = `ppe-day:${cam.id}:${istDate(nowMs)}`;
+      const day = (await deps.kv.get<PpeDay>(dayKey)) || emptyPpeDay();
+      const last = day.reminders[day.reminders.length - 1];
+      if (last && nowMs - Date.parse(last) < 10 * 60000) return c.json({ sent: 0, already: last });
+      const sent = await remindCrew(cam, a.missing || {}, new Date(nowMs).toISOString());
+      const at = new Date(nowMs).toISOString();
+      await deps.kv.set(dayKey, { ...day, lastReminderAt: at, reminders: [...day.reminders, at] });
+      return c.json({ sent });
     } catch (err) { return fail(c, err); }
   });
 

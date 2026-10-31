@@ -766,13 +766,13 @@ async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; i
     }
     return;
   }
-  // Any other AI flag: the place's incharge and the owner (owner, 28 Oct 2026).
+  // Any other AI flag: the place's incharge (owner, 28 Oct 2026). The owner reads it in Bunny's
+  // roundup at 1 PM and 9 PM instead (owner, 31 Oct 2026; roundupRules.ts).
   const to = new Map<string, any>();
   for (const inc of inchargesOf(employees, o.it.locationKind, o.it.locationId, locs)) {
     if (empIdOf(inc) === o.employeeId || empIdOf(inc) === o.actorEmployeeId) continue;
     if (inc.authUserId) to.set(inc.authUserId, inc);
   }
-  for (const e of (await deps.getAllClusterHeads()) || []) if (e?.authUserId) to.set(e.authUserId, e);
   for (const authUserId of to.keys()) {
     await safeNotify(deps, authUserId, 'workplace_flag', `AI flagged ${o.it.name} at ${locName}`,
       `${person?.name || 'A staff member'}'s photo scored ${o.it.aiScore}/10${en ? `: ${en}` : ''}. Open Workplace checks to confirm or mark it OK.`, related, o.date, { imageUrl, photoCheck });
@@ -1394,7 +1394,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       if (!all.length) return c.json({ success: true, people: 0 });
       const byPerson = new Map<string, Assigned[]>();
       for (const a of all) byPerson.set(a.assigneeId, [...(byPerson.get(a.assigneeId) || []), stripAssignee(a)]);
-      const [clusterHeads, sentRaw] = await Promise.all([deps.getAllClusterHeads(), kv.get<any>(sentKey(today))]);
+      const sentRaw = await kv.get<any>(sentKey(today));
       const sent = {
         date: today, due: { ...(sentRaw?.due || {}) } as Record<string, string[]>, last: { ...(sentRaw?.last || {}) } as Record<string, string[]>,
         missed: { ...(sentRaw?.missed || {}) } as Record<string, boolean>,
@@ -1444,7 +1444,8 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
             `${pending.length} still to send: ${names}.${covering.length ? ` Covering for ${covering.join(', ')} (on leave).` : ''} · ${bnBy(end)} ছবি দিন, সময় প্রায় শেষ`, undefined, today)) duePushes++;
         }
 
-        // Window closed without a photo: once a day per person, to the incharge(s) and the owner.
+        // Window closed without a photo: once a day per person, to the incharge(s). The owner reads it
+        // in Bunny's roundup (owner, 31 Oct 2026).
         const missed = list.filter((a) => nowMin > toMin(a.end) && !uploaded[a.id]);
         if (missed.length && !sent.missed[employeeId]) {
           sent.missed[employeeId] = true;
@@ -1453,7 +1454,6 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
           const place = findLoc(locs, first.locationKind, first.locationId);
           const recipients = new Map<string, any>();
           for (const e of inchargesOf(employees, first.locationKind, first.locationId, locs)) if (e.authUserId) recipients.set(e.authUserId, e);
-          for (const e of clusterHeads || []) if (e?.authUserId) recipients.set(e.authUserId, e);
           if (person?.authUserId) recipients.delete(person.authUserId);
           const names = missed.slice(0, 5).map((a) => a.name).join(', ') + (missed.length > 5 ? ` +${missed.length - 5}` : '');
           for (const authUserId of recipients.keys()) {

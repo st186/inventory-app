@@ -54,6 +54,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 export const getCameras = () => call<{ cameras: Camera[]; canManage: boolean }>('/cctv/cameras');
 export const getAlerts = () => call<{ alerts: Alert[] }>('/cctv/alerts').then((r) => r.alerts);
 export const markAlert = (id: string, mark: 'correct' | 'false' | 'staff') => call<{ alert: Alert }>(`/cctv/alerts/${id}/mark`, { method: 'POST', body: JSON.stringify({ mark }) });
+// A Bengali reminder to the crew on shift at the alert's place (owner, 31 Oct 2026).
+export const remindCrew = (id: string) => call<{ sent: number; already?: string }>(`/cctv/alerts/${id}/remind`, { method: 'POST', body: '{}' });
 export const addCamera = (d: CameraDraft) => call<{ camera: Camera; key: string }>('/cctv/cameras', { method: 'POST', body: JSON.stringify(d) });
 export const updateCamera = (id: string, d: Partial<CameraDraft>) => call<{ camera: Camera }>(`/cctv/cameras/${id}`, { method: 'PUT', body: JSON.stringify(d) });
 export const getActivity = (from: string, to: string) => call<Activity>(`/cctv/activity?from=${from}&to=${to}`);

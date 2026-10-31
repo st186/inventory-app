@@ -102,6 +102,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   performance_report: { view: 'home' }, // under the payslip on Home
   performance_due: { view: 'performance' },
   cctv_ppe: { view: 'cameras' },
+  cctv_ppe_still: { view: 'cameras' },
   cctv_intruder: { view: 'cameras' },
   asset_missing: { view: 'assets' },
   equipment_check_due: { view: 'assets' },

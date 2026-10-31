@@ -15,6 +15,7 @@ import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from 
 import { LEFTOVER_PLANS, OVER_PREPARED_CAUSES, checkNewReason, cleanWithLeftover, leftoverLines, piecesPerKg, poolLabel, reasonsText, uncountedPools, withLeftoverLines } from './leftoverRules.ts';
 import { checkBurgers, isBurgerPurchase, salesByDay } from './burgerCheck.ts';
 import { BUILT_IN, homeElsewhere, homeLabel, itemHomes, settleCategory } from './itemHome.ts';
+import { roundupFor } from './roundup.ts';
 import { RUNNING_HOMES, decideName, itemLike, loadAliases, reviewNewName, settleName, type EntryType, type NameReviewDeps } from './itemNameReview.ts';
 import { matchName, nameKey, type KnownItem } from './itemNames.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
@@ -10047,6 +10048,29 @@ const nameReviewDeps: NameReviewDeps = {
   categoryLabel: (category) => catLabel(category),
 };
 
+// Bunny's roundup (roundup.ts): the day's camera PPE and photo checks in a few plain lines.
+const roundupDeps = {
+  kv: kvWithRetry,
+  getAllByPrefix: (prefix: string) => getAllByPrefixWithRetry(prefix),
+  ask: async (facts: any) => {
+    const { data } = await askClaudeForJson(kvWithRetry as any, {
+      purpose: 'roundup',
+      user: { id: 'roundup', isOwner: true },
+      system: [
+        'You write the owner\'s short roundup for a small momo business in West Bengal (a production house and a store), from facts counted by the app.',
+        'Plain English, short sentences, no greeting. At most 5 lines; lead with what needs attention. Use only the numbers given - never invent or round them differently.',
+        'Say when a problem is a pattern (in every check, since the morning, worse than yesterday) rather than listing each time. Name people only when names are given ("Person 3" stays "Person 3").',
+        'End a problem line with one concrete action for the owner or the incharge. Mention reminders already sent and false alarms marked. Skip anything that is fine, except one short "all fine" line if everything is.',
+        'headline: under 60 characters, the main thing (e.g. "Caps off all morning at the production house").',
+      ].join(' '),
+      prompt: JSON.stringify(facts),
+      schema: { type: 'object', additionalProperties: false, required: ['headline', 'lines'], properties: { headline: { type: 'string' }, lines: { type: 'array', items: { type: 'string' } } } },
+      maxTokens: 700,
+    });
+    return { headline: String(data?.headline || ''), lines: Array.isArray(data?.lines) ? data.lines.map(String) : [] };
+  },
+};
+
 // The owner's list of new names to check, and the decision on one (itemNameReview.ts).
 app.get('/make-server-c2dd9b9d/item-names', async (c) => {
   const auth = await verifyUser(c.req.header('Authorization'));
@@ -10866,8 +10890,10 @@ app.post('/make-server-c2dd9b9d/notifications/test', async (c) => {
   return c.json({ sent });
 });
 
-// 7 AM and 9 PM IST (pg_cron): one buzz for what was held - overnight (quiet hours) in the
-// morning, the day's updates (digest) in the evening.
+// 7 AM, 1 PM and 9 PM IST (pg_cron): one buzz for what was held - overnight (quiet hours) in the
+// morning, the day's updates (digest) at 1 PM and in the evening. At 1 PM and 9 PM the owner and the
+// operations managers get Bunny's roundup with it (roundup.ts, owner 31 Oct 2026): the day's camera
+// PPE checks and photo checks in a few lines, instead of an alert for each.
 app.post('/make-server-c2dd9b9d/cron/notification-digest', async (c) => {
   const secret = Deno.env.get('CRON_SYNC_SECRET');
   if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
@@ -10880,6 +10906,17 @@ app.post('/make-server-c2dd9b9d/cron/notification-digest', async (c) => {
     if (error) throw new Error(error.message);
     const byUser = new Map<string, any[]>();
     for (const row of data || []) byUser.set(row.value.userId, [...(byUser.get(row.value.userId) || []), row]);
+    // Bunny's roundup, for the owner and the operations managers (with or without held updates).
+    const roundup = held === 'digest' ? await roundupFor(roundupDeps).catch((e) => { console.log('Roundup failed:', e?.message || e); return null; }) : null;
+    const readers = new Set<string>();
+    if (roundup) {
+      for (const u of await staffForNotifications()) {
+        if (u?.authUserId && (u.role === 'cluster_head' || (u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation)))) {
+          readers.add(u.authUserId);
+          if (!byUser.has(u.authUserId)) byUser.set(u.authUserId, []);
+        }
+      }
+    }
     let sent = 0;
     for (const [userId, rows] of byUser) {
       const employeeId = await getEmployeeIdByAuthUserId(userId);
@@ -10887,8 +10924,16 @@ app.post('/make-server-c2dd9b9d/cron/notification-digest', async (c) => {
       for (const r of rows) kinds.set(r.value.title, (kinds.get(r.value.title) || 0) + (Number(r.value.count) || 1));
       const total = [...kinds.values()].reduce((a, b) => a + b, 0);
       const list = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(' · ');
-      if (employeeId) {
-        await push.sendPushNotification(employeeId, {
+      const withRoundup = !!roundup && readers.has(userId);
+      // The roundup in full stays in the inbox; a quiet day's "all clear" doesn't buzz on its own.
+      if (withRoundup) await createNotification(userId, 'bunny_roundup', `Bunny's roundup: ${roundup!.headline}`, roundup!.lines.join('\n'), undefined, getTodayIST());
+      const buzzRoundup = withRoundup && roundup!.worth;
+      if (employeeId && (total > 0 || buzzRoundup)) {
+        await push.sendPushNotification(employeeId, buzzRoundup ? {
+          title: `Bunny: ${roundup!.headline}`,
+          message: `${roundup!.lines.slice(0, 3).join(' ')}${total ? ` · Also ${total} update${total === 1 ? '' : 's'} in your inbox.` : ''}`,
+          tag: 'digest_roundup', data: { type: 'bunny_roundup', category: 'update' },
+        } : {
           title: held === 'quiet' ? `While you were away: ${total} notification${total === 1 ? '' : 's'}` : `Today's updates: ${total}`,
           message: list, tag: `digest_${held}`, data: { type: 'digest', category: 'update' },
         }).catch(() => undefined);
