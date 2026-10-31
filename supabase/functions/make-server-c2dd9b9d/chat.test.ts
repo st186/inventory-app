@@ -1,7 +1,7 @@
 // Tests for chat.ts's groups. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/chat.test.ts
 import assert from 'node:assert/strict';
-import { BUNNY_ID, bunnyTurns, groupsFor, isLead, roleWord } from './chat.ts';
+import { BUNNY_ID, bunnyTurns, canManageGroup, groupsFor, isLead, roleWord } from './chat.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -51,6 +51,18 @@ test('a chat with Bunny as turns', () => {
     { role: 'user', content: '[photo] this one' },
   ]);
   assert.deepEqual(bunnyTurns([{ sender_id: me, kind: 'text', body: 'Q' }, { sender_id: BUNNY_ID, kind: 'text', body: 'A' }]), [{ role: 'user', content: 'Q' }]);
+});
+
+test('who may change a group', () => {
+  const [owner, aniket, rohan, crew1] = staff;
+  const made = { kind: 'custom', created_by: 'crew1' };
+  assert.equal(canManageGroup(crew1, made), true); // made it
+  assert.equal(canManageGroup(owner, made), true);
+  assert.equal(canManageGroup(aniket, made), true);
+  assert.equal(canManageGroup(rohan, made), false);
+  assert.equal(canManageGroup(rohan, { kind: 'place', created_by: null }), false); // automatic: owner and operations only
+  assert.equal(canManageGroup(owner, { kind: 'team', created_by: null }), true);
+  assert.equal(canManageGroup(owner, { kind: 'direct', created_by: null }), false);
 });
 
 console.log(`chat: ${passed} tests passed`);

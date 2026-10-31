@@ -962,6 +962,31 @@ export async function chatArchivedMedia(messageId: string, accessToken?: string)
 export async function chatDirect(userId: string, accessToken?: string): Promise<{ roomId: string; name: string }> {
   return fetchWithAuth(`${API_BASE}/chat/direct`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ userId }) });
 }
+// Groups people make (owner, 1 Nov 2026): new, rename, add or take out people, leave, delete.
+export type ChatGroupInfo = {
+  id: string; name: string; automatic: boolean; madeBy: string | null;
+  canRename: boolean; canChangePeople: boolean; canDelete: boolean; canLeave: boolean;
+  members: { userId: string; name: string; role: string; madeIt: boolean; me: boolean }[];
+};
+const chatGroupUrl = (roomId: string) => `${API_BASE}/chat/groups/${encodeURIComponent(roomId)}`;
+export async function chatCreateGroup(name: string, memberIds: string[], accessToken?: string): Promise<{ roomId: string; name: string }> {
+  return fetchWithAuth(`${API_BASE}/chat/groups`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ name, memberIds }) });
+}
+export async function chatGroupInfo(roomId: string, accessToken?: string): Promise<ChatGroupInfo> {
+  return fetchWithAuth(chatGroupUrl(roomId), await tokenOr(accessToken));
+}
+export async function chatRenameGroup(roomId: string, name: string, accessToken?: string): Promise<{ name: string }> {
+  return fetchWithAuth(chatGroupUrl(roomId), await tokenOr(accessToken), { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+export async function chatGroupMembers(roomId: string, change: { add?: string[]; remove?: string[] }, accessToken?: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(`${chatGroupUrl(roomId)}/members`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify(change) });
+}
+export async function chatLeaveGroup(roomId: string, accessToken?: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(`${chatGroupUrl(roomId)}/leave`, await tokenOr(accessToken), { method: 'POST' });
+}
+export async function chatDeleteGroup(roomId: string, accessToken?: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(chatGroupUrl(roomId), await tokenOr(accessToken), { method: 'DELETE' });
+}
 
 export async function getStockOutDaysToExplain(accessToken?: string): Promise<{ reports: OutOfStockDay[]; reasons: { value: string; label: string }[] }> {
   return fetchWithAuth(`${API_BASE}/stock-out-day/mine`, await tokenOr(accessToken));

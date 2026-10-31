@@ -1,10 +1,12 @@
 // Team chat (owner, 1 Nov 2026: "Can we have chat included in this app" -> groups + direct): the
 // rooms (the whole team, each store, each production house, and one-to-ones), and a room with text,
-// photos and voice notes. A notification opens its room (route param highlight = the room id).
+// photos and voice notes. An open room is its own step in the app's history (route param room), so
+// Back - the arrow, the phone's back swipe or the browser's - returns to the list; a notification
+// opens its room (route param highlight = the room id) with the list underneath.
 // Everything is read and sent through chatApi.ts; new messages arrive live. Bunny answers in its own
 // chat and when named with @Bunny in a group (server chat.ts).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Camera, Mic, PenSquare, Send, Sparkles, Square, Users, X } from 'lucide-react';
+import { ArrowLeft, Camera, Info, Mic, PenSquare, Send, Sparkles, Square, Users, X } from 'lucide-react';
 import { useT } from '../../utils/i18n';
 import * as api from '../../utils/api';
 import { compressPhoto } from '../assets/assetsApi';
@@ -18,6 +20,7 @@ import { ResponsiveModal } from '../ui/responsive-modal';
 import { Skeleton } from '../ui/skeleton';
 import { toast } from '../ui/sonner';
 import * as chat from './chatApi';
+import { GroupInfoSheet, NewGroupForm } from './GroupSheets';
 import { EVERYONE, insertMention, mentionQuery, mentionsIn, splitMentions, type Member } from './mentions';
 
 const SYNC_KEY = 'bunny-chat-synced';
@@ -31,10 +34,10 @@ const BunnyAvatar = ({ size }: { size: number }) => (
 
 export function ChatScreen({ params }: { params: Record<string, string> }) {
   const { t } = useT();
-  const { user } = useShell();
+  const { user, router } = useShell();
   const token = user.accessToken || undefined;
   const [rooms, setRooms] = useState<chat.ChatRoom[] | null>(null);
-  const [openId, setOpenId] = useState<string | null>(params.highlight || null);
+  const openId = params.room || null;
   const [me, setMe] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
 
@@ -49,7 +52,20 @@ export function ChatScreen({ params }: { params: Record<string, string> }) {
       : Promise.resolve();
     sync.finally(loadRooms);
   }, [token, loadRooms]);
-  useEffect(() => { if (params.highlight) setOpenId(params.highlight); }, [params.highlight]);
+  // From a notification: the list underneath, the room on top.
+  useEffect(() => {
+    if (!params.highlight) return;
+    router.replace('chat', {});
+    router.push('chat', { room: params.highlight });
+  }, [params.highlight]); // eslint-disable-line react-hooks/exhaustive-deps
+  const openRoom = (id: string) => router.push('chat', { room: id });
+  const closeRoom = () => { if (router.depth > 0) router.back(); else router.replace('chat', {}); };
+  // Back on the list (any way): its last lines and unread counts may have changed.
+  const wasOpen = useRef(openId);
+  useEffect(() => {
+    if (wasOpen.current && !openId) loadRooms();
+    wasOpen.current = openId;
+  }, [openId, loadRooms]);
 
   // Any new message: the list's last line and unread counts change.
   const pending = useRef<number | null>(null);
@@ -65,7 +81,9 @@ export function ChatScreen({ params }: { params: Record<string, string> }) {
         roomId={openId}
         room={open}
         me={me}
-        onBack={() => { setOpenId(null); loadRooms(); }}
+        token={token}
+        onBack={closeRoom}
+        onChanged={loadRooms}
       />
     );
   }
@@ -84,7 +102,7 @@ export function ChatScreen({ params }: { params: Record<string, string> }) {
         <ul className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
           {rooms.map((r) => (
             <li key={r.id}>
-              <button type="button" onClick={() => setOpenId(r.id)} className="flex w-full items-center gap-3 px-3.5 py-3 text-left hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+              <button type="button" onClick={() => openRoom(r.id)} className="flex w-full items-center gap-3 px-3.5 py-3 text-left hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                 {chat.isBunnyRoom(r)
                   ? <BunnyAvatar size={40} />
                   : r.kind === 'direct'
@@ -107,7 +125,7 @@ export function ChatScreen({ params }: { params: Record<string, string> }) {
           ))}
         </ul>
       )}
-      <NewMessageSheet open={newOpen} onOpenChange={setNewOpen} token={token} onOpened={(roomId) => { setNewOpen(false); setOpenId(roomId); loadRooms(); }} />
+      <NewMessageSheet open={newOpen} onOpenChange={setNewOpen} token={token} onOpened={(roomId) => { setNewOpen(false); loadRooms(); openRoom(roomId); }} />
     </div>
   );
 }
@@ -123,15 +141,22 @@ function NewMessageSheet({ open, onOpenChange, token, onOpened }: { open: boolea
   const [people, setPeople] = useState<{ userId: string; name: string; role: string }[] | null>(null);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [making, setMaking] = useState(false);
   useEffect(() => { if (open && !people) api.chatPeople(token).then((r) => setPeople(r.people)).catch(() => setPeople([])); }, [open, people, token]);
+  useEffect(() => { if (!open) setMaking(false); }, [open]);
   const shown = (people || []).filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
   const pick = async (userId: string) => {
     setBusy(userId);
     try { onOpened((await api.chatDirect(userId, token)).roomId); } catch (e) { toast.error(e instanceof Error ? e.message : t('chat.failed')); } finally { setBusy(null); }
   };
   return (
-    <ResponsiveModal open={open} onOpenChange={onOpenChange} title={t('chat.new')} size="detail">
+    <ResponsiveModal open={open} onOpenChange={onOpenChange} title={making ? t('chat.newGroup') : t('chat.new')} size="detail">
+      {making ? <NewGroupForm token={token} onMade={onOpened} onCancel={() => setMaking(false)} /> : (
       <div className="flex flex-col gap-3">
+        <button type="button" onClick={() => setMaking(true)} className="flex w-full items-center gap-3 rounded-lg py-2 text-left hover:bg-surface-2">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary"><Users className="size-5" aria-hidden="true" /></span>
+          <span className="text-body-md font-semibold text-primary">{t('chat.newGroup')}</span>
+        </button>
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('chat.search')} aria-label={t('chat.search')} />
         {people === null ? <Skeleton className="h-40 w-full rounded-lg" /> : (
           <ul className="flex flex-col divide-y divide-border">
@@ -149,11 +174,12 @@ function NewMessageSheet({ open, onOpenChange, token, onOpened }: { open: boolea
           </ul>
         )}
       </div>
+      )}
     </ResponsiveModal>
   );
 }
 
-function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.ChatRoom | null; me: string | null; onBack: () => void }) {
+function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: string; room: chat.ChatRoom | null; me: string | null; token?: string; onBack: () => void; onChanged: () => void }) {
   const { t } = useT();
   const [msgs, setMsgs] = useState<chat.ChatMessage[] | null>(null);
   const [more, setMore] = useState(false);
@@ -168,7 +194,9 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
   // @mentions (owner, 1 Nov 2026): the room's people, and the @word being typed.
   const [people, setPeople] = useState<Member[]>([]);
   const [caret, setCaret] = useState(0);
-  useEffect(() => { chat.members(roomId).then(setPeople).catch(() => setPeople([])); }, [roomId]);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [peopleVersion, setPeopleVersion] = useState(0);
+  useEffect(() => { chat.members(roomId).then(setPeople).catch(() => setPeople([])); }, [roomId, peopleVersion]);
 
   const read = useCallback(() => {
     if (Date.now() - lastRead.current < 4000) return;
@@ -247,12 +275,23 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface px-2 py-2">
         <IconButton label={t('chat.back')} icon={<ArrowLeft />} onClick={onBack} />
-        <div className="flex min-w-0 flex-col">
+        <button type="button" disabled={!group} onClick={() => setInfoOpen(true)} className="flex min-w-0 flex-1 flex-col text-left disabled:cursor-default">
           <span className="truncate text-body-md font-semibold text-text">{room?.name || t('chat.title')}</span>
           {group && room && <span className="text-label text-text-3">{t('chat.membersN', { n: room.members })}</span>}
           {bunnyRoom && <span className="text-label text-text-3">{t('chat.bunnySub')}</span>}
-        </div>
+        </button>
+        {group && <IconButton label={t('chat.groupInfo')} icon={<Info />} onClick={() => setInfoOpen(true)} />}
       </div>
+      {group && (
+        <GroupInfoSheet
+          roomId={roomId}
+          open={infoOpen}
+          onOpenChange={setInfoOpen}
+          token={token}
+          onChanged={() => { onChanged(); setPeopleVersion((n) => n + 1); }}
+          onGone={() => { onChanged(); onBack(); }}
+        />
+      )}
       <div className="flex flex-1 flex-col gap-3 px-3 py-3">
         {more && <Button size="sm" variant="ghost" className="self-center" onClick={earlier}>{t('chat.earlier')}</Button>}
         {msgs === null && <Skeleton className="h-40 w-full rounded-lg" />}

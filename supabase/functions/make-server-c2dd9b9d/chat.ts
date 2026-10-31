@@ -5,9 +5,14 @@
 //   POST /chat/direct   opens (or finds) a one-to-one room with someone
 //   GET  /chat/people   who you can message
 //   POST /chat/notify   called by the database after each message: phone notifications
+//   /chat/groups        groups people make: new, rename, add or take out people, leave, delete
 // Groups: the whole team; each store (its staff); each production house (its staff). The owner and
 // operations managers are in every group. A one-to-one room has only its two people - nobody else
 // can read it.
+// Groups people make themselves (owner, 1 Nov 2026: "How to form new groups choose people remove
+// people remove group edit group name"): anyone may make one; the person who made it, the owner and
+// operations may rename it, add and take out people, and delete it; anyone may leave it. The
+// automatic groups follow the staff list - the owner and operations may only rename them.
 // Bunny (owner, 1 Nov 2026: "will bunny be available in chat"): a member of every group, answering
 // when someone writes @Bunny, and everyone has a one-to-one chat with Bunny (room key bunny:<uid>).
 import { inBackground } from './background.ts';
@@ -47,6 +52,11 @@ const DESIGNATION_WORD: Record<string, string> = {
   rider: 'Rider', operations_incharge: 'Operations',
 };
 export const isLead = (u: any) => u?.role === 'cluster_head' || (u?.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u?.designation));
+const personName = (u: any) => String(u?.name || 'Someone').slice(0, 60);
+const cleanGroupName = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 50);
+/** May rename the group; for a made group also change its people and delete it. */
+export const canManageGroup = (self: any, room: { kind: string; created_by?: string | null }) =>
+  room.kind !== 'direct' && (isLead(self) || (room.kind === 'custom' && !!self?.authUserId && room.created_by === self.authUserId));
 const active = (u: any) => !!u?.authUserId && u.status !== 'inactive' && u.designation !== 'site_auditor' && u.role !== 'audit';
 const placesOf = (u: any) => ({
   stores: new Set([u.storeId, ...(u.assignedStoreIds || [])].filter(Boolean).map(String)),
@@ -103,8 +113,14 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     const stores = (await deps.rows('store:')).filter((s: any) => s?.id && s.status !== 'inactive' && s.status !== 'closed');
     const houses = (await deps.rows('production_house_')).filter((h: any) => h?.id && h.status !== 'inactive');
     const groups = groupsFor(staff, stores, houses);
-    const { error: roomErr } = await deps.db.from('chat_rooms').upsert(groups.map((g) => ({ key: g.key, kind: g.key === 'team' ? 'team' : 'place', name: g.name })), { onConflict: 'key' });
-    if (roomErr) throw new Error(roomErr.message);
+    // A group the owner renamed keeps its new name.
+    const { data: renamedRooms } = await deps.db.from('chat_rooms').select('key').in('key', groups.map((g) => g.key)).eq('renamed', true);
+    const keepName = new Set((renamedRooms || []).map((r: any) => r.key));
+    const toSave = groups.filter((g) => !keepName.has(g.key));
+    if (toSave.length) {
+      const { error: roomErr } = await deps.db.from('chat_rooms').upsert(toSave.map((g) => ({ key: g.key, kind: g.key === 'team' ? 'team' : 'place', name: g.name })), { onConflict: 'key' });
+      if (roomErr) throw new Error(roomErr.message);
+    }
     const { data: rooms, error: readErr } = await deps.db.from('chat_rooms').select('id,key').in('key', groups.map((g) => g.key));
     if (readErr) throw new Error(readErr.message);
     const idOf = new Map((rooms || []).map((r: any) => [r.key, r.id]));
@@ -126,6 +142,13 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     }
     // Everyone's one-to-one chat with Bunny.
     const people = staff.filter(active);
+    // Someone who left the team leaves the groups people made too.
+    const { data: madeRooms } = await deps.db.from('chat_rooms').select('id').eq('kind', 'custom');
+    if (madeRooms?.length) {
+      const { error } = await deps.db.from('chat_members').delete().in('room_id', madeRooms.map((r: any) => r.id))
+        .not('user_id', 'in', `(${[...people.map((u: any) => u.authUserId), BUNNY_ID].join(',')})`);
+      if (error) throw new Error(error.message);
+    }
     if (people.length) {
       const { error: bErr } = await deps.db.from('chat_rooms').upsert(people.map((u: any) => ({ key: `bunny:${u.authUserId}`, kind: 'direct', name: BUNNY_NAME })), { onConflict: 'key', ignoreDuplicates: true });
       if (bErr) throw new Error(bErr.message);
@@ -193,6 +216,153 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
       return c.json({ error: 'Could not open the chat' }, 500);
     }
   });
+
+  // ---- Groups people make (see the top of this file) ----
+  const loadRoom = async (id: string) => {
+    const { data } = await deps.db.from('chat_rooms').select('id,key,kind,name,created_by').eq('id', id).maybeSingle();
+    return data as { id: string; key: string; kind: string; name: string; created_by: string | null } | null;
+  };
+  const inRoom = async (roomId: string, uid: string) => {
+    const { data } = await deps.db.from('chat_members').select('user_id').eq('room_id', roomId).eq('user_id', uid).maybeSingle();
+    return !!data;
+  };
+  const tellAdded = (people: any[], by: any, room: { id: string; name: string }) => Promise.all(people.map((u) =>
+    deps.notifyUser(u.authUserId, 'chat_group', `${personName(by)} added you to ${room.name}`, 'Open the chat to say hello.', room.id).catch(() => undefined)));
+  // The group, for someone in it, or an error reply.
+  const groupFor = async (c: any, w: any) => {
+    const room = await loadRoom(c.req.param('id'));
+    if (!room || room.kind === 'direct' || !(await inRoom(room.id, w.self.authUserId))) return { error: c.json({ error: 'Group not found' }, 404) };
+    return { room };
+  };
+
+  app.post(`${P}/chat/groups`, async (c: any) => {
+    const w: any = await me(c);
+    if (w.error) return w.error;
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const name = cleanGroupName(body.name);
+      if (!name) return c.json({ error: 'Give the group a name' }, 400);
+      const ids = new Set((Array.isArray(body.memberIds) ? body.memberIds : []).map(String));
+      const people = w.staff.filter((u: any) => active(u) && ids.has(u.authUserId) && u.authUserId !== w.self.authUserId);
+      if (!people.length) return c.json({ error: 'Pick at least one person' }, 400);
+      const { data: room, error } = await deps.db.from('chat_rooms')
+        .insert({ key: `group:${crypto.randomUUID()}`, kind: 'custom', name, created_by: w.self.authUserId }).select('id,name').single();
+      if (error || !room) throw new Error(error?.message || 'not made');
+      const rows = [w.self, ...people].map((u: any) => ({ room_id: room.id, user_id: u.authUserId, name: personName(u) }));
+      rows.push({ room_id: room.id, user_id: BUNNY_ID, name: BUNNY_NAME });
+      const { error: memErr } = await deps.db.from('chat_members').insert(rows);
+      if (memErr) throw new Error(memErr.message);
+      await tellAdded(people, w.self, room);
+      return c.json({ roomId: room.id, name: room.name });
+    } catch (error: any) {
+      console.error('Could not make the group:', error);
+      return c.json({ error: 'Could not make the group' }, 500);
+    }
+  });
+
+  app.get(`${P}/chat/groups/:id`, async (c: any) => {
+    const w: any = await me(c);
+    if (w.error) return w.error;
+    const g: any = await groupFor(c, w);
+    if (g.error) return g.error;
+    const room = g.room;
+    const { data: members } = await deps.db.from('chat_members').select('user_id,name').eq('room_id', room.id);
+    const byId = new Map(w.staff.map((u: any) => [u.authUserId, u]));
+    const manage = canManageGroup(w.self, room);
+    const made = room.kind === 'custom';
+    return c.json({
+      id: room.id, name: room.name, automatic: !made,
+      madeBy: made && room.created_by ? personName(byId.get(room.created_by)) : null,
+      canRename: manage, canChangePeople: made && manage, canDelete: made && manage, canLeave: made,
+      members: (members || []).filter((m: any) => m.user_id !== BUNNY_ID)
+        .map((m: any) => ({ userId: m.user_id, name: m.name, role: roleWord(byId.get(m.user_id)), madeIt: m.user_id === room.created_by, me: m.user_id === w.self.authUserId }))
+        .sort((a: any, b: any) => Number(b.me) - Number(a.me) || a.name.localeCompare(b.name)),
+    });
+  });
+
+  app.patch(`${P}/chat/groups/:id`, async (c: any) => {
+    const w: any = await me(c);
+    if (w.error) return w.error;
+    const g: any = await groupFor(c, w);
+    if (g.error) return g.error;
+    if (!canManageGroup(w.self, g.room)) return c.json({ error: 'Only the person who made the group, the owner or operations can rename it' }, 403);
+    const name = cleanGroupName((await c.req.json().catch(() => ({}))).name);
+    if (!name) return c.json({ error: 'Give the group a name' }, 400);
+    const { error } = await deps.db.from('chat_rooms').update({ name, renamed: g.room.kind !== 'custom' }).eq('id', g.room.id);
+    if (error) return c.json({ error: 'Could not rename the group' }, 500);
+    return c.json({ name });
+  });
+
+  app.post(`${P}/chat/groups/:id/members`, async (c: any) => {
+    const w: any = await me(c);
+    if (w.error) return w.error;
+    const g: any = await groupFor(c, w);
+    if (g.error) return g.error;
+    if (g.room.kind !== 'custom') return c.json({ error: 'People in this group follow the staff list' }, 400);
+    if (!canManageGroup(w.self, g.room)) return c.json({ error: 'Only the person who made the group, the owner or operations can change who is in it' }, 403);
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const addIds = new Set((Array.isArray(body.add) ? body.add : []).map(String));
+      const removeIds = (Array.isArray(body.remove) ? body.remove : []).map(String).filter((id: string) => id !== BUNNY_ID);
+      const adding = w.staff.filter((u: any) => active(u) && addIds.has(u.authUserId));
+      if (adding.length) {
+        const { data: already } = await deps.db.from('chat_members').select('user_id').eq('room_id', g.room.id).in('user_id', adding.map((u: any) => u.authUserId));
+        const have = new Set((already || []).map((m: any) => m.user_id));
+        const fresh = adding.filter((u: any) => !have.has(u.authUserId));
+        if (fresh.length) {
+          const { error } = await deps.db.from('chat_members').insert(fresh.map((u: any) => ({ room_id: g.room.id, user_id: u.authUserId, name: personName(u) })));
+          if (error) throw new Error(error.message);
+          await tellAdded(fresh, w.self, g.room);
+        }
+      }
+      if (removeIds.length) {
+        const { error } = await deps.db.from('chat_members').delete().eq('room_id', g.room.id).in('user_id', removeIds);
+        if (error) throw new Error(error.message);
+      }
+      return c.json({ success: true });
+    } catch (error: any) {
+      console.error('Could not change the group:', error);
+      return c.json({ error: 'Could not change the group' }, 500);
+    }
+  });
+
+  app.post(`${P}/chat/groups/:id/leave`, async (c: any) => {
+    const w: any = await me(c);
+    if (w.error) return w.error;
+    const g: any = await groupFor(c, w);
+    if (g.error) return g.error;
+    if (g.room.kind !== 'custom') return c.json({ error: 'You are in this group because of your work place' }, 400);
+    const { error } = await deps.db.from('chat_members').delete().eq('room_id', g.room.id).eq('user_id', w.self.authUserId);
+    if (error) return c.json({ error: 'Could not leave the group' }, 500);
+    // The last person out: the group goes.
+    const { count } = await deps.db.from('chat_members').select('user_id', { count: 'exact', head: true }).eq('room_id', g.room.id).neq('user_id', BUNNY_ID);
+    if (!count) await removeRoom(g.room.id);
+    return c.json({ success: true });
+  });
+
+  app.delete(`${P}/chat/groups/:id`, async (c: any) => {
+    const w: any = await me(c);
+    if (w.error) return w.error;
+    const g: any = await groupFor(c, w);
+    if (g.error) return g.error;
+    if (g.room.kind !== 'custom') return c.json({ error: 'This group follows the staff list and cannot be deleted' }, 400);
+    if (!canManageGroup(w.self, g.room)) return c.json({ error: 'Only the person who made the group, the owner or operations can delete it' }, 403);
+    try {
+      await removeRoom(g.room.id);
+      return c.json({ success: true });
+    } catch (error: any) {
+      console.error('Could not delete the group:', error);
+      return c.json({ error: 'Could not delete the group' }, 500);
+    }
+  });
+
+  // A group's messages, people and the photos and voice notes still in Supabase (Drive copies stay).
+  async function removeRoom(roomId: string) {
+    const { data: files } = await deps.db.storage.from(MEDIA_BUCKET).list(roomId, { limit: 1000 });
+    if (files?.length) await deps.db.storage.from(MEDIA_BUCKET).remove(files.map((f: any) => `${roomId}/${f.name}`));
+    const { error } = await deps.db.from('chat_rooms').delete().eq('id', roomId);
+    if (error) throw new Error(error.message);
+  }
 
   // ---- Photos and voice notes after 30 days: to Google Drive (owner, 1 Nov 2026: "either supabase
   // will overflow"). Nightly, each one older than KEEP_DAYS is copied to Drive ("Chat/<month>/<room>")
