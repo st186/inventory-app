@@ -901,11 +901,22 @@ export interface LiveStoreNow {
   open: number; openTotal: number; stuck: number; orders: LiveOrderNow[]; lastPoll: string | null; error: string | null;
   check: null | { date: string; at: string; seen: number; matched: number; findings: LiveCheckFinding[];
     summary: { notBilled: number; notBilledTotal: number; billedLess: number; lessBy: number; openAtClose: number; openTotal: number } };
+  /** Items switched off on Zomato and Swiggy that the store still sells (server onlineStock.ts, 4 PM). */
+  offOnline: null | { date: string; at: string; sells: OffOnlineItem[]; kept: number; idle: number; off: number };
+}
+export interface OffOnlineItem {
+  productId: string; name: string; category: string; lastOnline: string | null; lastCounter: string | null;
+  offSince?: string | null; offBy?: string | null; platforms?: string[];
 }
 export interface LiveOrdersNow { date: string; open: boolean; stores: LiveStoreNow[] }
 
 export async function getLiveOrdersNow(fresh = false, accessToken?: string): Promise<LiveOrdersNow> {
   return fetchWithAuth(`${API_BASE}/live-orders/now${fresh ? '?fresh=1' : ''}`, await tokenOr(accessToken));
+}
+
+/** The owner: an item off online on purpose isn't flagged again until it's back on. */
+export async function keepItemOffOnline(storeId: string, productId: string, keep = true, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/online-stock/keep-off`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ storeId, productId, keep }) });
 }
 
 export async function getRepairAlerts(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<RepairAlert[]> {

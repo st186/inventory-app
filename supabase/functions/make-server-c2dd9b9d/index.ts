@@ -40,6 +40,7 @@ import {
 import { registerRecipeRoutes } from './recipes.ts';
 import * as stockCheck from './stockCheck.ts';
 import * as liveOrders from './liveOrders.ts';
+import * as onlineStock from './onlineStock.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -16077,20 +16078,134 @@ app.get('/make-server-c2dd9b9d/live-orders/now', async (c) => {
     const days = await kv.mget(keys) as (liveOrders.LiveDay | null)[];
     const yesterday = addDaysToDateString(date, -1);
     const checks = await kv.mget(stores.flatMap((s: any) => [`live-orders-check:${s.id}:${date}`, `live-orders-check:${s.id}:${yesterday}`])) as (liveOrders.CloseCheck | null)[];
+    const offs = await kv.mget(stores.flatMap((s: any) => [`online-stock:${s.id}:${date}`, `online-stock:${s.id}:${yesterday}`])) as any[];
     return c.json({
       date, open,
       stores: stores.map((s: any, i: number) => {
         const check = checks[2 * i] || checks[2 * i + 1] || null;
+        const off = offs[2 * i] || offs[2 * i + 1] || null;
         return {
           storeId: s.id, storeName: s.name,
           ...liveOrders.nowView(days[i], Date.now()),
           error: days[i]?.error || null,
           check: check ? { ...check, summary: liveOrders.checkSummary(check.findings) } : null,
+          // Items switched off on Zomato and Swiggy that the store still sells (4 PM check).
+          offOnline: off ? { date: off.date, at: off.at, sells: off.sells || [], kept: (off.kept || []).length, idle: off.idle || 0, off: off.off || 0 } : null,
         };
       }),
     });
   } catch (error: any) {
     console.error('Error reading live orders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// ITEMS SWITCHED OFF ONLINE (owner, 1 Nov 2026: "can we detect this on a regular basis") - onlineStock.ts
+// ============================================
+// pg_cron online-stock at 4 PM IST (an hour after opening, when last night's switch-offs should be
+// back on): Ciferon's Item Stock Status for Zomato and Swiggy against the last 30 days of sales. Items
+// the store still sells -> the store incharge and the owner, once a day, with when and by whom each
+// was switched off (Ciferon's item log). Saved as online-stock:{storeId}:{date}; the owner's Right now
+// card lists them. Kept off on purpose: online-stock:kept-off:{storeId} (cleared when it's back on).
+async function runOnlineStockCheck(store: any, date: string) {
+  const items = onlineStock.parseStockStatus(await ciferonAdminGet(store, 'https://api.ciferon.com/Api/ZomatoApi/StockStatus'));
+  if (!items.length) throw new Error('Ciferon sent no items');
+  const dates: string[] = [];
+  for (let i = 0; i <= onlineStock.ONLINE_DAYS; i++) dates.push(addDaysToDateString(date, -i));
+  const records = (await kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`))) as any[];
+  const stats = onlineStock.soldStats(records.filter(Boolean).map((r: any) => ({ date: r.date, orders: r.orders || [] })), date);
+  // Kept off on purpose until it's back on: switched on again, it's watched like any other item.
+  const keptKey = `online-stock:kept-off:${store.id}`;
+  const kept = ((await kv.get(keptKey)) || {}) as Record<string, any>;
+  const backOn = items.filter((i) => i.inStock && kept[i.productId]).map((i) => i.productId);
+  if (backOn.length) { backOn.forEach((id) => delete kept[id]); await kv.set(keptKey, kept); }
+  const result = onlineStock.offOnline(items, stats, kept, date);
+  for (const row of result.sells.slice(0, 15)) {
+    try {
+      const logs = await ciferonAdminGet(store, `https://api.ciferon.com/api/ViewLogs/GetProductLogs?productId=${encodeURIComponent(row.productId)}`);
+      const off = onlineStock.lastSwitchOff(Array.isArray(logs?.Result) ? logs.Result : []);
+      Object.assign(row, { offSince: off.at, offBy: off.by, platforms: off.platforms });
+    } catch { /* no log for it: the item still shows, without since when */ }
+  }
+  return { storeId: store.id, storeName: store.name, date, at: new Date().toISOString(), ...result };
+}
+
+app.post('/make-server-c2dd9b9d/cron/online-stock', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const date = getTodayIST();
+    const dry = c.req.query('dry') === '1';
+    const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+    const owners = staff.filter((u: any) => u.role === 'cluster_head');
+    const results: any[] = [];
+    for (const store of await liveStores()) {
+      let check: Awaited<ReturnType<typeof runOnlineStockCheck>>;
+      try {
+        check = await runOnlineStockCheck(store, date);
+      } catch (error: any) {
+        results.push({ store: store.name, error: error?.message || String(error) });
+        continue;
+      }
+      results.push({ store: store.name, items: check.total, off: check.off, sells: check.sells.map((s) => s.name), kept: check.kept.length, idle: check.idle });
+      if (dry) continue;
+      await kv.set(`online-stock:${store.id}:${date}`, check);
+      const onceKey = `online-stock-sent:${store.id}:${date}`;
+      if (!check.sells.length || await kv.get(onceKey)) continue;
+      const incharges = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+      const sinceWord = (iso?: string | null) => {
+        if (!iso) return '';
+        const d = new Date(Date.parse(iso) + IST_OFFSET_MS);
+        const h = d.getUTCHours(), m = d.getUTCMinutes();
+        return ` (off since ${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })} ${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'})`;
+      };
+      const names = check.sells.slice(0, 6).map((s) => `${s.name.replace(/\s*-\s*[OA]\.?$/, '')}${sinceWord(s.offSince)}`);
+      const more = check.sells.length > 6 ? ` and ${check.sells.length - 6} more` : '';
+      const title = `${check.sells.length} item${check.sells.length > 1 ? 's' : ''} switched off on Zomato and Swiggy`;
+      const message = `${store.name}: ${names.join(', ')}${more}. These still sell - if you have them, switch them on in Ciferon (Item Stock Status); if they're off on purpose, tell the owner.`;
+      for (const u of [...incharges, ...owners]) await notifyUser(u.authUserId, 'online_items_off', title, message, undefined, date).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), items: check.sells.length });
+    }
+    console.log(`Online stock check ${date}:`, JSON.stringify(results));
+    return c.json({ success: true, date, stores: results });
+  } catch (error: any) {
+    console.error('Error checking items switched off online:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /online-stock/keep-off { storeId, productId, keep } - the owner: an item off on purpose isn't
+// flagged again until it's back on (keep: false flags it again).
+app.post('/make-server-c2dd9b9d/online-stock/keep-off', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ error: 'Only the owner decides this' }, 403);
+  try {
+    const { storeId, productId, keep } = await c.req.json();
+    if (!storeId || !productId) return c.json({ error: 'storeId and productId are needed' }, 400);
+    const keptKey = `online-stock:kept-off:${storeId}`;
+    const kept = ((await kv.get(keptKey)) || {}) as Record<string, any>;
+    if (keep === false) delete kept[String(productId)];
+    else kept[String(productId)] = { at: new Date().toISOString(), by: auth.user.id };
+    await kv.set(keptKey, kept);
+    // The latest check moves the item over, so the card shows it at once.
+    for (const d of [getTodayIST(), addDaysToDateString(getTodayIST(), -1)]) {
+      const key = `online-stock:${storeId}:${d}`;
+      const check = await kv.get(key) as any;
+      if (!check) continue;
+      const row = [...(check.sells || []), ...(check.kept || [])].find((r: any) => r.productId === String(productId));
+      if (row) {
+        check.sells = (check.sells || []).filter((r: any) => r.productId !== String(productId));
+        check.kept = (check.kept || []).filter((r: any) => r.productId !== String(productId));
+        (keep === false ? check.sells : check.kept).push(row);
+        await kv.set(key, check);
+      }
+      break;
+    }
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('Error keeping an item off online:', error);
     return c.json({ error: error.message }, 500);
   }
 });

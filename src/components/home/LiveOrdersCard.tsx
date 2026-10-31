@@ -3,9 +3,10 @@
 // a bill or became a smaller one (server liveOrders.ts). The server looks every 3 minutes from
 // 3 PM; a pull down looks again. Before 3 PM it shows last night's check.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Clock3, Radio, ReceiptText } from 'lucide-react';
+import { CheckCircle2, Clock3, PowerOff, Radio, ReceiptText } from 'lucide-react';
 import * as api from '../../utils/api';
 import { useRefreshSignal } from '../shell/refreshSignal';
+import { Button } from '../ui/button';
 import { EmptyState } from '../ui/empty-state';
 import { formatINR } from '../ui/money';
 import { ResponsiveModal } from '../ui/responsive-modal';
@@ -54,10 +55,41 @@ function checkLine(s: NonNullable<api.LiveStoreNow['check']>['summary']): string
 /** Before 3 PM there is only last night's check to show; with nothing in it, no card. */
 export function liveCardShown(data: api.LiveOrdersNow | null): data is api.LiveOrdersNow {
   if (!data || !data.stores.length) return false;
-  return data.open || data.stores.some((s) => s.orders.length || s.check);
+  return data.open || data.stores.some((s) => s.orders.length || s.check || s.offOnline?.sells.length);
 }
 
-export function LiveOrdersCard({ data }: { data: api.LiveOrdersNow | null }) {
+const dayTime = (iso: string) => {
+  const d = new Date(Date.parse(iso) + 330 * 60000);
+  return `${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })}, ${timeOf(iso)}`;
+};
+const dayOf = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const cleanName = (name: string) => name.replace(/\s*-\s*[OA]\.?$/, '');
+
+// One item off on Zomato and Swiggy, with "keep it off" for the owner (server onlineStock.ts).
+function OffOnlineRow({ storeId, item, onChanged }: { storeId: string; item: api.OffOnlineItem; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const keep = async () => {
+    setBusy(true);
+    try { await api.keepItemOffOnline(storeId, item.productId); onChanged(); } catch { setBusy(false); }
+  };
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-border p-3">
+      <span className="text-body-sm font-semibold text-text">{cleanName(item.name)}</span>
+      <span className="text-label text-text-3">
+        {item.offSince ? `Off since ${dayTime(item.offSince)}${item.offBy ? ` · by ${item.offBy}` : ''}` : 'Switched off'}
+        {item.platforms?.length ? ` · ${item.platforms.join(', ')}` : ''}
+      </span>
+      <span className="text-label text-text-2">
+        {[item.lastCounter ? `sold at the counter ${dayOf(item.lastCounter)}` : '', item.lastOnline ? `last sold online ${dayOf(item.lastOnline)}` : ''].filter(Boolean).join(' · ')}
+      </span>
+      <div className="pt-0.5">
+        <Button size="sm" variant="ghost" loading={busy} onClick={keep}>Keep it off (on purpose)</Button>
+      </div>
+    </div>
+  );
+}
+
+export function LiveOrdersCard({ data, onChanged }: { data: api.LiveOrdersNow | null; onChanged?: () => void }) {
   const [open, setOpen] = useState(false);
   if (!liveCardShown(data)) return null;
   const several = data.stores.length > 1;
@@ -68,6 +100,7 @@ export function LiveOrdersCard({ data }: { data: api.LiveOrdersNow | null }) {
   const findings = checks.reduce((n, c) => n + c.check.findings.length, 0);
   const lastPoll = data.stores.map((s) => s.lastPoll).filter(Boolean).sort().pop() || null;
   const unreachable = data.open && data.stores.every((s) => s.error);
+  const offItems = data.stores.flatMap((s) => s.offOnline?.sells || []);
   const checkWord = (date: string) => (date === data.date ? "Tonight's check" : "Last night's check");
 
   return (
@@ -117,6 +150,16 @@ export function LiveOrdersCard({ data }: { data: api.LiveOrdersNow | null }) {
           </div>
         ))}
         {unreachable && <span className="text-body-sm text-danger">Couldn't reach Ciferon. The next try is within 3 minutes.</span>}
+
+        {offItems.length > 0 && (
+          <div className="flex items-start gap-2 rounded-md bg-warning-soft p-2.5">
+            <PowerOff className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+            <span className="text-body-sm text-text">
+              <span className="font-medium">Off on Zomato and Swiggy:</span>{' '}
+              {offItems.length === 1 ? cleanName(offItems[0].name) : `${offItems.length} items you still sell · ${offItems.slice(0, 2).map((i) => cleanName(i.name)).join(', ')}${offItems.length > 2 ? '…' : ''}`}
+            </span>
+          </div>
+        )}
 
         {checks.map(({ storeName, check }) => (
           <div key={storeName} className={`flex items-start gap-2 rounded-md p-2.5 ${check.findings.length ? 'bg-warning-soft' : 'bg-success-soft'}`}>
@@ -184,6 +227,18 @@ export function LiveOrdersCard({ data }: { data: api.LiveOrdersNow | null }) {
                       {f.items.length > 0 && <span className="text-body-sm text-text-2">{itemsLine(f.items, 8)}</span>}
                     </div>
                   ))}
+                </div>
+              )}
+              {s.offOnline && s.offOnline.sells.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-label font-medium uppercase tracking-wide text-text-3">
+                    Off on Zomato and Swiggy · checked {dayTime(s.offOnline.at)}
+                  </span>
+                  <span className="text-body-sm text-text-2">
+                    These still sell. Switch them on in Ciferon (Virtual Outlets › Item Stock Status), or keep one off if that's on purpose.
+                    {s.offOnline.idle ? ` ${s.offOnline.idle} old items nobody sells are off too; they're left out.` : ''}
+                  </span>
+                  {s.offOnline.sells.map((item) => <OffOnlineRow key={item.productId} storeId={s.storeId} item={item} onChanged={() => onChanged?.()} />)}
                 </div>
               )}
             </section>

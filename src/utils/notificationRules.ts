@@ -32,6 +32,7 @@ const ACTION = new Set([
   'asset_missing', 'equipment_check_due', // lost equipment, and the 3-monthly equipment check (assets.ts)
   'burger_check', // burger buns bought and burgers sold don't add up (burgerCheck.ts)
   'orders_unbilled', // the closing check: orders seen open that never became a bill, or a smaller one (liveOrders.ts)
+  'online_items_off', // items switched off on Zomato and Swiggy that still sell (onlineStock.ts)
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
@@ -118,6 +119,7 @@ export const BENGALI_TITLE: Record<string, string> = {
   opening_due: 'দোকান খোলার চেকলিস্ট', opening_late: 'চেকলিস্ট বাকি আছে',
   supply_low: 'জিনিস কম আছে', supply_sorted: 'জিনিসের খবর', shopping_list: 'কেনাকাটার তালিকা',
   order_stuck: 'অর্ডার অনেকক্ষণ খোলা পড়ে আছে',
+  online_items_off: 'অনলাইনে আইটেম বন্ধ আছে',
 };
 
 export const DEFAULT_PREFS = { quietOn: true, quietFrom: '23:00', quietTo: '07:00', muted: {} as Partial<Record<NotificationCategory, boolean>>, digest: false };

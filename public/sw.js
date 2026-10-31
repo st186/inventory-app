@@ -172,6 +172,7 @@ const NOTIFICATION_VIEW_MAP = {
   cctv_intruder: { view: 'cameras' },
   order_stuck: { view: 'home' }, // live orders (liveOrders.ts): the order is settled in Ciferon itself
   orders_unbilled: { view: 'home' }, // the owner's Right now card lists them
+  online_items_off: { view: 'home' }, // switched on in Ciferon itself; the owner's Right now card lists them
   asset_missing: { view: 'assets' },
   equipment_check_due: { view: 'assets' },
   equipment_check_done: { view: 'assets' },

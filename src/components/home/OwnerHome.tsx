@@ -319,7 +319,7 @@ export function OwnerHome({ variant = 'owner' }: { variant?: 'owner' | 'ops' }) 
         </div>
         {liveCardShown(live.data) && (
           <div className="lg:col-span-12">
-            <LiveOrdersCard data={live.data} />
+            <LiveOrdersCard data={live.data} onChanged={() => live.reload()} />
           </div>
         )}
 

@@ -114,7 +114,12 @@ function liveNow() {
     date: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), open: true,
     stores: [{ storeId: 'STORE-1', storeName: 'Bunny Momos 1', open: 3, openTotal: 892, stuck: 1, orders, lastPoll: ago(1), error: null,
       check: { date: '2026-10-31', at: '2026-10-31T18:15:00Z', seen: 56, matched: 55, findings,
-        summary: { notBilled: 1, notBilledTotal: 360, billedLess: 1, lessBy: 100, openAtClose: 0, openTotal: 0 } } }],
+        summary: { notBilled: 1, notBilledTotal: 360, billedLess: 1, lessBy: 100, openAtClose: 0, openTotal: 0 } },
+      offOnline: { date: '2026-11-01', at: '2026-11-01T10:30:00Z', kept: 0, idle: 16, off: 40, sells: [
+        { productId: '960994', name: 'Chicken Chilli Momos [6 Pieces]', category: 'Chilli Momos - O', lastOnline: '2026-10-31', lastCounter: '2026-10-27',
+          offSince: '2026-10-31T13:32:40Z', offBy: 'Subham Tewari', platforms: ['Zomato', 'Swiggy'] },
+        { productId: '2', name: 'Chicken Momo Burger', category: 'Momo Burgers -O', lastOnline: '2026-10-11', lastCounter: '2026-10-31', offSince: null, offBy: null },
+      ] } }],
   };
 }
 
