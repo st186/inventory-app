@@ -38,6 +38,7 @@ import {
   registerEventsRoutes, runEventPosSync, withoutEventRollups, type EventsDeps,
 } from './events.ts';
 import { registerRecipeRoutes } from './recipes.ts';
+import * as stockCheck from './stockCheck.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -15754,6 +15755,90 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
     console.error('Error sending stock count reminders:', error);
     return c.json({ error: error.message }, 500);
   }
+});
+
+// ============================================
+// DAILY STOCK CHECK (owner, 31 Oct 2026: "keep a daily check on item sales and stock left logic
+// for production and store and validate if logic is correct or not and then on 30th nov we will
+// check again how it spanned out") - stockCheck.ts
+// ============================================
+// pg_cron calls this at 11:40 PM IST, after the POS syncs (10:30 and 11 PM). For each store and
+// production house: the day's in and out, what should be left since its last count, and what looks
+// wrong. Saved as stock-check:{date}; nobody is notified. ?date= checks another day; ?dry=1 doesn't save.
+async function runStockCheck(date: string) {
+  const [counts, storesAll, houses, requests, sales, wastage, production, itemsRaw] = await Promise.all([
+    getAllByPrefixWithRetry('recalibration_'), kv.getByPrefix('store:'), getAllByPrefixWithRetry('production_house_'),
+    getAllByPrefixWithRetry('production_request_'), getAllByPrefixWithRetry('sales_data_'), getAllByPrefixWithRetry('stock-wastage:'),
+    getAllByPrefixWithRetry('production:'), getAllByPrefixWithRetry('inventory_item_'),
+  ]);
+  const items = (itemsRaw || []).filter((i: any) => i?.id && i?.name).map((i: any) => ({ id: String(i.id), name: String(i.name) }));
+  const stores = (storesAll || []).filter((s: any) => s?.id && s.status !== 'inactive' && s.status !== 'closed');
+  const upTo = (rows: any[]) => rows.filter((r: any) => typeof r?.date === 'string' && r.date.slice(0, 10) <= date);
+  const prev = await kv.get(`stock-check:${addDaysToDateString(date, -1)}`) as { places?: stockCheck.PlaceDay[] } | null;
+  const places: stockCheck.PlaceDay[] = [];
+
+  for (const store of stores) {
+    const base = stockCheck.lastCount(upTo(counts).filter((r: any) => r.locationType === 'store' && r.locationId === store.id), items);
+    const day = stockCheck.storeDay({ id: store.id, name: store.name, date, base, requests, sales, wastage });
+    const itemRecords = (sales || []).filter((s: any) => s.storeId === store.id && s.date === date);
+    const inTransit = (requests || []).filter((r: any) => r.storeId === store.id && !r.eventId && (r.status === 'shipped' || r.status === 'partially-shipped')
+      && (stockCheck.istOf(r.shippedAt) || '').slice(0, 10) <= date);
+    const syncLog = await kv.get(`pos-sync-log:${date}:${store.id}`) as any;
+    const sold = !!syncLog?.stepA?.success || (Number(syncLog?.stepA?.totalSales) || 0) > 0;
+    day.flags = [
+      ...stockCheck.lateChanges(prev?.places?.find((p) => p.kind === 'store' && p.id === store.id), day.opening),
+      ...stockCheck.storeFlags(day, { itemRecords, inTransit, syncLog, sold }),
+    ];
+    places.push(day);
+  }
+  for (const house of houses || []) {
+    if (!house?.id || house.status === 'inactive') continue;
+    const storeIds = stores.filter((s: any) => s.productionHouseId === house.id).map((s: any) => s.id);
+    const ids = [house.id, ...storeIds];
+    // A house's counts are also saved under a store id it supplies (older records).
+    const base = stockCheck.lastCount(upTo(counts).filter((r: any) => r.locationType === 'production_house' && ids.includes(r.locationId)), items);
+    const day = stockCheck.houseDay({ id: house.id, name: house.name || 'Production house', date, base, ids, storeIds, production, requests });
+    const entries = (production || []).filter((p: any) => p.date === date && p.approvalStatus !== 'rejected' && (ids.includes(p.productionHouseId) || ids.includes(p.storeId)));
+    day.flags = [
+      ...stockCheck.lateChanges(prev?.places?.find((p) => p.kind === 'production' && p.id === house.id), day.opening),
+      ...stockCheck.houseFlags(day, { entries }),
+    ];
+    places.push(day);
+  }
+  return { date, at: new Date().toISOString(), places };
+}
+
+app.post('/make-server-c2dd9b9d/cron/stock-check', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const q = c.req.query('date') || '';
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : getTodayIST();
+    const result = await runStockCheck(date);
+    if (c.req.query('dry') === '1') return c.json(result);
+    await kv.set(`stock-check:${date}`, result);
+    const summary = result.places.map((p) => ({ place: p.name, since: p.since, flags: p.flags.map((f) => f.code) }));
+    console.log(`Stock check ${date}:`, JSON.stringify(summary));
+    return c.json({ success: true, date, places: summary });
+  } catch (error: any) {
+    console.error('Error running the stock check:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// GET /stock-check?from=&to= - the owner: the saved nightly checks (up to 62 days).
+app.get('/make-server-c2dd9b9d/stock-check', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ error: 'Only the owner sees the stock check' }, 403);
+  const today = getTodayIST();
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('to') || '') ? c.req.query('to')! : today;
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('from') || '') ? c.req.query('from')! : addDaysToDateString(to, -6);
+  if (from > to || addDaysToDateString(from, 62) < to) return c.json({ error: 'Pick up to 62 days' }, 400);
+  const dates: string[] = [];
+  for (let d = from; d <= to; d = addDaysToDateString(d, 1)) dates.push(d);
+  const days = (await kv.mget(dates.map((d) => `stock-check:${d}`))).filter(Boolean);
+  return c.json({ from, to, days });
 });
 
 // ============================================

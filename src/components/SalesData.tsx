@@ -60,6 +60,8 @@ function classifyMomoCategory(nameLower: string): keyof CategoryData | null {
   if (nameLower.includes('corn') && nameLower.includes('cheese')) return 'Corn Cheese Momos';
   if (nameLower.includes('chicken') && nameLower.includes('cheese')) return 'Chicken Cheese Momos';
   if (nameLower.includes('chicken')) return 'Chicken Momos';
+  // "Non Veg" holds "veg" (31 Oct 2026 stock check; posItemClassifier.tsx the same).
+  if (/non[\s-]*veg/.test(nameLower)) return 'Chicken Momos';
   if (nameLower.includes('veg')) return 'Veg Momos';
   return null;
 }
@@ -72,7 +74,7 @@ type ChannelBreakdown = Record<keyof CategoryData, Record<string, { pieces: numb
 // item detail (Step D) is turned into piece counts the same way Step B's category totals are.
 function extractPiecesPerUnit(productName: string): number {
   const nameLower = productName.toLowerCase();
-  const pcsMatch = productName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+  const pcsMatch = productName.match(/(\d+)\s*(?:pcs|pieces|piece|pc)\b/i);
 
   if (nameLower.includes('mania') && nameLower.includes('combo')) {
     // Every Mania Combo unit (bracketed "[N Pieces, Pack Of 2]" naming or plain) is the
@@ -540,7 +542,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         let burgersPerPlate = 1;
 
         // Check for multi-burger plates (e.g., "2 pcs")
-        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece|pc)\b/i);
         if (pcsMatch) {
           burgersPerPlate = parseInt(pcsMatch[1]);
         }
@@ -548,7 +550,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         piecesPerUnit = burgersPerPlate * momosPerBurger;
       } else {
         // Standard items: check for explicit counts like "8 pcs"
-        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece|pc)\b/i);
         if (pcsMatch) {
           let count = parseInt(pcsMatch[1]);
 

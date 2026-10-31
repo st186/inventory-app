@@ -30,13 +30,35 @@ function classifyProductName(productName: string): MomoCategory | null {
   if (nameLower.includes('corn') && nameLower.includes('cheese')) return 'Corn Cheese Momos';
   if (nameLower.includes('chicken') && nameLower.includes('cheese')) return 'Chicken Cheese Momos';
   if (nameLower.includes('chicken')) return 'Chicken Momos';
+  // "Non Veg" holds "veg" (31 Oct 2026 stock check: "Steamed Momos Platter- Non Veg" was counted as veg).
+  if (/non[\s-]*veg/.test(nameLower)) return 'Chicken Momos';
   if (nameLower.includes('veg')) return 'Veg Momos';
   return null;
 }
 
+// Platters (the owner's rule, the same as the manual sales-sheet upload, SalesData.tsx RULE 2): a
+// non-veg (or chicken mix) platter is 6 chicken + 6 chicken cheese momos, a veg (or veg mix) platter
+// 4 veg + 4 paneer + 4 cheese corn. The POS sync counted them as one plate of 6 of one type (31 Oct
+// 2026 stock check). A platter of one named kind ("Peri Peri Momo Platter (Chicken)") isn't split.
+export function platterSplit(productName: string): Partial<Record<MomoCategory, number>> | null {
+  const n = productName.toLowerCase();
+  if (!n.includes('platter') || NON_FOOD_KEYWORDS.some((x) => n.includes(x))) return null;
+  if (/non[\s-]*veg|chicken mix/.test(n)) return { 'Chicken Momos': 6, 'Chicken Cheese Momos': 6 };
+  if (/\bveg\b/.test(n) && !/chicken|paneer|corn|kurkure/.test(n)) return { 'Veg Momos': 4, 'Paneer Momos': 4, 'Corn Cheese Momos': 4 };
+  return null;
+}
+
+/** Momos of each type in one unit of a product: a split platter, else its one type. */
+function momosPerUnit(productName: string): [MomoCategory, number][] {
+  const split = platterSplit(productName);
+  if (split) return Object.entries(split) as [MomoCategory, number][];
+  const category = classifyProductName(productName);
+  return category ? [[category, extractPiecesPerUnit(productName)]] : [];
+}
+
 function extractPiecesPerUnit(productName: string): number {
   const nameLower = productName.toLowerCase();
-  const pcsMatch = productName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+  const pcsMatch = productName.match(/(\d+)\s*(?:pcs|pieces|piece|pc)\b/i);
 
   // Mania Combo = 8 momos direct + 2 moburgers (each of which itself consumes 2 momos, so
   // 4 more) + a coke - 12 momos of the combo's momo type per unit sold, whether the product
@@ -111,27 +133,30 @@ export function classifyAndSumProductsByChannel(
   });
 
   for (const product of products) {
-    const category = classifyProductName(product.ProductName || '');
-    if (!category) continue;
-    const piecesPerUnit = extractPiecesPerUnit(product.ProductName || '');
-    totals[category] += (product.Quantity || 0) * piecesPerUnit;
+    const parts = momosPerUnit(product.ProductName || '');
+    const perUnit = parts.reduce((s, [, n]) => s + n, 0);
+    for (const [category, piecesPerUnit] of parts) {
+      totals[category] += (product.Quantity || 0) * piecesPerUnit;
 
-    (product.PlatformList || []).forEach((entry, i) => {
-      const channelName = channelNames[i];
-      if (!channelName) return;
-      const units = parseFloat(String(entry.Value)) || 0;
-      const revenue = parseFloat(String(entry.Text)) || 0;
-      if (units === 0 && revenue === 0) return;
-      if (!byChannel[category][channelName]) byChannel[category][channelName] = { pieces: 0, revenue: 0 };
-      byChannel[category][channelName].pieces += units * piecesPerUnit;
-      byChannel[category][channelName].revenue += revenue;
-    });
+      (product.PlatformList || []).forEach((entry, i) => {
+        const channelName = channelNames[i];
+        if (!channelName) return;
+        const units = parseFloat(String(entry.Value)) || 0;
+        const revenue = parseFloat(String(entry.Text)) || 0;
+        if (units === 0 && revenue === 0) return;
+        if (!byChannel[category][channelName]) byChannel[category][channelName] = { pieces: 0, revenue: 0 };
+        byChannel[category][channelName].pieces += units * piecesPerUnit;
+        // A split platter's price goes to each type by its share of the momos.
+        byChannel[category][channelName].revenue += perUnit ? (revenue * piecesPerUnit) / perUnit : 0;
+      });
+    }
   }
 
   return { totals, byChannel };
 }
 
-export type ProductBreakdownEntry = { productName: string; category: MomoCategory | null; quantity: number; pieces: number };
+// `split`: a platter's pieces per type (platterSplit); `category` is then its first type.
+export type ProductBreakdownEntry = { productName: string; category: MomoCategory | null; quantity: number; pieces: number; split?: Partial<Record<MomoCategory, number>> };
 
 // Per-menu-item breakdown (e.g. "Chicken Steamed Momos" vs "Chicken Afghani Momos" kept
 // separate, not collapsed into "Chicken Momos") - lets Category Sales show real menu-item
@@ -196,8 +221,9 @@ export function classifyAndSumProductsByItemAndChannel(
 
   for (const product of products) {
     const rawName = product.ProductName || '';
-    if (!classifyProductName(rawName)) continue; // non-momo item, same filter as the category rollup
-    const piecesPerUnit = extractPiecesPerUnit(rawName);
+    const parts = momosPerUnit(rawName);
+    if (!parts.length) continue; // non-momo item, same filter as the category rollup
+    const piecesPerUnit = parts.reduce((s, [, n]) => s + n, 0);
     const name = normalizeItemName(rawName) || rawName;
     if (!byItem[name]) byItem[name] = { piecesPerUnit, channels: {} };
 
@@ -219,12 +245,16 @@ export function classifyAndSumProductsByItemAndChannel(
 export function classifyProductBreakdown(
   products: Array<{ ProductName: string; Quantity: number }>
 ): ProductBreakdownEntry[] {
-  return products.map((p) => ({
-    productName: p.ProductName || '',
-    category: classifyProductName(p.ProductName || ''),
-    quantity: p.Quantity || 0,
-    pieces: (p.Quantity || 0) * extractPiecesPerUnit(p.ProductName || ''),
-  }));
+  return products.map((p) => {
+    const parts = momosPerUnit(p.ProductName || '');
+    return {
+      productName: p.ProductName || '',
+      category: parts[0]?.[0] ?? null,
+      quantity: p.Quantity || 0,
+      pieces: (p.Quantity || 0) * (parts.length ? parts.reduce((s, [, n]) => s + n, 0) : extractPiecesPerUnit(p.ProductName || '')),
+      ...(parts.length > 1 ? { split: Object.fromEntries(parts.map(([c, n]) => [c, n * (p.Quantity || 0)])) } : {}),
+    };
+  });
 }
 
 export type ClassifiedOrderItem = { productId: number | null; productName: string; category: MomoCategory | null; quantity: number; rate: number; total: number };
