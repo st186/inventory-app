@@ -213,7 +213,7 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
     try {
       const { id } = await c.req.json().catch(() => ({}));
-      const { data: msg } = await deps.db.from('chat_messages').select('id,room_id,sender_id,sender_name,kind,body,created_at').eq('id', id).single();
+      const { data: msg } = await deps.db.from('chat_messages').select('id,room_id,sender_id,sender_name,kind,body,created_at,mentions').eq('id', id).single();
       if (!msg) return c.json({ error: 'No such message' }, 404);
       const [{ data: room }, { data: members }] = await Promise.all([
         deps.db.from('chat_rooms').select('id,kind,name').eq('id', msg.room_id).single(),
@@ -223,11 +223,21 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
       const what = msg.kind === 'photo' ? `📷 Photo${msg.body ? `: ${msg.body}` : ''}` : msg.kind === 'voice' ? '🎤 Voice note' : msg.body;
       const direct = room.kind === 'direct';
       const title = direct ? msg.sender_name || 'New message' : `${msg.sender_name || 'Someone'} · ${room.name}`;
+      // Someone named with @ (or @Everyone) gets their own notification that buzzes, never folded
+      // into the group's bundle (owner, 1 Nov 2026: "can we mention someone in chat?").
+      const mentioned = new Set<string>(Array.isArray(msg.mentions) ? msg.mentions : []);
       let sent = 0;
       for (const m of members || []) {
         if (m.user_id === msg.sender_id) continue;
         if (m.last_read_at && Date.now() - Date.parse(m.last_read_at) < READING_MS) continue; // reading it now
-        await deps.notifyUser(m.user_id, direct ? 'chat_direct' : 'chat_group', title, String(what).slice(0, 160), room.id).catch(() => undefined);
+        const mention = !direct && mentioned.has(m.user_id);
+        await deps.notifyUser(
+          m.user_id,
+          mention ? 'chat_mention' : direct ? 'chat_direct' : 'chat_group',
+          mention ? `${msg.sender_name || 'Someone'} mentioned you · ${room.name}` : title,
+          String(what).slice(0, 160),
+          room.id,
+        ).catch(() => undefined);
         sent++;
       }
       return c.json({ success: true, sent });

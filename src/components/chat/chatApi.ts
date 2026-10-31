@@ -17,6 +17,8 @@ export type ChatMessage = {
   kind: 'text' | 'photo' | 'voice'; body: string; media_path: string | null; media_seconds: number | null; created_at: string;
   /** Moved to Google Drive after 30 days (chat.ts /cron/chat-archive): opened through the server. */
   media_archived_at?: string | null;
+  /** Who was named with @ (mentions.ts). */
+  mentions?: string[];
 };
 
 const db = () => getSupabaseClient();
@@ -53,20 +55,27 @@ export async function myUserId(): Promise<string | null> {
   return data.session?.user?.id || null;
 }
 
-export async function sendText(roomId: string, body: string): Promise<ChatMessage> {
-  const { data, error } = await db().from('chat_messages').insert({ room_id: roomId, kind: 'text', body: body.trim().slice(0, 2000) }).select().single();
+/** The people in a room, for @mentions. */
+export async function members(roomId: string): Promise<{ user_id: string; name: string }[]> {
+  const { data, error } = await db().from('chat_members').select('user_id,name').eq('room_id', roomId).order('name');
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function sendText(roomId: string, body: string, mentions: string[] = []): Promise<ChatMessage> {
+  const { data, error } = await db().from('chat_messages').insert({ room_id: roomId, kind: 'text', body: body.trim().slice(0, 2000), mentions }).select().single();
   if (error) throw new Error(error.message);
   return data as ChatMessage;
 }
 
 /** A photo (data URL from the camera, already made small) or a voice note, then its message. */
-export async function sendMedia(roomId: string, kind: 'photo' | 'voice', file: Blob, extras: { body?: string; seconds?: number } = {}): Promise<ChatMessage> {
+export async function sendMedia(roomId: string, kind: 'photo' | 'voice', file: Blob, extras: { body?: string; seconds?: number; mentions?: string[] } = {}): Promise<ChatMessage> {
   const ext = kind === 'photo' ? 'jpg' : file.type.includes('mp4') || file.type.includes('aac') ? 'm4a' : file.type.includes('ogg') ? 'ogg' : 'webm';
   const path = `${roomId}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { error: upErr } = await db().storage.from(BUCKET).upload(path, file, { contentType: file.type || (kind === 'photo' ? 'image/jpeg' : 'audio/webm'), upsert: false });
   if (upErr) throw new Error(upErr.message);
   const { data, error } = await db().from('chat_messages').insert({
-    room_id: roomId, kind, media_path: path, body: (extras.body || '').trim().slice(0, 2000), media_seconds: extras.seconds ? Math.round(extras.seconds) : null,
+    room_id: roomId, kind, media_path: path, body: (extras.body || '').trim().slice(0, 2000), media_seconds: extras.seconds ? Math.round(extras.seconds) : null, mentions: extras.mentions || [],
   }).select().single();
   if (error) throw new Error(error.message);
   return data as ChatMessage;

@@ -17,6 +17,7 @@ import { ResponsiveModal } from '../ui/responsive-modal';
 import { Skeleton } from '../ui/skeleton';
 import { toast } from '../ui/sonner';
 import * as chat from './chatApi';
+import { EVERYONE, insertMention, mentionQuery, mentionsIn, splitMentions, type Member } from './mentions';
 
 const SYNC_KEY = 'bunny-chat-synced';
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toLowerCase();
@@ -153,7 +154,12 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
   const [viewing, setViewing] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
   const lastRead = useRef(0);
+  // @mentions (owner, 1 Nov 2026): the room's people, and the @word being typed.
+  const [people, setPeople] = useState<Member[]>([]);
+  const [caret, setCaret] = useState(0);
+  useEffect(() => { chat.members(roomId).then(setPeople).catch(() => setPeople([])); }, [roomId]);
 
   const read = useCallback(() => {
     if (Date.now() - lastRead.current < 4000) return;
@@ -182,14 +188,14 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
   const send = async () => {
     if (!text.trim()) return;
     setSending(true);
-    try { add([await chat.sendText(roomId, text)]); setText(''); } catch (e) { toast.error(e instanceof Error ? e.message : t('chat.failed')); } finally { setSending(false); }
+    try { add([await chat.sendText(roomId, text, mentionsIn(text, people, me))]); setText(''); } catch (e) { toast.error(e instanceof Error ? e.message : t('chat.failed')); } finally { setSending(false); }
   };
   const sendPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     setSending(true);
-    try { add([await chat.sendMedia(roomId, 'photo', chat.dataUrlToBlob(await compressPhoto(file)), { body: text })]); setText(''); } catch (err) { toast.error(err instanceof Error ? err.message : t('chat.failed')); } finally { setSending(false); }
+    try { add([await chat.sendMedia(roomId, 'photo', chat.dataUrlToBlob(await compressPhoto(file)), { body: text, mentions: mentionsIn(text, people, me) })]); setText(''); } catch (err) { toast.error(err instanceof Error ? err.message : t('chat.failed')); } finally { setSending(false); }
   };
 
   const days = useMemo(() => {
@@ -204,6 +210,19 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
   const today = dayKey(new Date().toISOString());
   const yesterday = dayKey(new Date(Date.now() - 86400000).toISOString());
   const group = room?.kind !== 'direct';
+  const typing = group ? mentionQuery(text, caret) : null;
+  const suggestions = typing
+    ? [{ user_id: '*', name: EVERYONE }, ...people.filter((p) => p.user_id !== me)]
+      .filter((p) => p.name.toLowerCase().includes(typing.query.toLowerCase())).slice(0, 6)
+    : [];
+  const pickMention = (name: string) => {
+    if (!typing) return;
+    const next = insertMention(text, typing.start, caret, name);
+    setText(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(next.caret, next.caret); });
+  };
+  const names = people.map((p) => p.name);
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
@@ -226,13 +245,18 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
             {list.map((m, i) => {
               const mine = m.sender_id === me;
               const showName = group && !mine && list[i - 1]?.sender_id !== m.sender_id;
+              const forMe = !mine && !!me && (m.mentions || []).includes(me);
               return (
                 <div key={m.id} className={`flex max-w-[85%] flex-col ${mine ? 'items-end self-end' : 'items-start self-start'}`}>
                   {showName && <span className="px-1 text-label font-medium text-primary">{m.sender_name}</span>}
-                  <div className={`flex flex-col gap-1 rounded-2xl px-3 py-2 ${mine ? 'rounded-br-md bg-primary-soft text-text' : 'rounded-bl-md border border-border bg-surface text-text'}`}>
+                  <div className={`flex flex-col gap-1 rounded-2xl px-3 py-2 ${mine ? 'rounded-br-md bg-primary-soft text-text' : 'rounded-bl-md border border-border bg-surface text-text'} ${forMe ? 'ring-2 ring-primary' : ''}`}>
                     {m.kind === 'photo' && (m.media_path || m.media_archived_at) && <PhotoMessage message={m} onOpen={setViewing} />}
                     {m.kind === 'voice' && (m.media_path || m.media_archived_at) && <VoiceMessage message={m} />}
-                    {m.body && <span className="whitespace-pre-wrap break-words text-body-md">{m.body}</span>}
+                    {m.body && (
+                      <span className="whitespace-pre-wrap break-words text-body-md">
+                        {splitMentions(m.body, names).map((part, k) => (part.mention ? <span key={k} className="font-semibold text-primary">{part.text}</span> : part.text))}
+                      </span>
+                    )}
                     <span className="num self-end text-[11px] leading-none text-text-3">{timeOf(m.created_at)}</span>
                   </div>
                 </div>
@@ -242,12 +266,28 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
         ))}
         <div ref={bottom} />
       </div>
+      {suggestions.length > 0 && (
+        <ul className="sticky bottom-[60px] mx-2 flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-md" role="listbox" aria-label={t('chat.mention')}>
+          {suggestions.map((p) => (
+            <li key={p.user_id}>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pickMention(p.name)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-surface-2">
+                {p.user_id === '*'
+                  ? <span className="flex size-8 items-center justify-center rounded-full bg-primary-soft text-primary"><Users className="size-4" aria-hidden="true" /></span>
+                  : <InitialsAvatar name={p.name} size={32} />}
+                <span className="text-body-sm font-medium text-text">{p.user_id === '*' ? t('chat.everyone') : p.name}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="sticky bottom-0 flex items-end gap-2 border-t border-border bg-surface px-2 py-2" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
         <IconButton label={t('chat.photo')} icon={<Camera />} onClick={() => photoInput.current?.click()} disabled={sending} />
         <input ref={photoInput} type="file" accept="image/*" className="sr-only" onChange={sendPhoto} />
         <textarea
+          ref={box}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); }}
+          onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); void send(); } }}
           rows={1}
           maxLength={2000}

@@ -51,6 +51,8 @@ const en = {
   'chat.stopSend': 'Stop and send',
   'chat.micDenied': 'The microphone is off for this app. Allow it in the phone settings to send voice notes.',
   'chat.failed': 'Could not send that. Check the internet and try again.',
+  'chat.mention': 'Mention someone',
+  'chat.everyone': 'Everyone in this group',
   'nav.askBunny': 'Ask Bunny',
   'nav.main': 'Main',
 
@@ -3441,6 +3443,8 @@ const bn: Dict = {
   'chat.stopSend': 'থামিয়ে পাঠান',
   'chat.micDenied': 'এই অ্যাপের জন্য মাইক্রোফোন বন্ধ। ভয়েস মেসেজ পাঠাতে ফোনের সেটিংসে চালু করুন।',
   'chat.failed': 'পাঠানো গেল না। ইন্টারনেট দেখে আবার চেষ্টা করুন।',
+  'chat.mention': 'কাউকে মেনশন করুন',
+  'chat.everyone': 'গ্রুপের সবাই',
   'nav.askBunny': 'বানিকে জিজ্ঞেস করুন',
   'nav.main': 'মেনু',
 
@@ -6777,6 +6781,8 @@ const hi: Dict = {
   'chat.stopSend': 'रोककर भेजें',
   'chat.micDenied': 'इस ऐप के लिए माइक्रोफोन बंद है। वॉइस मैसेज भेजने के लिए फोन की सेटिंग में चालू करें।',
   'chat.failed': 'भेजा नहीं जा सका। इंटरनेट देखकर फिर कोशिश करें।',
+  'chat.mention': 'किसी को मेंशन करें',
+  'chat.everyone': 'ग्रुप में सभी',
   'nav.askBunny': 'बनी से पूछें',
   'nav.main': 'मेन्यू',
 
