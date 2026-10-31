@@ -12,6 +12,7 @@
 import Anthropic from 'npm:@anthropic-ai/sdk';
 import { addDaysISO as eventDay, STAFF_WINDOW_AFTER_DAYS, STAFF_WINDOW_BEFORE_DAYS } from './eventRules.ts';
 import { BIG_BUY_REASONS } from './bigBuyReasons.ts';
+import { buildOnlineCostIndex, onlineCostsForRange, type Aggregator } from './onlineCosts.ts';
 import {
   FORECAST_TYPES, forecastDays, learnEffects, prepareHistory, addDaysISO, weekdayOf, WEEKDAY_SHORT,
   backtest, summarizeAccuracy, tuneSettings, roundUpToBag,
@@ -498,11 +499,14 @@ const ASK_TOOLS = [
   { name: 'get_store_requests', description: 'Stock requests from the store to the production house in a date range: status and pieces sent per type.', input_schema: dateRange },
   { name: 'get_production', description: 'Momos made per type per day at the production house in a date range.', input_schema: dateRange },
   { name: 'get_expenses', description: 'Costs by category in a date range, the way the profit figures count them (equipment and the scooter spread over 36 months, loan EMIs left out), plus cash actually spent, one-time purchases and loan repayments. No salaries. Also the big buys the team explained (a festival stock-up, buying ahead of a shop closing, a bulk buy, a price rise) with their reasons: use them to explain spikes in spending.', input_schema: dateRange },
+  // Owner, 1 Nov 2026: "bunny was not able to answer total commission by Zomato & Swiggy".
+  { name: 'get_online_costs', description: 'Zomato and Swiggy for a date range of up to 400 days: online sales, commission (without the 5% GST the platforms collect and pay for us), ads, commission as % of sales, per platform and in total - the same figures as the Analytics cards. Days the platforms have not settled yet are estimated at the last 60 days\' rate (estimatedDays). Also each settlement paid into the bank in the range: what customers paid, what the platform kept, ads and what reached the bank.', input_schema: dateRange },
 ];
 
 async function runTool(deps: Deps, storeId: string | null, name: string, input: any) {
   const today = deps.getTodayIST();
-  const clampFrom = (from: string, to: string) => (from < addDaysISO(to, -120) ? addDaysISO(to, -120) : from);
+  const maxDays = name === 'get_online_costs' ? 400 : 120;
+  const clampFrom = (from: string, to: string) => (from < addDaysISO(to, -maxDays) ? addDaysISO(to, -maxDays) : from);
   const from = input?.from ? clampFrom(String(input.from), String(input.to || today)) : addDaysISO(today, -14);
   const to = input?.to ? String(input.to) : today;
   const events = await loadEvents(deps.kv);
@@ -589,6 +593,40 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
           'cashSpentByCategory is money paid out in the range. One-time purchases (equipment, the scooter) are not a cost of the month they were paid - quote their monthlyCostInProfit instead.',
           'Loan repayments (vehicle EMI) are cash out but not a profit cost.',
           'Salaries are not included here.',
+        ],
+      };
+    }
+    case 'get_online_costs': {
+      const [settlements, sales, payouts] = await Promise.all([allRows(deps, 'aggregator-settlement:'), allRows(deps, 'online_sales:'), allRows(deps, 'online_payout:')]);
+      const mine = (x: any) => !storeId || x?.storeId === storeId;
+      const costs = onlineCostsForRange(buildOnlineCostIndex(settlements, storeId), sales.filter(mine), payouts.filter(mine), from, to, today);
+      const rs = (n: number) => Math.round(n || 0);
+      const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
+      const platform = (agg: Aggregator) => {
+        const p = costs.byAggregator[agg];
+        return { onlineSales: rs(p.sales), commission: rs(p.commission), commissionPctOfSales: pct(p.commission, p.sales), ads: rs(p.ads), commissionAndAds: rs(p.commission + p.ads) };
+      };
+      const sold = costs.byAggregator.zomato.sales + costs.byAggregator.swiggy.sales;
+      const settlementsPaidInRange = settlements
+        .filter((s: any) => mine(s) && typeof s.settlementDate === 'string' && s.settlementDate >= from && s.settlementDate <= to)
+        .sort((a: any, b: any) => a.settlementDate.localeCompare(b.settlementDate))
+        .map((s: any) => ({
+          platform: s.aggregator, paidOn: s.settlementDate, ordersFrom: s.periodStart, ordersTo: s.periodEnd, orders: s.orderCount,
+          customersPaid: rs(s.grossSales), platformKept: rs((s.grossSales || 0) - (s.netPayout || 0)), ads: s.adSpend == null ? undefined : rs(s.adSpend), paidToBank: rs(s.netPayout),
+        }));
+      return {
+        from, to,
+        zomato: platform('zomato'),
+        swiggy: platform('swiggy'),
+        total: { onlineSales: rs(sold), commission: rs(costs.commission), commissionPctOfSales: pct(costs.commission, sold), ads: rs(costs.ads), commissionAndAds: rs(costs.commission + costs.ads) },
+        estimatedDays: costs.estimatedDays,
+        estimatedCommission: rs(costs.estimatedCommission),
+        gstPlatformsPaidForUs: rs(costs.gstExcluded),
+        settlementsPaidInRange: settlementsPaidInRange.slice(-60),
+        notes: [
+          'commission leaves out the 5% GST the platforms collect from customers and pay to the government for us - it is not our cost. platformKept on a settlement is everything taken before the bank payment, GST included.',
+          'Days with sales but no settlement yet are estimated at each platform\'s last 60 days\' rate: say so when estimatedDays is above 0.',
+          'Online sales are POS figures without GST, the same as revenue in Analytics.',
         ],
       };
     }
