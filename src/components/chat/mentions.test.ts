@@ -1,7 +1,7 @@
 // Tests for mentions.ts. Run with plain node:
 //   node src/components/chat/mentions.test.ts
 import assert from 'node:assert/strict';
-import { insertMention, mentionQuery, mentionsIn, splitMentions } from './mentions.ts';
+import { BUNNY_ID, insertMention, mentionQuery, mentionsIn, splitMentions } from './mentions.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -28,6 +28,9 @@ test('who a message mentions', () => {
   assert.deepEqual(mentionsIn('@rohan rajbanshi and @Vijay Das', members, 'owner').sort(), ['rohan', 'vijay']);
   assert.deepEqual(mentionsIn('@Everyone rush at 7', members, 'owner').sort(), ['rohan', 'saniya', 'vijay']);
   assert.deepEqual(mentionsIn('@Subham Tewari is me', members, 'owner'), []); // not yourself
+  const withBunny = [...members, { user_id: BUNNY_ID, name: 'Bunny' }];
+  assert.deepEqual(mentionsIn('@Everyone rush at 7', withBunny, 'owner').sort(), ['rohan', 'saniya', 'vijay']); // Bunny only by name
+  assert.deepEqual(mentionsIn('@Bunny chicken today?', withBunny, 'owner'), [BUNNY_ID]);
   assert.deepEqual(mentionsIn('email@Rohan Rajbanshi', members, 'owner'), []); // not inside a word
   assert.deepEqual(mentionsIn('@Rohan Rajbanshis', members, 'owner'), []); // not a longer word
 });

@@ -1,7 +1,7 @@
 // Tests for chat.ts's groups. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/chat.test.ts
 import assert from 'node:assert/strict';
-import { groupsFor, isLead, roleWord } from './chat.ts';
+import { BUNNY_ID, bunnyTurns, groupsFor, isLead, roleWord } from './chat.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -35,6 +35,22 @@ test('who leads, and the word shown next to a name', () => {
   assert.equal(isLead(staff[1]), true);
   assert.equal(isLead(staff[2]), false);
   assert.deepEqual(staff.slice(0, 6).map(roleWord), ['Owner', 'Operations', 'Store incharge', 'Store', 'Production incharge', 'Kitchen']);
+});
+
+test('a chat with Bunny as turns', () => {
+  const me = 'rohan';
+  assert.deepEqual(bunnyTurns([
+    { sender_id: BUNNY_ID, kind: 'text', body: 'Hi' }, // Bunny first: dropped
+    { sender_id: me, kind: 'text', body: 'How many chicken yesterday?' },
+    { sender_id: me, kind: 'voice', body: '' },
+    { sender_id: BUNNY_ID, kind: 'text', body: '412 pieces.' },
+    { sender_id: me, kind: 'photo', body: 'this one' },
+  ]), [
+    { role: 'user', content: 'How many chicken yesterday?\n[voice note]' },
+    { role: 'assistant', content: '412 pieces.' },
+    { role: 'user', content: '[photo] this one' },
+  ]);
+  assert.deepEqual(bunnyTurns([{ sender_id: me, kind: 'text', body: 'Q' }, { sender_id: BUNNY_ID, kind: 'text', body: 'A' }]), [{ role: 'user', content: 'Q' }]);
 });
 
 console.log(`chat: ${passed} tests passed`);

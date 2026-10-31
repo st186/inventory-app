@@ -7,7 +7,7 @@ import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
-import { AiError, aiProductionCoach, askClaudeForJson, registerInsightsRoutes } from './insights.ts';
+import { AiError, aiProductionCoach, askBunnyInChat, askClaudeForJson, registerInsightsRoutes } from './insights.ts';
 import { CATEGORY_CHOICES, catLabel, recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
@@ -19376,6 +19376,8 @@ registerPaperworkRoutes(app, { kv: kvWithRetry, rows: getAllByPrefixWithRetry, v
 registerChatRoutes(app, {
   kv: kvWithRetry, db: supabase, verifyUser, staff: staffForNotifications, rows: getAllByPrefixWithRetry, notifyUser,
   drive: { configured: gdrive.driveConfigured, folder: gdrive.ensureDriveFolder, upload: gdrive.uploadDriveFile, download: gdrive.downloadDriveFile },
+  // Bunny in the chat: Ask Bunny's look-ups, with the same data access as the Insights routes below.
+  bunny: (o) => askBunnyInChat({ kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry }, verifyUser, getTodayIST } as any, o),
 });
 registerSiteAuditRoutes(app, {
   kv: kvWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST,

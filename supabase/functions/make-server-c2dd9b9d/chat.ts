@@ -8,6 +8,10 @@
 // Groups: the whole team; each store (its staff); each production house (its staff). The owner and
 // operations managers are in every group. A one-to-one room has only its two people - nobody else
 // can read it.
+// Bunny (owner, 1 Nov 2026: "will bunny be available in chat"): a member of every group, answering
+// when someone writes @Bunny, and everyone has a one-to-one chat with Bunny (room key bunny:<uid>).
+import { inBackground } from './background.ts';
+
 type Kv = { get: (k: string) => Promise<any>; set: (k: string, v: any) => Promise<void> };
 export type ChatDeps = {
   kv: Kv;
@@ -23,7 +27,12 @@ export type ChatDeps = {
     upload: (opts: { name: string; bytes: Uint8Array; mimeType: string; folderId: string }) => Promise<{ id: string }>;
     download: (id: string) => Promise<Response>;
   };
+  /** Bunny's answer (insights.ts askBunnyInChat). */
+  bunny?: (o: { userId: string; role: string; storeId: string | null; noMoney: boolean; where: string; messages: { role: 'user' | 'assistant'; content: string }[] }) => Promise<string>;
 };
+/** Bunny's place in the chat tables: a fixed id that is no one's sign-in. */
+export const BUNNY_ID = '00000000-0000-4000-8000-00000000b0b0';
+const BUNNY_NAME = 'Bunny';
 /** Photos and voice notes stay in Supabase this long, then move to Google Drive. */
 export const KEEP_DAYS = 30;
 const MEDIA_BUCKET = 'chat-media';
@@ -44,6 +53,22 @@ const placesOf = (u: any) => ({
   houses: new Set([u.productionHouseId, ...(u.assignedProductionHouseIds || [])].filter(Boolean).map(String)),
 });
 export const roleWord = (u: any) => (u?.role === 'cluster_head' ? 'Owner' : isLead(u) ? 'Operations' : DESIGNATION_WORD[u?.designation] || 'Team');
+
+/** A one-to-one chat with Bunny as Bunny's turns (assistant) and the person's (user): starting and
+ *  ending with the person, back-to-back messages of one side joined. */
+export function bunnyTurns(list: { sender_id: string; kind: string; body: string }[]) {
+  const turns: { role: 'user' | 'assistant'; content: string }[] = [];
+  for (const m of list) {
+    const role = m.sender_id === BUNNY_ID ? 'assistant' : 'user';
+    const content = m.kind === 'photo' ? `[photo] ${m.body || ''}`.trim() : m.kind === 'voice' ? '[voice note]' : m.body;
+    if (!content) continue;
+    if (!turns.length && role === 'assistant') continue;
+    if (turns[turns.length - 1]?.role === role) turns[turns.length - 1].content += `\n${content}`;
+    else turns.push({ role, content });
+  }
+  while (turns.length && turns[turns.length - 1].role === 'assistant') turns.pop();
+  return turns;
+}
 
 /** The groups and who is in each, from the staff list. */
 export function groupsFor(staff: any[], stores: any[], houses: any[]) {
@@ -87,6 +112,7 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
       const roomId = idOf.get(g.key);
       if (!roomId) continue;
       const rows = g.members.map((u: any) => ({ room_id: roomId, user_id: u.authUserId, name: String(u.name || 'Someone').slice(0, 60) }));
+      rows.push({ room_id: roomId, user_id: BUNNY_ID, name: BUNNY_NAME });
       // Names updated, read marks kept; people no longer in the group taken out.
       if (rows.length) {
         const { error } = await deps.db.from('chat_members').upsert(rows, { onConflict: 'room_id,user_id', ignoreDuplicates: false });
@@ -97,6 +123,23 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
       if (keep.length) del = del.not('user_id', 'in', `(${keep.join(',')})`);
       const { error: delErr } = await del;
       if (delErr) throw new Error(delErr.message);
+    }
+    // Everyone's one-to-one chat with Bunny.
+    const people = staff.filter(active);
+    if (people.length) {
+      const { error: bErr } = await deps.db.from('chat_rooms').upsert(people.map((u: any) => ({ key: `bunny:${u.authUserId}`, kind: 'direct', name: BUNNY_NAME })), { onConflict: 'key', ignoreDuplicates: true });
+      if (bErr) throw new Error(bErr.message);
+      const { data: bunnyRooms, error: bRead } = await deps.db.from('chat_rooms').select('id,key').in('key', people.map((u: any) => `bunny:${u.authUserId}`));
+      if (bRead) throw new Error(bRead.message);
+      const nameOf = new Map(people.map((u: any) => [u.authUserId, String(u.name || 'Someone').slice(0, 60)]));
+      const rows = (bunnyRooms || []).flatMap((r: any) => {
+        const uid = r.key.slice('bunny:'.length);
+        return [{ room_id: r.id, user_id: uid, name: nameOf.get(uid) || 'Someone' }, { room_id: r.id, user_id: BUNNY_ID, name: BUNNY_NAME }];
+      });
+      if (rows.length) {
+        const { error } = await deps.db.from('chat_members').upsert(rows, { onConflict: 'room_id,user_id', ignoreDuplicates: true });
+        if (error) throw new Error(error.message);
+      }
     }
     await deps.kv.set('chat-sync:last', { at: new Date().toISOString(), groups: groups.length });
     return groups.length;
@@ -207,6 +250,41 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     }
   });
 
+  // Bunny's reply. In a group it names the person who asked, so they get their own notification.
+  async function replyAsBunny(msg: any, room: any) {
+    const asker = (await deps.staff()).find((u: any) => u.authUserId === msg.sender_id);
+    if (!asker || !active(asker)) return;
+    const direct = room.key === `bunny:${msg.sender_id}`;
+    let body: string;
+    if (msg.kind !== 'text') {
+      body = "I can only read typed messages for now - please type your question (the keyboard's mic works too).";
+    } else {
+      const { data: recent } = await deps.db.from('chat_messages').select('sender_id,sender_name,kind,body,created_at')
+        .eq('room_id', room.id).lte('created_at', msg.created_at).order('created_at', { ascending: false }).limit(direct ? 12 : 8);
+      const list = (recent || []).reverse();
+      const strip = (t: string) => t.replace(/(^|\s)@Bunny(?![\p{L}\p{N}])/giu, ' ').trim();
+      const messages = direct
+        ? bunnyTurns(list)
+        : [{
+          role: 'user' as const,
+          content: `Recent messages in the group:\n${list.slice(0, -1).map((m: any) => `${m.sender_name}: ${m.kind === 'text' ? m.body : `[${m.kind}] ${m.body || ''}`}`).join('\n') || '(none)'}\n\n${msg.sender_name} (${roleWord(asker)}) asks you: ${strip(msg.body) || '(just your name)'}`,
+        }];
+      // Who already sees rupee figures in Ask Bunny: the owner, operations and the incharges.
+      const seesMoney = direct && (asker.role === 'cluster_head' || asker.role === 'manager');
+      const production = ['production_incharge', 'production_ops'].includes(asker.designation);
+      const storeId = room.key.startsWith('store:') ? room.key.slice('store:'.length) : direct && !isLead(asker) && !production ? (asker.storeId || null) : null;
+      try {
+        body = messages.length
+          ? await deps.bunny!({ userId: asker.authUserId, role: asker.role, storeId, noMoney: !seesMoney, where: direct ? `a one-to-one chat with ${asker.name || 'a team member'} (${roleWord(asker)})` : `the "${room.name}" group chat`, messages })
+          : 'Ask me something about sales, stock, production or the forecast.';
+      } catch (e) {
+        body = `Sorry, I couldn't answer just now: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300);
+      }
+    }
+    const { error } = await deps.db.from('chat_messages').insert({ room_id: room.id, sender_id: BUNNY_ID, kind: 'text', body: body.slice(0, 2000), mentions: direct ? [] : [msg.sender_id] });
+    if (error) throw new Error(error.message);
+  }
+
   // Called by the chat_message_notify trigger after each message.
   app.post(`${P}/chat/notify`, async (c: any) => {
     const secret = Deno.env.get('CRON_SYNC_SECRET');
@@ -216,7 +294,7 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
       const { data: msg } = await deps.db.from('chat_messages').select('id,room_id,sender_id,sender_name,kind,body,created_at,mentions').eq('id', id).single();
       if (!msg) return c.json({ error: 'No such message' }, 404);
       const [{ data: room }, { data: members }] = await Promise.all([
-        deps.db.from('chat_rooms').select('id,kind,name').eq('id', msg.room_id).single(),
+        deps.db.from('chat_rooms').select('id,key,kind,name').eq('id', msg.room_id).single(),
         deps.db.from('chat_members').select('user_id,last_read_at').eq('room_id', msg.room_id),
       ]);
       if (!room) return c.json({ error: 'No such room' }, 404);
@@ -226,9 +304,13 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
       // Someone named with @ (or @Everyone) gets their own notification that buzzes, never folded
       // into the group's bundle (owner, 1 Nov 2026: "can we mention someone in chat?").
       const mentioned = new Set<string>(Array.isArray(msg.mentions) ? msg.mentions : []);
+      // Bunny answers in its own chat, and in a group when named, after this reply.
+      if (deps.bunny && msg.sender_id !== BUNNY_ID && (room.key === `bunny:${msg.sender_id}` || (mentioned.has(BUNNY_ID) && /(^|\s)@Bunny(?![\p{L}\p{N}])/iu.test(msg.body || '')))) {
+        inBackground('Bunny chat reply', () => replyAsBunny(msg, room));
+      }
       let sent = 0;
       for (const m of members || []) {
-        if (m.user_id === msg.sender_id) continue;
+        if (m.user_id === msg.sender_id || m.user_id === BUNNY_ID) continue;
         if (m.last_read_at && Date.now() - Date.parse(m.last_read_at) < READING_MS) continue; // reading it now
         const mention = !direct && mentioned.has(m.user_id);
         await deps.notifyUser(

@@ -3,6 +3,8 @@
 // message's mentions - who gets their own notification (server chat.ts).
 export type Member = { user_id: string; name: string };
 export const EVERYONE = 'Everyone';
+/** Bunny (server chat.ts BUNNY_ID): only when named itself - @Everyone is for the people. */
+export const BUNNY_ID = '00000000-0000-4000-8000-00000000b0b0';
 
 /** The @word being typed just before the caret, if any: where it starts and what's typed after @. */
 export function mentionQuery(text: string, caret: number): { start: number; query: string } | null {
@@ -20,10 +22,10 @@ export function insertMention(text: string, start: number, caret: number, name: 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Who the message mentions: each member written as "@Name" (whole name, any case), and everyone
- *  but the sender for "@Everyone". */
+ *  but the sender (and Bunny) for "@Everyone". */
 export function mentionsIn(text: string, members: Member[], me: string | null): string[] {
   const out = new Set<string>();
-  if (new RegExp(`(^|\\s)@${EVERYONE}(?![\\p{L}\\p{N}])`, 'iu').test(text)) members.forEach((m) => m.user_id !== me && out.add(m.user_id));
+  if (new RegExp(`(^|\\s)@${EVERYONE}(?![\\p{L}\\p{N}])`, 'iu').test(text)) members.forEach((m) => m.user_id !== me && m.user_id !== BUNNY_ID && out.add(m.user_id));
   for (const m of members) {
     if (m.user_id === me || !m.name.trim()) continue;
     if (new RegExp(`(^|\\s)@${esc(m.name.trim())}(?![\\p{L}\\p{N}])`, 'iu').test(text)) out.add(m.user_id);

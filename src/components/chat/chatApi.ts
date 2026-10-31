@@ -21,6 +21,10 @@ export type ChatMessage = {
   mentions?: string[];
 };
 
+/** Bunny's place in the chat (server chat.ts BUNNY_ID): in every group, and a one-to-one with everyone. */
+export { BUNNY_ID } from './mentions';
+export const isBunnyRoom = (room: { key?: string } | null | undefined) => !!room?.key?.startsWith('bunny:');
+
 const db = () => getSupabaseClient();
 const BUCKET = 'chat-media';
 export const PAGE = 40;

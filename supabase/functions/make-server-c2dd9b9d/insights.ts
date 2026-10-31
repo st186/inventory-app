@@ -1385,33 +1385,74 @@ ${JSON.stringify({
         role: 'user',
         content: `(Today is ${WEEKDAY_SHORT[weekdayOf(today)]} ${today}. Answer in ${LANGUAGES[language]}.)\n\n${screenPart}Question: ${history[history.length - 1].content}`,
       };
-      const messages: any[] = history;
-      const used: string[] = [];
-      const reply = (raw: string) => {
-        const { answer, followUps } = splitFollowUps(raw);
-        return c.json({ answer: answer || 'No answer.', followUps, toolsUsed: used });
-      };
-      for (let turn = 0; turn < 6; turn++) {
-        const res = await callClaude(deps, { purpose: 'ask', effort: 'medium', maxTokens: 6000, tools: ASK_TOOLS, messages, user: aiUser(actor) });
-        if (res.stop_reason !== 'tool_use') return reply(textOf(res));
-        messages.push({ role: 'assistant', content: res.content });
-        const results = [];
-        for (const block of res.content.filter((b: any) => b.type === 'tool_use')) {
-          used.push(block.name);
-          let content: string;
-          try {
-            content = JSON.stringify(await runTool(deps, storeId, block.name, block.input)).slice(0, 60000);
-          } catch (toolErr: any) {
-            results.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${toolErr?.message || toolErr}`, is_error: true });
-            continue;
-          }
-          results.push({ type: 'tool_result', tool_use_id: block.id, content });
-        }
-        messages.push({ role: 'user', content: results });
-      }
-      return c.json({ answer: 'That needed more look-ups than allowed - try a narrower question.', followUps: [], toolsUsed: used });
+      const { raw, used } = await askLoop(deps, { messages: history, storeId, user: aiUser(actor) });
+      if (raw === null) return c.json({ answer: TOO_MANY_LOOKUPS, followUps: [], toolsUsed: used });
+      const { answer, followUps } = splitFollowUps(raw);
+      return c.json({ answer: answer || 'No answer.', followUps, toolsUsed: used });
     } catch (err) { return fail(c, err); }
   });
+}
+
+const TOO_MANY_LOOKUPS = 'That needed more look-ups than allowed - try a narrower question.';
+// Rupee figures, for answers that may not show them (Bunny in the team chat, below).
+const MONEY_TOOLS = new Set(['get_expenses', 'get_online_costs']);
+const MONEY_KEY = /revenue|amount|cost|price|profit|rupee|commission|payout|spend/i;
+function withoutMoney(value: any): any {
+  if (Array.isArray(value)) return value.map(withoutMoney);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k]) => !MONEY_KEY.test(k)).map(([k, v]) => [k, withoutMoney(v)]));
+  return value;
+}
+
+/** Ask Bunny's look-up loop: up to 6 turns of tools, then the answer (null when it ran out of turns).
+ *  With noMoney the expense and Zomato/Swiggy tools are gone and rupee fields are cut from the rest. */
+async function askLoop(deps: Deps, o: { messages: any[]; storeId: string | null; user: AiUser; noMoney?: boolean }): Promise<{ raw: string | null; used: string[] }> {
+  const tools = o.noMoney ? ASK_TOOLS.filter((t) => !MONEY_TOOLS.has(t.name)) : ASK_TOOLS;
+  const used: string[] = [];
+  for (let turn = 0; turn < 6; turn++) {
+    const res = await callClaude(deps, { purpose: 'ask', effort: 'medium', maxTokens: 6000, tools, messages: o.messages, user: o.user });
+    if (res.stop_reason !== 'tool_use') return { raw: textOf(res), used };
+    o.messages.push({ role: 'assistant', content: res.content });
+    const results = [];
+    for (const block of res.content.filter((b: any) => b.type === 'tool_use')) {
+      used.push(block.name);
+      let content: string;
+      try {
+        if (o.noMoney && MONEY_TOOLS.has(block.name)) throw new Error('Not available in this chat');
+        const out = await runTool(deps, o.storeId, block.name, block.input);
+        content = JSON.stringify(o.noMoney ? withoutMoney(out) : out).slice(0, 60000);
+      } catch (toolErr: any) {
+        results.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${toolErr?.message || toolErr}`, is_error: true });
+        continue;
+      }
+      results.push({ type: 'tool_result', tool_use_id: block.id, content });
+    }
+    o.messages.push({ role: 'user', content: results });
+  }
+  return { raw: null, used };
+}
+
+// ---------------- Bunny in the team chat (chat.ts) ----------------
+// Owner, 1 Nov 2026: "will bunny be available in chat" -> yes: everyone has a one-to-one chat with
+// Bunny, and "@Bunny" in a group asks it there. Same tools and per-person allowance as Ask Bunny.
+// Rupee figures only in a one-to-one with someone who already sees them in Ask Bunny (owner,
+// operations, incharges): a group answer is read by the whole group, and the crew never get them.
+const scriptLanguage = (text: string): keyof typeof LANGUAGES => (/[ঀ-৿]/.test(text) ? 'bn' : /[ऀ-ॿ]/.test(text) ? 'hi' : 'en');
+
+export async function askBunnyInChat(deps: Deps, o: {
+  userId: string; role: string; storeId: string | null; noMoney: boolean;
+  where: string; // 'a one-to-one chat with Rohan' or 'the "Bunny Momos 1" group chat'
+  messages: { role: 'user' | 'assistant'; content: string }[]; // oldest first, ending with the question
+}): Promise<string> {
+  const today = deps.getTodayIST();
+  const messages: any[] = o.messages.map((m) => ({ ...m }));
+  const last = messages[messages.length - 1];
+  const language = scriptLanguage(last.content);
+  last.content = `(Today is ${WEEKDAY_SHORT[weekdayOf(today)]} ${today}. Answer in ${LANGUAGES[language]}${language === 'en' ? ', or in Bengali or Hindi written in English letters if the question is written that way' : ''}.)\n\n`
+    + `You are replying in ${o.where} in the Bunny Momos team chat: one chat message under 120 words, plain sentences, no headings, tables or lists.`
+    + (o.noMoney ? ' Rupee figures (sales value, costs, profit, commission, prices, pay) are not for this chat: never give them. If asked, say the owner or an incharge can ask Bunny in their own one-to-one chat with Bunny.' : '')
+    + `\n\nQuestion: ${last.content}`;
+  const { raw } = await askLoop(deps, { messages, storeId: o.storeId, user: { id: o.userId, isOwner: o.role === 'cluster_head' }, noMoney: o.noMoney });
+  return raw === null ? TOO_MANY_LOOKUPS : (splitFollowUps(raw).answer || 'No answer.').slice(0, 1900);
 }
 
 // ---------------- Workplace photo hygiene score (workplace.ts) ----------------

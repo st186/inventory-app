@@ -1,9 +1,10 @@
 // Team chat (owner, 1 Nov 2026: "Can we have chat included in this app" -> groups + direct): the
 // rooms (the whole team, each store, each production house, and one-to-ones), and a room with text,
 // photos and voice notes. A notification opens its room (route param highlight = the room id).
-// Everything is read and sent through chatApi.ts; new messages arrive live.
+// Everything is read and sent through chatApi.ts; new messages arrive live. Bunny answers in its own
+// chat and when named with @Bunny in a group (server chat.ts).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Camera, Mic, PenSquare, Send, Square, Users, X } from 'lucide-react';
+import { ArrowLeft, Camera, Mic, PenSquare, Send, Sparkles, Square, Users, X } from 'lucide-react';
 import { useT } from '../../utils/i18n';
 import * as api from '../../utils/api';
 import { compressPhoto } from '../assets/assetsApi';
@@ -22,6 +23,11 @@ import { EVERYONE, insertMention, mentionQuery, mentionsIn, splitMentions, type 
 const SYNC_KEY = 'bunny-chat-synced';
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toLowerCase();
 const dayKey = (iso: string) => new Date(Date.parse(iso) + 330 * 60000).toISOString().slice(0, 10);
+/** How long "Bunny is looking it up" shows before giving up on a reply. */
+const BUNNY_WAIT_MS = 90 * 1000;
+const BunnyAvatar = ({ size }: { size: number }) => (
+  <img src="/bunny-logo.png" alt="" className="shrink-0 rounded-full bg-surface-2 object-contain p-1" style={{ width: size, height: size }} draggable={false} />
+);
 
 export function ChatScreen({ params }: { params: Record<string, string> }) {
   const { t } = useT();
@@ -79,7 +85,9 @@ export function ChatScreen({ params }: { params: Record<string, string> }) {
           {rooms.map((r) => (
             <li key={r.id}>
               <button type="button" onClick={() => setOpenId(r.id)} className="flex w-full items-center gap-3 px-3.5 py-3 text-left hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-                {r.kind === 'direct'
+                {chat.isBunnyRoom(r)
+                  ? <BunnyAvatar size={40} />
+                  : r.kind === 'direct'
                   ? <InitialsAvatar name={r.name} size={40} />
                   : <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary"><Users className="size-5" aria-hidden="true" /></span>}
                 <span className="flex min-w-0 flex-1 flex-col">
@@ -89,7 +97,7 @@ export function ChatScreen({ params }: { params: Record<string, string> }) {
                   </span>
                   <span className="flex items-center justify-between gap-2">
                     <span className={`truncate text-body-sm ${r.unread ? 'text-text' : 'text-text-3'}`}>
-                      {r.last_at ? `${r.kind !== 'direct' && r.last_sender ? `${r.last_sender}: ` : ''}${preview(t, r.last_kind, r.last_body)}` : r.kind === 'direct' ? t('chat.sayHi') : t('chat.membersN', { n: r.members })}
+                      {r.last_at ? `${r.kind !== 'direct' && r.last_sender ? `${r.last_sender}: ` : ''}${preview(t, r.last_kind, r.last_body)}` : chat.isBunnyRoom(r) ? t('chat.askBunny') : r.kind === 'direct' ? t('chat.sayHi') : t('chat.membersN', { n: r.members })}
                     </span>
                     {r.unread > 0 && <span className="num flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-label font-semibold text-on-primary">{r.unread > 99 ? '99+' : r.unread}</span>}
                   </span>
@@ -152,6 +160,7 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [, setTick] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -210,7 +219,17 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
   const today = dayKey(new Date().toISOString());
   const yesterday = dayKey(new Date(Date.now() - 86400000).toISOString());
   const group = room?.kind !== 'direct';
+  const bunnyRoom = chat.isBunnyRoom(room);
   const typing = group ? mentionQuery(text, caret) : null;
+  // Asked Bunny and no reply yet: show that it's on it, for up to BUNNY_WAIT_MS.
+  const last = msgs?.[msgs.length - 1];
+  const waitLeft = last && last.sender_id === me && (bunnyRoom || (last.mentions || []).includes(chat.BUNNY_ID))
+    ? BUNNY_WAIT_MS - (Date.now() - Date.parse(last.created_at)) : 0;
+  useEffect(() => {
+    if (waitLeft <= 0) return;
+    const id = window.setTimeout(() => setTick((n) => n + 1), waitLeft);
+    return () => window.clearTimeout(id);
+  }, [waitLeft > 0, last?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const suggestions = typing
     ? [{ user_id: '*', name: EVERYONE }, ...people.filter((p) => p.user_id !== me)]
       .filter((p) => p.name.toLowerCase().includes(typing.query.toLowerCase())).slice(0, 6)
@@ -231,12 +250,15 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-body-md font-semibold text-text">{room?.name || t('chat.title')}</span>
           {group && room && <span className="text-label text-text-3">{t('chat.membersN', { n: room.members })}</span>}
+          {bunnyRoom && <span className="text-label text-text-3">{t('chat.bunnySub')}</span>}
         </div>
       </div>
       <div className="flex flex-1 flex-col gap-3 px-3 py-3">
         {more && <Button size="sm" variant="ghost" className="self-center" onClick={earlier}>{t('chat.earlier')}</Button>}
         {msgs === null && <Skeleton className="h-40 w-full rounded-lg" />}
-        {msgs?.length === 0 && <EmptyState compact icon={Users} title={t('chat.empty')} />}
+        {msgs?.length === 0 && (bunnyRoom
+          ? <EmptyState compact icon={Sparkles} title={t('chat.bunnyEmpty')} body={t('chat.bunnyEmptyBody')} />
+          : <EmptyState compact icon={Users} title={t('chat.empty')} />)}
         {days.map(({ day, list }) => (
           <div key={day} className="flex flex-col gap-1.5">
             <span className="self-center rounded-full bg-surface-2 px-2.5 py-0.5 text-label text-text-3">
@@ -264,6 +286,12 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
             })}
           </div>
         ))}
+        {waitLeft > 0 && (
+          <div className="flex items-center gap-2 self-start rounded-2xl rounded-bl-md border border-border bg-surface px-3 py-2 text-body-sm text-text-2" role="status">
+            <BunnyAvatar size={20} />
+            <span>{t('chat.bunnyThinking')}</span>
+          </div>
+        )}
         <div ref={bottom} />
       </div>
       {suggestions.length > 0 && (
@@ -273,7 +301,7 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
               <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pickMention(p.name)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-surface-2">
                 {p.user_id === '*'
                   ? <span className="flex size-8 items-center justify-center rounded-full bg-primary-soft text-primary"><Users className="size-4" aria-hidden="true" /></span>
-                  : <InitialsAvatar name={p.name} size={32} />}
+                  : p.user_id === chat.BUNNY_ID ? <BunnyAvatar size={32} /> : <InitialsAvatar name={p.name} size={32} />}
                 <span className="text-body-sm font-medium text-text">{p.user_id === '*' ? t('chat.everyone') : p.name}</span>
               </button>
             </li>
@@ -281,7 +309,7 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
         </ul>
       )}
       <div className="sticky bottom-0 flex items-end gap-2 border-t border-border bg-surface px-2 py-2" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
-        <IconButton label={t('chat.photo')} icon={<Camera />} onClick={() => photoInput.current?.click()} disabled={sending} />
+        {!bunnyRoom && <IconButton label={t('chat.photo')} icon={<Camera />} onClick={() => photoInput.current?.click()} disabled={sending} />}
         <input ref={photoInput} type="file" accept="image/*" className="sr-only" onChange={sendPhoto} />
         <textarea
           ref={box}
@@ -295,8 +323,8 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
           aria-label={t('chat.write')}
           className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-border bg-surface-2 px-3.5 py-2.5 text-body-md text-text outline-none placeholder:text-text-3 focus-visible:ring-2 focus-visible:ring-ring"
         />
-        {text.trim()
-          ? <IconButton label={t('chat.send')} icon={<Send />} variant="primary" loading={sending} onClick={send} />
+        {text.trim() || bunnyRoom
+          ? <IconButton label={t('chat.send')} icon={<Send />} variant="primary" loading={sending} disabled={!text.trim()} onClick={send} />
           : <VoiceButton roomId={roomId} onSent={(m) => add([m])} />}
       </div>
       <ResponsiveModal open={!!viewing} onOpenChange={(o) => { if (!o) setViewing(null); }} title={t('chat.photo')} size="detail">
