@@ -117,11 +117,8 @@ export function PrepareLineItemForm({ disabled, submitting, leftoverKg = {}, pla
         </fieldset>
       )}
       {picked && (
-        <Field label={t('kd.howMuch', { what: label(picked) })} error={grams ? t('stock.prod.looksLikeGrams') : undefined}>
-          <span className="flex items-center gap-2">
-            <Input type="text" inputMode="decimal" className="num w-32" value={qty} onChange={(e) => setQty(e.target.value.replace(/,/g, '.').replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
-            <span className="text-body-sm text-text-2">kg</span>
-          </span>
+        <Field label={`${t('kd.howMuch', { what: label(picked) })} (kg)`} error={grams ? t('stock.prod.looksLikeGrams') : undefined}>
+          <Input type="text" inputMode="decimal" className="num w-32" value={qty} onChange={(e) => setQty(e.target.value.replace(/,/g, '.').replace(/[^\d.]/g, ''))} disabled={disabled} placeholder="0.00" />
         </Field>
       )}
       {left >= LEFTOVER_MIN_KG && (

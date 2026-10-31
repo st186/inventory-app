@@ -74,7 +74,47 @@ let stockOuts: any[] = [
 ];
 
 const firstOfMonth = `${today.slice(0, 7)}-01`;
-let morningWeighIn: any = null;
+
+// The production day (KitchenDay.tsx). Learn the app's production chapters start at different points
+// of the day (learn/chapters.ts): prod-morning on a fresh morning, prod-batches once the morning is
+// counted, prod-evening with the day's batches logged too. ?kd=batches|evening does the same here.
+const PRACTICE = (globalThis as { __BUNNY_PRACTICE__?: { chapter?: string; name?: string } }).__BUNNY_PRACTICE__;
+const KD_STAGE = PRACTICE?.chapter === 'prod-evening' || new URLSearchParams(globalThis.location?.search || '').get('kd') === 'evening' ? 'evening'
+  : PRACTICE?.chapter === 'prod-batches' || new URLSearchParams(globalThis.location?.search || '').get('kd') === 'batches' ? 'batches' : 'morning';
+const COOK = PRACTICE?.name || 'Sohel';
+const LAST_NIGHT: Record<string, number> = { dough: 1.2, batter: 0.5, 'stuffing:chicken': 0.8, 'coating:chickenKurkure': 0.2, 'sauce:spicyRedChutney': 1.5, 'sauce:greenMayoChutney': 0.8 };
+const MORNING_COUNTS: Record<string, number> = {
+  dough: 1.2, 'dough:cheeseCorn': 0, 'stuffing:chicken': 0.8, 'stuffing:chickenCheese': 0, 'stuffing:veg': 0, 'stuffing:cheeseCorn': 0, 'stuffing:paneer': 0,
+  batter: 0.5, 'coating:vegKurkure': 0, 'coating:chickenKurkure': 0.2,
+  'sauce:panfriedSauce': 0, 'sauce:chilliChickenSauce': 0, 'sauce:spicyKoreanSauce': 0, 'sauce:hotGarlicSauce': 0, 'sauce:tandooriSauce': 0, 'sauce:soupPremix': 0, 'sauce:greenMayoChutney': 0.8, 'sauce:spicyRedChutney': 1.5,
+};
+let morningWeighIn: any = KD_STAGE === 'morning' ? null
+  : { productionHouseId: 'PH-1', date: today, counts: MORNING_COUNTS, thaw: { 'stuffing:chicken': { frozen: false } }, at: `${today}T08:12:00.000Z`, by: 'BM020', byName: COOK };
+const item = (id: string, momoKey: string, globalPoolQty: number, perTypePoolQty: number, hhmm: string) => ({ id, momoKey, globalPoolQty, perTypePoolQty, loggedByName: COOK, loggedAt: `${today}T${hhmm}:00.000Z` });
+let ledgerItems: any[] = KD_STAGE === 'evening' ? [item('li1', 'GLOBAL_DOUGH', 9, 0, '08:40'), item('li2', 'chickenMomos', 0, 9, '09:15'), item('li3', 'GLOBAL_BATTER', 1.5, 0, '11:30')] : [];
+let ledgerClosed: { closingActuals: Record<string, number>; sauceLeft: Record<string, number>; leftoverReport: any } | null = null;
+let wastageNotes: any[] = [{ id: 'wn1', description: 'Hot Garlic Sauce', quantity: 0.5, unit: 'L', reason: 'X', loggedByName: COOK }];
+// India time now as the server keeps it (getNowIST: IST digits with a Z).
+const nowIstIso = () => new Date(Date.now() + 330 * 60000).toISOString();
+function ledgerPools() {
+  const pools: Record<string, any> = {};
+  const ids = ['dough', 'batter', 'stuffing:chicken', 'stuffing:chickenCheese', 'stuffing:veg', 'stuffing:cheeseCorn', 'stuffing:paneer', 'coating:vegKurkure', 'coating:chickenKurkure', 'dough:cheeseCorn'];
+  for (const id of ids) {
+    const opening = typeof morningWeighIn?.counts?.[id] === 'number' ? morningWeighIn.counts[id] : id === 'stuffing:cheeseCorn' ? 2.54 : LAST_NIGHT[id] || 0;
+    pools[id] = { opening, prepared: 0, closingActual: ledgerClosed && typeof ledgerClosed.closingActuals[id] === 'number' ? ledgerClosed.closingActuals[id] : null, wastage: null };
+  }
+  const TYPE: Record<string, [string, string]> = { chickenMomos: ['chicken', 'stuffing'], chickenCheeseMomos: ['chickenCheese', 'stuffing'], vegMomos: ['veg', 'stuffing'], cheeseCornMomos: ['cheeseCorn', 'stuffing'], paneerMomos: ['paneer', 'stuffing'], vegKurkureMomos: ['vegKurkure', 'coating'], chickenKurkureMomos: ['chickenKurkure', 'coating'] };
+  for (const it of ledgerItems) {
+    if (it.momoKey === 'GLOBAL_DOUGH') pools.dough.prepared += it.globalPoolQty;
+    else if (it.momoKey === 'GLOBAL_BATTER') pools.batter.prepared += it.globalPoolQty;
+    else if (TYPE[it.momoKey]) {
+      const [type, own] = TYPE[it.momoKey];
+      pools[`${own}:${type}`].prepared += it.perTypePoolQty || 0;
+      if (it.globalPoolQty) pools[type === 'cheeseCorn' ? 'dough:cheeseCorn' : own === 'coating' ? 'batter' : 'dough'].prepared += it.globalPoolQty;
+    }
+  }
+  return pools;
+}
 
 export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, body: any, url: URL) => any }[] = [
   { method: 'GET', re: /\/production-requests$/, reply: () => ({ requests }) },
@@ -93,27 +133,30 @@ export const routes: { method: string; re: RegExp; reply: (m: RegExpMatchArray, 
   // The guided production day (KitchenDay.tsx): last night's counts, cheese corn last weighed weeks
   // ago, and the morning weigh-in once saved (it becomes the day's opening).
   { method: 'GET', re: /\/production-ledger$/, reply: () => {
-    const pools: Record<string, any> = { dough: { opening: 1.2, prepared: 6, closingActual: null, wastage: null }, batter: { opening: 0.5, prepared: 2, closingActual: null, wastage: null }, 'stuffing:chicken': { opening: 0.8, prepared: 9, closingActual: null, wastage: 0.3 }, 'stuffing:cheeseCorn': { opening: 2.54, prepared: 0, closingActual: null, wastage: null }, 'dough:cheeseCorn': { opening: 0, prepared: 2, closingActual: null, wastage: null }, 'coating:chickenKurkure': { opening: 0.2, prepared: 1.5, closingActual: null, wastage: null } };
-    for (const [id, kg] of Object.entries(morningWeighIn?.counts || {})) pools[id] = { ...(pools[id] || { prepared: 0, closingActual: null, wastage: null }), opening: kg };
-    return {
-      entry: null, live: { pools }, items: [{ id: 'li1', momoKey: 'GLOBAL_DOUGH', globalPoolQty: 6, perTypePoolQty: 0, loggedByName: 'Sohel', loggedAt: `${today}T08:40:00.000Z` }, { id: 'li2', momoKey: 'chickenMomos', globalPoolQty: 0, perTypePoolQty: 9, loggedByName: 'Sohel', loggedAt: `${today}T09:15:00.000Z` }, { id: 'li3', momoKey: 'cheeseCornMomos', globalPoolQty: 2, perTypePoolQty: 0, loggedByName: 'Sohel', loggedAt: `${today}T11:05:00.000Z` }], hasAnyPriorRecord: true,
-      morning: morningWeighIn,
-      lastCounted: { dough: { date: yesterday, kg: 1.2, when: 'night' }, batter: { date: yesterday, kg: 0.5, when: 'night' }, 'stuffing:chicken': { date: yesterday, kg: 0.8, when: 'night' }, 'coating:chickenKurkure': { date: yesterday, kg: 0.2, when: 'night' }, 'stuffing:cheeseCorn': { date: addDays(today, -24), kg: 2.54, when: 'night' } },
-    };
+    const pools = ledgerPools();
+    const lastCounted: Record<string, any> = Object.fromEntries(Object.entries(LAST_NIGHT).map(([id, kg]) => [id, { date: yesterday, kg, when: 'night' }]));
+    lastCounted['stuffing:cheeseCorn'] = { date: addDays(today, -24), kg: 2.54, when: 'night' };
+    const entry = ledgerClosed ? { id: `PH-1-${today}`, productionHouseId: 'PH-1', date: today, pools, closed: true, closedBy: 'BM020', closedByName: COOK, closedAt: nowIstIso(), sauceLeft: ledgerClosed.sauceLeft, ...(ledgerClosed.leftoverReport ? { leftoverReport: ledgerClosed.leftoverReport } : {}), createdBy: 'BM020', createdByName: COOK, createdAt: nowIstIso(), updatedAt: nowIstIso() } : null;
+    return { entry, live: entry ? null : { pools }, items: ledgerItems, hasAnyPriorRecord: true, morning: morningWeighIn, lastCounted };
   } },
-  { method: 'PUT', re: /\/production-ledger\/[^/]+\/[^/]+\/morning$/, reply: (_m, body) => { morningWeighIn = { productionHouseId: 'PH-1', date: today, counts: body.counts, thaw: body.thaw || {}, at: `${today}T08:12:00.000Z`, by: 'BM020', byName: 'Sohel' }; return { morning: morningWeighIn }; } },
+  { method: 'POST', re: /\/production-ledger-item$/, reply: (_m, body) => { const it = { id: `li-${Date.now()}`, momoKey: body.momoKey, globalPoolQty: body.globalPoolQty || 0, perTypePoolQty: body.perTypePoolQty || 0, ...(body.withLeftover ? { withLeftover: body.withLeftover } : {}), loggedByName: COOK, loggedAt: nowIstIso() }; ledgerItems = [...ledgerItems, it]; return { success: true, item: it }; } },
+  { method: 'DELETE', re: /\/production-ledger-item\/([^/]+)$/, reply: (m) => { ledgerItems = ledgerItems.filter((x) => x.id !== decodeURIComponent(m[1])); return { success: true }; } },
+  { method: 'PUT', re: /\/production-ledger\/[^/]+\/[^/]+\/close$/, reply: (_m, body) => { ledgerClosed = { closingActuals: body.closingActuals || {}, sauceLeft: body.sauceLeft || {}, leftoverReport: body.leftoverReport || null }; return { success: true }; } },
+  { method: 'POST', re: /\/production-wastage-notes$/, reply: (_m, body) => { const n = { id: `wn-${Date.now()}`, description: body.description, quantity: body.quantity, unit: body.unit, reason: body.reason, loggedByName: COOK, loggedAt: nowIstIso() }; wastageNotes = [...wastageNotes, n]; return { success: true, note: n }; } },
+  { method: 'DELETE', re: /\/production-wastage-notes\/([^/]+)$/, reply: (m) => { wastageNotes = wastageNotes.filter((x) => x.id !== decodeURIComponent(m[1])); return { success: true }; } },
+  { method: 'PUT', re: /\/production-ledger\/[^/]+\/[^/]+\/morning$/, reply: (_m, body) => { morningWeighIn = { productionHouseId: 'PH-1', date: today, counts: body.counts, thaw: body.thaw || {}, at: nowIstIso(), by: 'BM020', byName: COOK }; return { morning: morningWeighIn }; } },
   { method: 'POST', re: /\/production-ledger\/[^/]+\/[^/]+\/coach$/, reply: (_m, body) => ({ text: body.stage === 'summary'
-    ? 'Started with 1.2 kg dough and 0.8 kg chicken stuffing, made 6 kg and 9 kg. 2.5 kg chicken stuffing left: about 230 momos more than the plan needed.'
+    ? 'Started with 1.2 kg dough and 0.8 kg chicken stuffing, made 9 kg of each. The chicken stuffing count matches the momos entered.'
     : body.lang === 'bn'
-      ? ['চিকেন স্টাফিং ০.৮ কেজি আছে, প্ল্যান ৯০০টা: আজ প্রায় ৯ কেজি বানান।', 'চিজ কর্ন স্টাফিং ২.৫ কেজি আছে: আজকের প্ল্যানে লাগবে না, আগে ওটা দিন।'].join('\n')
-      : ['Chicken stuffing: 0.8 kg here, plan 900 momos. Make about 9 kg.', 'Cheese corn stuffing: 2.5 kg here covers today. Use it first, make none.'].join('\n') }) },
+      ? ['চিকেন পুর ০.৮ কেজি আছে: আগে ওটা দিন, তারপর আরও প্রায় ৫ কেজি বানান।', 'ডো: সাধারণ ডো প্রায় ৬ কেজি, চিজ কর্ন ডো প্রায় ১ কেজি।'].join('\n')
+      : ['Chicken stuffing: 0.8 kg here. Use it first, then make about 5 kg.', 'Dough: about 6 kg main dough, and about 1 kg cheese corn dough.'].join('\n') }) },
   // The leftover reasons form at the close: who was in (and how late) and the kitchen's machines.
   { method: 'GET', re: /\/day-context$/, reply: () => ({ date: today, minKg: 0.5, perKg: { chicken: 92, veg: 90, cheeseCorn: 85, chickenKurkure: 80, dough: 82, 'dough:cheeseCorn': 80, batter: 400 }, staff: [
     { id: 'P1', name: 'Sohel', shiftStart: '08:00', checkInAt: at(today, '09:42'), lateMin: 102, onLeave: false },
     { id: 'P2', name: 'Rina', shiftStart: '08:00', checkInAt: at(today, '07:58'), lateMin: 0, onLeave: false },
     { id: 'P3', name: 'Bablu', shiftStart: '08:00', checkInAt: null, lateMin: 0, onLeave: true },
   ], machines: [{ id: 'A1', name: 'Steamer (big)', condition: 'good' }, { id: 'A2', name: 'Dough kneader', condition: 'good' }] }) },
-  { method: 'GET', re: /\/production-wastage-notes$/, reply: () => ({ notes: [{ id: 'wn1', description: 'Hot Garlic Sauce', quantity: 0.5, unit: 'L', reason: 'X', loggedByName: 'Sohel' }] }) },
+  { method: 'GET', re: /\/production-wastage-notes$/, reply: () => ({ notes: wastageNotes }) },
   { method: 'GET', re: /\/production-weekly-goal$/, reply: () => ({ goal: { goals: { chickenMomos: 3200, vegMomos: 1100, chickenKurkureMomos: 900 } } }) },
   { method: 'GET', re: /\/stock-outs$/, reply: () => ({ entries: stockOuts }) },
   { method: 'POST', re: /\/stock-outs$/, reply: (_m, body) => { const e = { ...body, id: `so-${Date.now()}`, createdByName: 'Tumpa' }; stockOuts = [e, ...stockOuts]; return { entry: e }; } },
