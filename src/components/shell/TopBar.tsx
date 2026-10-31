@@ -2,7 +2,7 @@
 //   Home:   logo + "Bunny Momos" + a "Mon 27 Oct · Store" caption
 //   Tabs:   the tab's title, with its sub-tabs underneath
 //   Pages:  back arrow + the page's title
-// Right side: Ask Bunny (owner and managers), the bell with the unread count (opens the Inbox) and
+// Right side: Refresh (from 768 px; phones pull down), Ask Bunny (owner and managers), the bell with the unread count (opens the Inbox) and
 // the avatar (opens the Account sheet; on the rail / in the sidebar from 768 px).
 import type { ReactNode } from 'react';
 import { Bell, RefreshCw } from 'lucide-react';
@@ -49,14 +49,15 @@ export function TopBar({
   showBell?: boolean;
   userName: string;
   onAccount: () => void;
-  /** Reload everything from the server (logins that load business data). */
+  /** Reload everything from the server (logins that load business data). Tablets and computers
+   *  only: phones pull the screen down instead (PullToRefresh). */
   onRefresh?: () => void;
   refreshing?: boolean;
 }) {
   const { t } = useT();
   const actions = (
     <>
-      {onRefresh && <IconButton label={t('shell.refresh')} icon={<RefreshCw />} loading={refreshing} onClick={onRefresh} />}
+      {onRefresh && <IconButton label={t('shell.refresh')} icon={<RefreshCw />} loading={refreshing} onClick={onRefresh} className="max-md:hidden" />}
       {showAskBunny && (
         <IconButton
           label={t('nav.askBunny')}

@@ -24,6 +24,7 @@ import { StatusChip } from '../ui/status-chip';
 import * as api from './camerasApi';
 import { KitchenActivity, WhoIsEditor, WhoIsWho } from './KitchenActivity';
 import { getTodayIST } from '../../utils/timezone';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 const ITEMS: api.PpeItem[] = ['cap', 'gloves', 'apron'];
 const when = (iso: string, lang: string) =>
@@ -45,6 +46,7 @@ export function CamerasScreen() {
     loadWho();
   }, [loadWho]);
   useEffect(() => { load(); }, [load]);
+  useRefreshSignal(load);
   // The Who is who tab for whoever may name people (the whois answer lists only their cameras).
   const canName = !!who?.cameras.length;
 

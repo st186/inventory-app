@@ -27,6 +27,7 @@ import {
   dismissAsset, getEquipmentCheck, importPastPurchases, inr, listAssets, locationKey, shortDate, updateAsset,
   type AssetList, type AssetRow, type EquipmentCheck,
 } from './assetsApi';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 // Equipment & assets register (owner, 27 Oct 2026): everything each store and production house
 // has, with what needs checking first. Items bought through expenses appear here by themselves
@@ -79,6 +80,7 @@ export function EquipmentRegister() {
   }, [showRemoved, t]);
 
   useEffect(() => { load(); }, [load]);
+  useRefreshSignal(load);
 
   const perms = data?.permissions;
   const locations = data?.locations || [];

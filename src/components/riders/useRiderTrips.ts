@@ -10,6 +10,7 @@ import { isAppVisible, onAppVisibilityChange } from '../../utils/appVisibility';
 import { useT } from '../../utils/i18n';
 import { useRiderApi } from './riderApi';
 import { isActive, isTracked } from './tripUtils';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 // A ride action returns the bare ride; keep the call contacts and stock request quantities the
 // rider's ride list came with (GET /rider/trips adds them for rider logins).
@@ -50,6 +51,7 @@ export function useRiderTrips(mode: 'rider' | 'staff') {
     const offVisible = onAppVisibilityChange((visible) => { if (visible) load(true); });
     return () => { clearInterval(interval); offVisible(); };
   }, [load, mode]);
+  useRefreshSignal(load);
 
   // Runs one ride action, swaps the updated ride into the list and says so; on failure it says why
   // and reloads.

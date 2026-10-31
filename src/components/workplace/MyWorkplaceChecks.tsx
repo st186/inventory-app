@@ -16,6 +16,7 @@ import { SampleTile } from './SamplePhoto';
 import { compressPhoto, fmt12, liveStatus, minToTime, nowMinutesIST, timeOfIso, toMin } from './workplaceUtils';
 import { teamWorkplaceApi } from '../team/teamApi';
 import { CheckStatusChip, HygieneChip, VERDICT_KEYS, checkName, issuesFor, scoreTone } from '../team/checks/checkParts';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 // "My workplace checks": today's areas assigned to the signed-in person. Owner, 28 Oct 2026:
 // photos should be a two-minute job. Each photo goes up as soon as it's taken and the AI looks at
@@ -62,6 +63,7 @@ export function MyWorkplaceChecks({ threshold }: { threshold: number }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useRefreshSignal(() => load());
   // Statuses move with the clock (due -> late) without reloading.
   useEffect(() => {
     const id = setInterval(() => setTick((n) => n + 1), 60000);

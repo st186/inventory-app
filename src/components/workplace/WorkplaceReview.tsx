@@ -25,6 +25,7 @@ import { compressPhoto, fmt12, liveStatus, nowMinutesIST, timeOfIso } from './wo
 import { teamWorkplaceApi } from '../team/teamApi';
 import { formatDay } from '../team/shared';
 import { CheckStatusChip, HygieneChip, VERDICT_KEYS, checkName, issuesFor, scoreTone } from '../team/checks/checkParts';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 type Props = { locations: WorkplaceLocation[]; threshold: number; initialLocation?: string | null; canSetup?: boolean };
 type Range = '1' | '7' | '14' | '30' | 'custom';
@@ -75,6 +76,7 @@ export function WorkplaceReview({ locations, threshold, initialLocation, canSetu
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loc, from, to]);
+  useRefreshSignal(load);
 
   const range: Range = to === today && ['1', '7', '14', '30'].find((d) => from === addDays(today, -(Number(d) - 1))) ? (['1', '7', '14', '30'].find((d) => from === addDays(today, -(Number(d) - 1))) as Range) : 'custom';
   const setRange = (r: Range) => {

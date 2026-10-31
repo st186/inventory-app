@@ -1,7 +1,7 @@
 // The app shell (design review d1): top bar, bottom nav on phones, rail on tablets, sidebar on
 // desktop, the Account sheet, Ask Bunny and the Inbox, around whichever destination the router
 // is on. App.tsx keeps the data and sign-in; this decides what is on screen.
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import type { InventoryContextType } from '../../App';
 import type * as api from '../../utils/api';
 import { setScreenPage } from '../../utils/screenContext';
@@ -14,6 +14,8 @@ import type { LegacyTarget, Route } from './router';
 import { useShellRouter } from './useShellRouter';
 import { ShellProvider, type ShellContextValue, type ShellUser } from './ShellContext';
 import { TopBar } from './TopBar';
+import { PullToRefresh } from './PullToRefresh';
+import { sendRefresh } from './refreshSignal';
 import { BottomNav } from './BottomNav';
 import { NavRail } from './NavRail';
 import { Sidebar } from './Sidebar';
@@ -45,8 +47,8 @@ export type AppShellProps = {
   passwordDaysLeft: number | null;
   onChangePassword: () => void;
   onLogout: () => void;
-  /** The top bar's Refresh (logins that load business data); refreshing spins it. */
-  onRefresh?: () => void;
+  /** Reloads the business data (logins that load it): pull down, or the top bar's Refresh from 768 px. */
+  onRefresh?: () => Promise<void> | void;
   refreshing?: boolean;
   onEnableNativePush?: () => Promise<boolean>;
   /** App.tsx hands push taps and service-worker messages to the router through this. */
@@ -68,6 +70,17 @@ export function AppShell(props: AppShellProps) {
 function TopBarWithInbox(props: Omit<ComponentProps<typeof TopBar>, 'unread'>) {
   const feed = useNotifications();
   return <TopBar {...props} unread={feed.unreadCount} />;
+}
+
+// Pull down: the business data (if this login loads it), the Inbox, and whatever the screen in
+// view loads itself (refreshSignal).
+function PullRefresh({ areaRef, anchorRef, onRefresh }: { areaRef: RefObject<HTMLElement | null>; anchorRef: RefObject<HTMLElement | null>; onRefresh?: () => Promise<void> | void }) {
+  const feed = useNotifications();
+  const run = useCallback(() => {
+    sendRefresh();
+    return Promise.all([onRefresh?.(), feed.refresh()]);
+  }, [onRefresh, feed.refresh]);
+  return <PullToRefresh areaRef={areaRef} anchorRef={anchorRef} onRefresh={run} />;
 }
 
 function todayCaption(t: (key: I18nKey) => string) {
@@ -184,6 +197,11 @@ function ShellFrame(props: AppShellProps) {
     renderAudit,
   }), [nav, router, user, context, stores, employees, selectedStoreId, onStoreChange, refreshStores, openAccount, openBunny, isPreview, renderAudit]);
 
+  const columnRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const { onRefresh } = props;
+  const refreshButton = useCallback(() => { sendRefresh(); return onRefresh?.(); }, [onRefresh]);
+
   const isMe = route.path === 'me';
   // Learn the app: a role with chapters opens the chapter list; the others play the tour.
   const hasChapters = !!chaptersFor(learnPersona(nav, user.designation));
@@ -214,7 +232,7 @@ function ShellFrame(props: AppShellProps) {
         />
         <NavRail tabs={nav.tabs} activeTab={activeTab} badges={props.badges} onSelect={selectTab} userName={user.name} onAccount={openAccount} />
 
-        <div className="flex min-h-dvh flex-col md:pl-20 lg:pl-[248px]">
+        <div ref={columnRef} className="flex min-h-dvh flex-col md:pl-20 lg:pl-[248px]">
           <TopBarWithInbox
             title={title}
             caption={isHome ? homeCaption : undefined}
@@ -230,11 +248,13 @@ function ShellFrame(props: AppShellProps) {
             showBell={route.path !== 'inbox'}
             userName={user.name}
             onAccount={openAccount}
-            onRefresh={props.onRefresh}
+            onRefresh={onRefresh ? refreshButton : undefined}
             refreshing={props.refreshing}
           />
           {props.banners}
+          <PullRefresh areaRef={columnRef} anchorRef={mainRef} onRefresh={onRefresh} />
           <main
+            ref={mainRef}
             id="main"
             data-ai-screen
             className={isListTab || route.path === 'inbox' ? 'flex-1 pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom))] md:pb-6' : 'flex-1 pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+8px)] md:pb-6'}
