@@ -183,9 +183,39 @@ export function notInKitchen(d: ActivityDay, s: Slot, awayMin = AWAY_MIN, empty:
 
 const frameKey = (t: number) => t.toFixed(3);
 
+/** What the person's phone said for a time (attendance presence, presenceRules.ts), in minutes:
+ *  at work, stepped out (and at most how far), and with no location (no app running, no consent). */
+export type PhoneNote = { atWorkMin: number; outMin: number; farthestM: number | null; noneMin: number };
 /** Each time out of the kitchen (owner, 30 Oct 2026: "along with timestamp"): last seen, back, and
- *  the minutes it counts (the frames missed in between). */
-export type AwaySpell = { date: string; from: string; to: string; minutes: number };
+ *  the minutes it counts (the frames missed in between); `phone` when their phone sends presence. */
+export type AwaySpell = { date: string; from: string; to: string; minutes: number; phone?: PhoneNote };
+/** A named person's day outside the camera, in minutes of the day: their check-in and check-out
+ *  (owner, 31 Oct 2026: Aniket checked out at 13:55, so later is nobody's "not in kitchen" of his)
+ *  and what their phone said (presence). */
+export type PhoneSpan = { from: number; to: number; state: 'in' | 'out'; farthestM?: number };
+export type PersonDay = { shift?: { from?: number; to?: number }; phone?: PhoneSpan[] };
+
+/** The phone's word for one stretch of the day (minutes of the day). */
+export function phoneDuring(spans: PhoneSpan[], from: number, to: number): PhoneNote {
+  let atWork = 0, out = 0;
+  let farthest: number | null = null;
+  for (const s of spans) {
+    const overlap = Math.min(to, s.to) - Math.max(from, s.from);
+    if (overlap <= 0) continue;
+    if (s.state === 'in') atWork += overlap;
+    else {
+      out += overlap;
+      if (s.farthestM) farthest = Math.max(farthest ?? 0, s.farthestM);
+    }
+  }
+  return { atWorkMin: Math.round(atWork), outMin: Math.round(out), farthestM: farthest, noneMin: Math.max(0, Math.round(to - from - atWork - out)) };
+}
+
+/** The frames outside a person's check-in to check-out (none when they didn't check in). */
+export function offShiftFrames(d: ActivityDay, shift?: PersonDay['shift']): Set<string> {
+  if (!shift || (shift.from === undefined && shift.to === undefined)) return new Set();
+  return new Set((d.frames || []).filter((t) => (shift.from !== undefined && t < shift.from) || (shift.to !== undefined && t > shift.to)).map(frameKey));
+}
 
 /**
  * The whole kitchen empty (owner, 31 Oct 2026: lunch was counting as Rudra's "not in kitchen" though
@@ -217,13 +247,21 @@ export function kitchenEmpty(d: ActivityDay, notPeople: Set<string> = new Set(),
 /** A break with the whole kitchen empty (`empty`, kitchenEmpty's frames) in the middle of an absence
  *  is everyone's break: it splits the absence, the part after it starts when someone is back, and
  *  each part counts only when it lasted AWAY_MIN or more (out a few minutes before the others went
- *  for lunch isn't). */
-export function awaySpells(d: ActivityDay, s: Slot, awayMin = AWAY_MIN, empty: Set<string> = new Set()): AwaySpell[] {
+ *  for lunch isn't). Frames before their check-in or after their check-out (`person.shift`) are
+ *  left out the same way; `person.phone` adds what the phone said to each time. */
+export function awaySpells(d: ActivityDay, s: Slot, awayMin = AWAY_MIN, empty: Set<string> = new Set(), person?: PersonDay): AwaySpell[] {
   const at = [...(s.at || [])].sort((a, b) => a - b);
   const frames = [...(d.frames || [])].sort((a, b) => a - b);
+  const off = offShiftFrames(d, person?.shift);
+  if (off.size) empty = new Set([...empty, ...off]);
   const out: AwaySpell[] = [];
   const add = (from: number | null, to: number, missed: number) => {
-    if (from !== null && missed && to - from >= awayMin) out.push({ date: d.date, from: clockOf(from), to: clockOf(to), minutes: missed * (d.mpf || 0) });
+    if (from === null || !missed) return;
+    // Within their check-in to check-out: gone before checking out ends at the check-out.
+    from = Math.max(from, person?.shift?.from ?? from);
+    to = Math.min(to, person?.shift?.to ?? to);
+    if (to - from < awayMin) return;
+    out.push({ date: d.date, from: clockOf(from), to: clockOf(to), minutes: missed * (d.mpf || 0), ...(person?.phone ? { phone: phoneDuring(person.phone, from, to) } : {}) });
   };
   for (let i = 1; i < at.length; i++) {
     if (at[i] - at[i - 1] < awayMin) continue;
@@ -269,8 +307,9 @@ export function mergeSlots(a: Slot, b: Slot): Slot {
   };
 }
 
-/** Per person (named where someone tapped the name) and the kitchen as a whole, for one or more days. */
-export function summarise(days: ActivityDay[], names: Record<string, Record<string, string>>, piecesMade: number) {
+/** Per person (named where someone tapped the name) and the kitchen as a whole, for one or more days.
+ *  `outside`: per day, per name, what isn't on camera - check-in/out and phone presence (cctv.ts). */
+export function summarise(days: ActivityDay[], names: Record<string, Record<string, string>>, piecesMade: number, outside: Record<string, Record<string, PersonDay>> = {}) {
   const rows = new Map<string, PersonRow>();
   const emptyTimes: AwaySpell[] = [];
   for (const d of days) {
@@ -294,7 +333,7 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, notInKitchenMinutes: 0, away: [], foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
       for (const [a, m] of Object.entries(s.minutes)) r.minutes[a as Activity] = (r.minutes[a as Activity] || 0) + (m || 0);
       r.seenMinutes += Object.values(s.minutes).reduce((x, y) => x + (y || 0), 0);
-      const spells = awaySpells(d, s, AWAY_MIN, empty);
+      const spells = awaySpells(d, s, AWAY_MIN, empty, name ? outside[d.date]?.[name] : undefined);
       r.notInKitchenMinutes += spells.reduce((t, x) => t + x.minutes, 0);
       r.away.push(...spells);
       r.phoneMinutes += s.phoneMinutes;

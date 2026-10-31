@@ -19,8 +19,10 @@ export type PersonRow = {
   slot: string; name: string | null; minutes: Record<string, number>; seenMinutes: number; foldingMinutes: number;
   phoneMinutes: number; phoneTimes: number; idleMinutes: number; ppePercent: number | null; first: string; last: string;
   notInKitchenMinutes?: number; // gone 15 minutes or more between first and last sighting
-  away?: { date: string; from: string; to: string; minutes: number }[]; // each time: last seen, back
+  away?: { date: string; from: string; to: string; minutes: number; phone?: PhoneNote }[]; // each time: last seen, back
 };
+// What the person's phone said for a time away (server activityRules phoneDuring), in minutes.
+export type PhoneNote = { atWorkMin: number; outMin: number; farthestM: number | null; noneMin: number };
 export type FoldingSpan = { from: string; to: string; mostPeople: number };
 export type KitchenTotals = {
   foldingHours: number; phoneMinutes: number; idleMinutes: number; piecesMade: number; piecesPerFoldingHour: number | null; stills: number; bursts?: number;

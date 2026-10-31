@@ -14,6 +14,11 @@
 //
 // Limits: the phone must be on with location on; the app must have been opened (or left in the
 // background) on that day - a swiped-away app can't watch; some brands' battery savers stop it.
+//
+// With consent version 2 (owner, 31 Oct 2026: "when a person is not visible for a long time can
+// we also pull up the location data just to be sure") it also keeps, between check-in and
+// check-out, stretches of "at work" and "stepped out" (with at most how far) and sends them every
+// half hour and when it changes - still never a position (server presenceRules.ts).
 import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
 import { BackgroundGeolocation } from '../../utils/riderTracking';
@@ -29,7 +34,7 @@ type Snapshot = { status: TrackerStatus; inside: boolean | null; distanceM: numb
 type LocalEvents = { arrival?: kpi.DetectedEvent & { sent?: boolean }; exit?: kpi.DetectedEvent & { sent?: boolean } };
 type Config = {
   employeeId: string; date: string; pins: kpi.ShiftToday['pins']; radiusM: number; placeKind: string;
-  windowStartMs: number; windowEndMs: number; shiftEndMs: number; hasIn: boolean;
+  windowStartMs: number; windowEndMs: number; shiftEndMs: number; hasIn: boolean; hasOut: boolean; presence: boolean;
 };
 
 let snapshot: Snapshot = { status: Capacitor.isNativePlatform() ? 'off' : 'web', inside: null, distanceM: null, lastFixAt: null };
@@ -133,6 +138,55 @@ export async function resendUnsent(employeeId: string, date: string): Promise<bo
   return sentAny;
 }
 
+// ---- At work or stepped out (consent version 2) ----
+
+type PresenceLocal = { spans: kpi.PresenceSpan[]; sentAt: number };
+const PRESENCE_SEND_MS = 30 * 60000;
+const PRESENCE_GAP_MS = 5 * 60000; // nothing from the phone for longer (asleep, killed): a gap, not a stretch
+const presenceKey = (employeeId: string, date: string) => `bunny-presence:${employeeId}:${date}`;
+function loadPresence(employeeId: string, date: string): PresenceLocal {
+  try {
+    const p = JSON.parse(localStorage.getItem(presenceKey(employeeId, date)) || '{}');
+    return { spans: Array.isArray(p?.spans) ? p.spans : [], sentAt: Number(p?.sentAt) || 0 };
+  } catch { return { spans: [], sentAt: 0 }; }
+}
+function savePresence(employeeId: string, date: string, p: PresenceLocal) {
+  try { localStorage.setItem(presenceKey(employeeId, date), JSON.stringify(p)); } catch { /* storage full or blocked */ }
+}
+
+// Called on every location fix and once a minute: grows the current stretch, or starts a new one.
+function notePresence(now = Date.now()) {
+  if (!cfg?.presence || !cfg.hasIn || cfg.hasOut || snapshot.inside === null) return;
+  const state: kpi.PresenceSpan['state'] = snapshot.inside ? 'in' : 'out';
+  const p = loadPresence(cfg.employeeId, cfg.date);
+  const last = p.spans[p.spans.length - 1];
+  const fresh = !!last && now - last.to <= PRESENCE_GAP_MS;
+  const switched = fresh && last.state !== state;
+  if (fresh) last.to = now;
+  if (!fresh || switched) p.spans.push({ from: now, to: now, state });
+  const cur = p.spans[p.spans.length - 1];
+  if (state === 'out' && snapshot.distanceM) cur.farthestM = Math.max(cur.farthestM || 0, snapshot.distanceM);
+  p.spans = p.spans.filter((s) => now - s.to < 6 * 3600000).slice(-200);
+  savePresence(cfg.employeeId, cfg.date, p);
+  if (switched || now - p.sentAt >= PRESENCE_SEND_MS) void flushPresence(now);
+}
+
+let presenceSending = false;
+// Sends what changed since the last send (the stretch still growing goes again; the server
+// replaces it). No signal: it goes with the next one.
+async function flushPresence(now = Date.now()) {
+  if (!cfg?.presence || presenceSending) return;
+  const { employeeId, date } = cfg;
+  const p = loadPresence(employeeId, date);
+  const toSend = p.spans.filter((s) => s.to > s.from && s.to >= p.sentAt - 60000);
+  if (!toSend.length) return;
+  presenceSending = true;
+  try {
+    await kpi.sendPresence(date, toSend);
+    savePresence(employeeId, date, { ...loadPresence(employeeId, date), sentAt: now });
+  } catch { /* offline */ } finally { presenceSending = false; }
+}
+
 // ---- Geofence ----
 
 function handleFix(loc: { latitude: number; longitude: number; accuracy: number; simulated?: boolean; time?: number | null }) {
@@ -163,6 +217,7 @@ function handleFix(loc: { latitude: number; longitude: number; accuracy: number;
     }
   }
   checkPendingExit();
+  notePresence(now);
 }
 
 function checkPendingExit() {
@@ -186,6 +241,7 @@ function startWatcher() {
   emit({ status: 'watching', inside: null });
   ticker = setInterval(() => {
     checkPendingExit();
+    notePresence();
     if (cfg && Date.now() > cfg.windowEndMs) stopShiftTracking('off');
   }, 60000);
   BackgroundGeolocation.addWatcher(
@@ -211,6 +267,7 @@ export function stopShiftTracking(status: TrackerStatus = 'off') {
   if (ticker) { clearInterval(ticker); ticker = null; }
   if (watcherId) { BackgroundGeolocation.removeWatcher({ id: watcherId }).catch(() => {}); watcherId = null; }
   checkPendingExit();
+  void flushPresence();
   pendingExit = null;
   emit({ status: Capacitor.isNativePlatform() ? status : 'web', inside: null });
 }
@@ -227,7 +284,7 @@ export function ensureShiftTracking(today: kpi.ShiftToday, employeeId: string) {
     employeeId, date: today.date, pins: today.pins, radiusM: today.radiusM,
     placeKind: today.pins.length && today.pins.every((p) => p.kind === 'production') ? 'production' : 'store',
     windowStartMs: Date.parse(today.window.startAt), windowEndMs: Date.parse(today.window.endAt),
-    shiftEndMs: Date.parse(today.window.shiftEndAt), hasIn: !!today.punch?.in,
+    shiftEndMs: Date.parse(today.window.shiftEndAt), hasIn: !!today.punch?.in, hasOut: !!today.punch?.out, presence: !!today.presence,
   };
   const sameDay = cfg?.date === next.date && cfg.employeeId === next.employeeId;
   cfg = next;

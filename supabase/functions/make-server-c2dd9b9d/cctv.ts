@@ -43,7 +43,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtBurst, aiLookAtCamera, type BurstLook } from './insights.ts';
 import { PPE_ITEMS, burstFor, burstInHours, burstTooSoon, cleanFaces, decide, inHours, istClock, minutesPerFrame, minutesUntilHoursEnd, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
-import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson } from './activityRules.ts';
+import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson, type PersonDay } from './activityRules.ts';
+import type { PresenceDay } from './presenceRules.ts';
 import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, steadyFolding, tagState, toShow, trustBoxes, wantsConfirm, type Confirm, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
 import { emptyPpeDay, ppeStep, type PpeDay } from './roundupRules.ts';
 
@@ -699,6 +700,33 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
 
   // ---- Kitchen activity ----
 
+  // What the camera can't see of each named person (activityRules PersonDay), in minutes of the
+  // day: their check-in and check-out, and what their phone said - at work or stepped out
+  // (attendance /shift/presence, owner 31 Oct 2026: "when a person is not visible for a long time
+  // can we also pull up the location data just to be sure").
+  async function outsideCamera(names: Record<string, Record<string, string>>): Promise<Record<string, Record<string, PersonDay>>> {
+    const staff = await deps.getAllByPrefix('unified-employee:');
+    const idOf = new Map<string, string>(staff.filter((e: any) => e?.name && e?.employeeId).map((e: any) => [String(e.name), String(e.employeeId)]));
+    const out: Record<string, Record<string, PersonDay>> = {};
+    const jobs: Promise<void>[] = [];
+    for (const [date, bySlot] of Object.entries(names)) {
+      const midnight = Date.parse(`${date}T00:00:00+05:30`);
+      const minute = (t: string | number) => ((typeof t === 'number' ? t : Date.parse(t)) - midnight) / 60000;
+      for (const name of new Set(Object.values(bySlot))) {
+        const id = idOf.get(name);
+        if (!id) continue;
+        jobs.push(Promise.all([deps.kv.get<any>(`punch:${id}:${date}`), deps.kv.get<PresenceDay>(`presence:${id}:${date}`)]).then(([punch, presence]) => {
+          const day: PersonDay = {};
+          if (punch?.in?.at || punch?.out?.at) day.shift = { from: punch?.in?.at ? minute(punch.in.at) : undefined, to: punch?.out?.at ? minute(punch.out.at) : undefined };
+          if (presence?.spans?.length) day.phone = presence.spans.map((s) => ({ from: minute(s.from), to: minute(s.to), state: s.state, farthestM: s.farthestM }));
+          (out[date] ||= {})[name] = day;
+        }));
+      }
+    }
+    await Promise.all(jobs);
+    return out;
+  }
+
   // GET /cctv/activity?from=&to= - the owner only: per person and for the kitchen, over the days.
   app.get(`${P}/cctv/activity`, async (c: any) => {
     const r = await actorOf(deps, c);
@@ -720,10 +748,11 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
           if (n) names[d] = n;
         }
         const pieces = await piecesFolded(cam.placeId, new Set(days.map((d) => d.date)));
+        const outside = await outsideCamera(names);
         out.push({
           camera: { id: cam.id, name: cam.name, everyMin: cam.everyMin, burst: burstFor(cam.everyMin), place: await placeName(cam) },
-          ...summarise(days, names, pieces),
-          perDay: await Promise.all(days.map(async (d) => ({ date: d.date, ...summarise([d], names, await piecesFolded(cam.placeId, new Set([d.date]))).kitchen }))),
+          ...summarise(days, names, pieces, outside),
+          perDay: await Promise.all(days.map(async (d) => ({ date: d.date, ...summarise([d], names, await piecesFolded(cam.placeId, new Set([d.date])), outside).kitchen }))),
         });
       }
       return c.json({ from, to, cameras: out, labels: ACTIVITY_LABEL });

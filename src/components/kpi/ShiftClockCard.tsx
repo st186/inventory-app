@@ -183,6 +183,9 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
 
   // The line under the button: what the phone knows about location right now.
   const askConsent = native && !today.exempt && (tracker.status === 'needs-consent' || (!today.consent && tracker.status === 'off'));
+  // Agreed to the first note (arrival and leaving only): the updated one adds at work / stepped out
+  // during the shift (31 Oct 2026). Check-in keeps working meanwhile.
+  const askUpdate = native && !today.exempt && !askConsent && !!today.consent?.accepted && (today.consent.version ?? 1) < 2;
   let locationLine: string;
   if (today.exempt) locationLine = t('shift.riderNoCheck');
   else if (!native) locationLine = t('shift.locationOnStart');
@@ -297,6 +300,12 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
               <button type="button" onClick={() => setConsentOpen(true)} className="hit-44 relative font-semibold text-primary underline-offset-4 hover:underline">{t('shift.turnOnAuto')}</button>
             </>
           )}
+          {askUpdate && (
+            <>
+              {' '}
+              <button type="button" onClick={() => setConsentOpen(true)} className="hit-44 relative font-semibold text-primary underline-offset-4 hover:underline">{t('shift.noteUpdated')}</button>
+            </>
+          )}
         </span>
         {employeeId && !today.exempt && (
           <Button variant="link" size="sm" className="hit-44 relative shrink-0" onClick={() => setConsentOpen(true)}>{t('shift.whyLocation')}</Button>
@@ -333,7 +342,8 @@ export function ShiftClockCard({ isLead = false, framed = true }: { isLead?: boo
           open={consentOpen}
           onOpenChange={(open) => { setConsentOpen(open); if (!open) load(); }}
           employeeId={employeeId}
-          canAsk={askConsent}
+          canAsk={askConsent || askUpdate}
+          update={askUpdate}
         />
       )}
     </section>

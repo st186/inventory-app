@@ -178,4 +178,27 @@ test('the whole kitchen empty (lunch) is a break, not anyone away; a real absenc
   assert.equal(rudra.notInKitchenMinutes, 35);
 });
 
+test('after check-out is nobody\'s "not in kitchen"; the phone says where they were for each time away', () => {
+  // 31 Oct 2026: Aniket checked out at 13:55; a later look-alike under his number made him "away" till 17:18.
+  const seen = (on: (f: number) => boolean) => Array.from({ length: 20 }, (_, f) => (on(f) ? 'prep' : 'away'));
+  const b = (d: ActivityDay | null, from: string, aniket: (f: number) => boolean) =>
+    addBurst(d, { date: '2026-10-31', cameraId: 'cam', from, to: from, frames: 20, minutesPerFrame: 1.75, checks: [], gapSec: 105, people: [
+      { top: 'red', key: 'p1', activities: seen(() => true), phoneFrames: [] },
+      { top: 'blue', key: 'p4', activities: seen(aniket), phoneFrames: [] },
+    ] });
+  let d = b(null, '12:00', () => true);
+  d = b(d, '12:35', (f) => f < 4); // goes at 12:40, back 13:10
+  d = b(d, '13:10', (f) => f >= 0 && f < 10); // checks out 13:55; seen till 13:25
+  d = b(d, '16:00', () => false);
+  d = b(d, '16:35', (f) => f >= 10); // someone under his number at 16:52
+  const names = { '2026-10-31': { p1: 'Vijay Das', p4: 'Aniket Prasad' } };
+  const plain = summarise([d], names, 0).people.find((x) => x.name === 'Aniket Prasad')!;
+  assert.equal(plain.away.length, 2); // 12:40-13:10, and 13:25-16:52
+  const outside = { '2026-10-31': { 'Aniket Prasad': { shift: { from: 9 * 60, to: 13 * 60 + 55 }, phone: [{ from: 12 * 60 + 41, to: 13 * 60 + 8, state: 'out' as const, farthestM: 400 }] } } };
+  const clipped = summarise([d], names, 0, outside).people.find((x) => x.name === 'Aniket Prasad')!;
+  assert.deepEqual(clipped.away.map((a) => `${a.from}-${a.to} ${a.minutes}`), ['12:40-13:10 28', '13:25-13:55 18']); // gone before checking out still counts
+  assert.deepEqual(clipped.away[0].phone, { atWorkMin: 0, outMin: 27, farthestM: 400, noneMin: 3 });
+  assert.deepEqual(clipped.away[1].phone, { atWorkMin: 0, outMin: 0, farthestM: null, noneMin: 29 }); // 13:25:45 to 13:55
+});
+
 console.log(`activityRules: ${passed} tests passed`);

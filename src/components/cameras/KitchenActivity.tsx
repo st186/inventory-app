@@ -264,6 +264,15 @@ function FoldingMarker({ days, single }: { days: (api.KitchenTotals & { date: st
   );
 }
 
+/** What the person's phone said for a time away (owner, 31 Oct 2026: "when a person is not visible
+ *  for a long time can we also pull up the location data just to be sure"). */
+function phoneWord(p: api.PhoneNote) {
+  const far = p.farthestM ? (p.farthestM >= 1000 ? `${(p.farthestM / 1000).toFixed(1)} km` : `${p.farthestM} m`) : '';
+  if (p.outMin >= 5) return `phone out ${hm(p.outMin)}${far ? `, up to ${far} away` : ''}`;
+  if (p.atWorkMin >= 5 && p.atWorkMin >= p.noneMin) return 'phone at work';
+  return 'no phone location';
+}
+
 /** The whole kitchen empty for 15 minutes or more, like lunch (owner, 31 Oct 2026): a break for
  *  everyone, so it isn't counted as anyone's "not in kitchen". */
 function BreakMarker({ days, single }: { days: (api.KitchenTotals & { date: string })[]; single: boolean }) {
@@ -328,7 +337,8 @@ export function KitchenActivity() {
                   ? <>From {c.kitchen.bursts} burst{c.kitchen.bursts === 1 ? '' : 's'} of {c.camera.burst.frames} pictures, one every {c.camera.burst.gapSec} seconds: each picture stands for about {Math.round((c.camera.burst.gapSec / 60) * 100) / 100} minutes</>
                   : <>From {c.kitchen.stills} stills, one every {c.camera.everyMin} minutes: each sighting counts {c.camera.everyMin} minutes</>}
                 , so these are estimates, good for trends. Unnamed people show by the colour of their top - name them in "Who is who".
-                {' '}Not in kitchen: gone 15 minutes or more between when they were first and last seen that day while others were working (shorter is just out of view; the whole kitchen empty is a break).
+                {' '}Not in kitchen: gone 15 minutes or more between when they were first and last seen that day while others were working, and only between their check-in and check-out (shorter is just out of view; the whole kitchen empty is a break).
+                {' '}Phone: from their app, when they agreed to share it - at work or stepped out and how far, never where.
               </p>
               <div className="flex flex-col gap-3">
                 {c.people.map((p, i) => {
@@ -362,6 +372,7 @@ export function KitchenActivity() {
                           Away (last seen – back): {p.away.map((a, j) => (
                             <span key={j} className="num">
                               {j > 0 && ', '}{span[0] !== span[1] && `${dayName(a.date)} `}<span className="font-semibold text-text">{a.from}–{a.to}</span>
+                              {a.phone && <> ({phoneWord(a.phone)})</>}
                             </span>
                           ))}
                         </p>

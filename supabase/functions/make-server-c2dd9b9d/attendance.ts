@@ -7,7 +7,10 @@
 //    the phone watches its location on the phone itself and only sends the moment it arrived at
 //    or left the workplace (a "suggestion"). The person - or their manager, the same day -
 //    confirms it and the ARRIVAL / EXIT time is what counts (source 'geofence'). The location
-//    trail itself never leaves the phone.
+//    trail itself never leaves the phone. With consent version 2 (owner, 31 Oct 2026) the phone
+//    also sends, between check-in and check-out, stretches of "at work" / "stepped out (at most
+//    this far)" - `presence:{employeeId}:{date}`, presenceRules.ts - for the owner's kitchen camera
+//    check of long absences; still no positions.
 //  - Manual Start shift / End shift buttons (web, or as a fallback): the time of the tap counts;
 //    verified only if GPS puts the person within the radius at that moment. GPS failing never
 //    blocks a punch - it is just saved as not verified.
@@ -20,6 +23,7 @@ import {
   type KpiSettings, type Pin, type PunchEvent, type PunchRecord, type PunchSuggestion, type RoleGroup, type WorkplaceKind,
 } from './kpiCore.ts';
 import { timesheetFromPunch } from './punchTimesheet.ts';
+import { cleanSpans, mergeSpans, type PresenceDay } from './presenceRules.ts';
 
 export type Kv = {
   get: <T = any>(key: string) => Promise<T>;
@@ -39,7 +43,10 @@ export type KpiDeps = {
 };
 
 export const P = '/make-server-c2dd9b9d';
-const CONSENT_VERSION = 1;
+// 2 (31 Oct 2026): "at work / stepped out" during the shift too. Version 1 still runs automatic
+// check-in; the phone sends presence only for 2, after the person read and agreed to the new note.
+const CONSENT_VERSION = 2;
+const PRESENCE_CONSENT = 2;
 
 export type Actor = {
   userId: string;
@@ -280,7 +287,8 @@ export function registerAttendanceRoutes(app: any, deps: KpiDeps) {
         window: { startAt: new Date(w.startMs).toISOString(), endAt: new Date(w.endMs).toISOString(), shiftStartAt: new Date(w.shiftStartMs).toISOString(), shiftEndAt: new Date(w.shiftEndMs).toISOString() },
         pins: profile.exempt ? [] : profile.pins.map((p) => ({ kind: p.kind, id: p.id, name: p.name || null, lat: p.lat, lng: p.lng, ...(p.radiusM ? { radiusM: p.radiusM } : {}) })),
         radiusM: cfg.radiusM,
-        consent: consent?.version === CONSENT_VERSION ? { accepted: !!consent.accepted, at: consent.at } : null,
+        consent: consent?.version >= 1 ? { accepted: !!consent.accepted, at: consent.at, version: consent.version } : null,
+        presence: !!consent?.accepted && consent.version >= PRESENCE_CONSENT,
       });
     } catch (err) { return fail(c, err); }
   });
@@ -293,6 +301,26 @@ export function registerAttendanceRoutes(app: any, deps: KpiDeps) {
     const rec = { accepted: !!body.accepted, version: CONSENT_VERSION, at: new Date().toISOString() };
     await deps.kv.set(`shift-consent:${r.actor!.employeeId}`, rec);
     return c.json({ consent: rec });
+  });
+
+  // At work / stepped out stretches from the phone (see the top of this file). Ignored without
+  // consent version 2; only the day's own record, only stretches (cleanSpans).
+  app.post(`${P}/shift/presence`, async (c: any) => {
+    const r = await self(c);
+    if (r.error) return r.error;
+    const employeeId = r.actor!.employeeId;
+    const consent = await deps.kv.get<any>(`shift-consent:${employeeId}`);
+    if (!consent?.accepted || !(consent.version >= PRESENCE_CONSENT)) return c.json({ ignored: true });
+    const body = await c.req.json().catch(() => ({}));
+    const date = String(body?.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: 'Which day?' }, 400);
+    const spans = cleanSpans(body?.spans, Date.now());
+    if (!spans.length) return c.json({ ok: true, spans: 0 });
+    const key = `presence:${employeeId}:${date}`;
+    const day = (await deps.kv.get<PresenceDay>(key)) || { employeeId, date, spans: [] };
+    const next: PresenceDay = { employeeId, date, spans: mergeSpans(day.spans || [], spans) };
+    await deps.kv.set(key, next);
+    return c.json({ ok: true, spans: next.spans.length });
   });
 
   // Manual Start shift / End shift. One check-in a day; a later End shift replaces the earlier one.
