@@ -130,10 +130,55 @@ function liveNow() {
   };
 }
 
+// Team chat (chat/ChatScreen.tsx): the tables the phone reads straight from Supabase, and the
+// server's group routes. Open home-preview.html#/chat or #/chat?room=g1.
+const BUNNY = '00000000-0000-4000-8000-00000000b0b0';
+const chatRooms = [
+  { id: 'g1', key: 'store:S1', kind: 'place', name: 'Bunny Momos 1', last_body: 'Chilli sauce is finished 🌶️', last_kind: 'text', last_sender: 'Rohan Rajbanshi', last_at: '2026-11-01T10:05:00Z', unread: 2, members: 6 },
+  { id: 'b1', key: 'bunny:me', kind: 'direct', name: 'Bunny', last_body: null, last_kind: null, last_sender: null, last_at: null, unread: 0, members: 1 },
+  { id: 'g2', key: 'group:x', kind: 'custom', name: 'Evening shift', last_body: 'See you at 4', last_kind: 'text', last_sender: 'Saniya Parvin', last_at: '2026-10-31T09:00:00Z', unread: 0, members: 3 },
+];
+const chatMessages = [
+  { id: 'm1', room_id: 'g1', sender_id: 'u-rohan', sender_name: 'Rohan Rajbanshi', kind: 'text', body: 'Delivery came, 400 chicken 👍', media_path: null, media_seconds: null, created_at: '2026-11-01T09:40:00Z', mentions: [] },
+  { id: 'm2', room_id: 'g1', sender_id: 'u-saniya', sender_name: 'Saniya Parvin', kind: 'text', body: 'Counted and put in the freezer', media_path: null, media_seconds: null, created_at: '2026-11-01T09:52:00Z', mentions: [] },
+  { id: 'm3', room_id: 'g1', sender_id: 'u-rohan', sender_name: 'Rohan Rajbanshi', kind: 'text', body: 'Chilli sauce is finished 🌶️', media_path: null, media_seconds: null, created_at: '2026-11-01T10:05:00Z', mentions: [] },
+];
+const chatMembers = [
+  { user_id: 'u-owner', name: 'Subham Tewari' }, { user_id: 'u-rohan', name: 'Rohan Rajbanshi' }, { user_id: 'u-saniya', name: 'Saniya Parvin' },
+  { user_id: 'u-aniket', name: 'Aniket Prasad' }, { user_id: BUNNY, name: 'Bunny' },
+];
+function chatMock(url: string, init?: RequestInit): Response | null {
+  const method = (init?.method || 'GET').toUpperCase();
+  if (url.includes('/rest/v1/rpc/chat_my_rooms')) return json(chatRooms);
+  if (url.includes('/rest/v1/rpc/chat_unread_total')) return json(2);
+  if (url.includes('/rest/v1/rpc/chat_mark_read')) return json(null);
+  if (url.includes('/rest/v1/chat_members')) return json(chatMembers);
+  if (url.includes('/rest/v1/chat_messages')) {
+    if (method === 'POST') {
+      const body = JSON.parse(String(init?.body || '{}'));
+      return json({ id: `m${Date.now()}`, sender_id: 'u-owner', sender_name: 'Subham Tewari', media_path: null, media_seconds: null, mentions: [], created_at: new Date().toISOString(), ...body });
+    }
+    const room = /room_id=eq\.([^&]+)/.exec(url)?.[1];
+    return json(chatMessages.filter((m) => m.room_id === room).reverse());
+  }
+  if (url.includes('/chat/sync')) return json({ success: true, skipped: true });
+  if (url.includes('/chat/people')) return json({ people: chatMembers.filter((m) => m.user_id !== BUNNY).map((m) => ({ userId: m.user_id, name: m.name, role: 'Team' })) });
+  if (/\/chat\/groups\/[^/]+$/.test(url) && method === 'GET') {
+    return json({
+      id: 'g1', name: 'Bunny Momos 1', automatic: true, handPicked: false, madeBy: null, canRename: true, canChangePeople: true, canDelete: true, canLeave: false,
+      members: chatMembers.filter((m) => m.user_id !== BUNNY).map((m, i) => ({ userId: m.user_id, name: m.name, role: i === 0 ? 'Owner' : 'Store', madeIt: false, me: i === 0 })),
+    });
+  }
+  if (url.includes('/chat/groups')) return json({ success: true, roomId: 'g2', name: 'Evening shift' });
+  return null;
+}
+
 export function installPerfPreviewMock() {
   const real = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const chatReply = chatMock(url, init);
+    if (chatReply) return chatReply;
     if (url.includes('/cctv/activity')) return json(activity);
     if (url.includes('/live-orders/now')) return json(liveNow());
     if (url.includes('/stock-out-day/explain')) return json({ success: true });

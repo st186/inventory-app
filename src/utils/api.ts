@@ -964,7 +964,9 @@ export async function chatDirect(userId: string, accessToken?: string): Promise<
 }
 // Groups people make (owner, 1 Nov 2026): new, rename, add or take out people, leave, delete.
 export type ChatGroupInfo = {
-  id: string; name: string; automatic: boolean; madeBy: string | null;
+  id: string; name: string; madeBy: string | null;
+  /** Follows the staff list; handPicked: an automatic group whose people were changed by hand. */
+  automatic: boolean; handPicked: boolean;
   canRename: boolean; canChangePeople: boolean; canDelete: boolean; canLeave: boolean;
   members: { userId: string; name: string; role: string; madeIt: boolean; me: boolean }[];
 };

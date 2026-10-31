@@ -12,7 +12,10 @@
 // Groups people make themselves (owner, 1 Nov 2026: "How to form new groups choose people remove
 // people remove group edit group name"): anyone may make one; the person who made it, the owner and
 // operations may rename it, add and take out people, and delete it; anyone may leave it. The
-// automatic groups follow the staff list - the owner and operations may only rename them.
+// automatic groups follow the staff list until the owner or operations change their people (then
+// `manual`: the sync leaves them alone) or delete them (their key goes on chat-sync:deleted-keys, so
+// the sync doesn't make them again) - owner, 1 Nov 2026: "Provide delete option remove people option
+// from existing group".
 // Bunny (owner, 1 Nov 2026: "will bunny be available in chat"): a member of every group, answering
 // when someone writes @Bunny, and everyone has a one-to-one chat with Bunny (room key bunny:<uid>).
 import { inBackground } from './background.ts';
@@ -35,6 +38,8 @@ export type ChatDeps = {
   /** Bunny's answer (insights.ts askBunnyInChat). */
   bunny?: (o: { userId: string; role: string; storeId: string | null; noMoney: boolean; where: string; messages: { role: 'user' | 'assistant'; content: string }[] }) => Promise<string>;
 };
+/** Automatic groups the owner deleted (their room keys), so the sync doesn't make them again. */
+const DELETED_KEYS = 'chat-sync:deleted-keys';
 /** Bunny's place in the chat tables: a fixed id that is no one's sign-in. */
 export const BUNNY_ID = '00000000-0000-4000-8000-00000000b0b0';
 const BUNNY_NAME = 'Bunny';
@@ -112,10 +117,13 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
   async function sync(staff: any[]) {
     const stores = (await deps.rows('store:')).filter((s: any) => s?.id && s.status !== 'inactive' && s.status !== 'closed');
     const houses = (await deps.rows('production_house_')).filter((h: any) => h?.id && h.status !== 'inactive');
-    const groups = groupsFor(staff, stores, houses);
-    // A group the owner renamed keeps its new name.
-    const { data: renamedRooms } = await deps.db.from('chat_rooms').select('key').in('key', groups.map((g) => g.key)).eq('renamed', true);
-    const keepName = new Set((renamedRooms || []).map((r: any) => r.key));
+    // Groups the owner deleted stay deleted.
+    const deletedKeys = new Set<string>((await deps.kv.get(DELETED_KEYS)) || []);
+    const groups = groupsFor(staff, stores, houses).filter((g) => !deletedKeys.has(g.key));
+    // A group the owner renamed keeps its new name; one whose people they changed keeps its people.
+    const { data: fixedRooms } = await deps.db.from('chat_rooms').select('key,renamed,manual').in('key', groups.map((g) => g.key));
+    const keepName = new Set((fixedRooms || []).filter((r: any) => r.renamed).map((r: any) => r.key));
+    const keepPeople = new Set((fixedRooms || []).filter((r: any) => r.manual).map((r: any) => r.key));
     const toSave = groups.filter((g) => !keepName.has(g.key));
     if (toSave.length) {
       const { error: roomErr } = await deps.db.from('chat_rooms').upsert(toSave.map((g) => ({ key: g.key, kind: g.key === 'team' ? 'team' : 'place', name: g.name })), { onConflict: 'key' });
@@ -126,7 +134,7 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     const idOf = new Map((rooms || []).map((r: any) => [r.key, r.id]));
     for (const g of groups) {
       const roomId = idOf.get(g.key);
-      if (!roomId) continue;
+      if (!roomId || keepPeople.has(g.key)) continue;
       const rows = g.members.map((u: any) => ({ room_id: roomId, user_id: u.authUserId, name: String(u.name || 'Someone').slice(0, 60) }));
       rows.push({ room_id: roomId, user_id: BUNNY_ID, name: BUNNY_NAME });
       // Names updated, read marks kept; people no longer in the group taken out.
@@ -142,8 +150,8 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     }
     // Everyone's one-to-one chat with Bunny.
     const people = staff.filter(active);
-    // Someone who left the team leaves the groups people made too.
-    const { data: madeRooms } = await deps.db.from('chat_rooms').select('id').eq('kind', 'custom');
+    // Someone who left the team leaves the groups people made, and those the owner changed, too.
+    const { data: madeRooms } = await deps.db.from('chat_rooms').select('id').or('kind.eq.custom,manual.eq.true');
     if (madeRooms?.length) {
       const { error } = await deps.db.from('chat_members').delete().in('room_id', madeRooms.map((r: any) => r.id))
         .not('user_id', 'in', `(${[...people.map((u: any) => u.authUserId), BUNNY_ID].join(',')})`);
@@ -219,8 +227,8 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
 
   // ---- Groups people make (see the top of this file) ----
   const loadRoom = async (id: string) => {
-    const { data } = await deps.db.from('chat_rooms').select('id,key,kind,name,created_by').eq('id', id).maybeSingle();
-    return data as { id: string; key: string; kind: string; name: string; created_by: string | null } | null;
+    const { data } = await deps.db.from('chat_rooms').select('id,key,kind,name,created_by,manual').eq('id', id).maybeSingle();
+    return data as { id: string; key: string; kind: string; name: string; created_by: string | null; manual: boolean } | null;
   };
   const inRoom = async (roomId: string, uid: string) => {
     const { data } = await deps.db.from('chat_members').select('user_id').eq('room_id', roomId).eq('user_id', uid).maybeSingle();
@@ -271,9 +279,9 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     const manage = canManageGroup(w.self, room);
     const made = room.kind === 'custom';
     return c.json({
-      id: room.id, name: room.name, automatic: !made,
+      id: room.id, name: room.name, automatic: !made && !room.manual, handPicked: !made && !!room.manual,
       madeBy: made && room.created_by ? personName(byId.get(room.created_by)) : null,
-      canRename: manage, canChangePeople: made && manage, canDelete: made && manage, canLeave: made,
+      canRename: manage, canChangePeople: manage, canDelete: manage, canLeave: made,
       members: (members || []).filter((m: any) => m.user_id !== BUNNY_ID)
         .map((m: any) => ({ userId: m.user_id, name: m.name, role: roleWord(byId.get(m.user_id)), madeIt: m.user_id === room.created_by, me: m.user_id === w.self.authUserId }))
         .sort((a: any, b: any) => Number(b.me) - Number(a.me) || a.name.localeCompare(b.name)),
@@ -298,8 +306,12 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     if (w.error) return w.error;
     const g: any = await groupFor(c, w);
     if (g.error) return g.error;
-    if (g.room.kind !== 'custom') return c.json({ error: 'People in this group follow the staff list' }, 400);
     if (!canManageGroup(w.self, g.room)) return c.json({ error: 'Only the person who made the group, the owner or operations can change who is in it' }, 403);
+    // An automatic group stops following the staff list once its people are changed by hand.
+    if (g.room.kind !== 'custom' && !g.room.manual) {
+      const { error } = await deps.db.from('chat_rooms').update({ manual: true }).eq('id', g.room.id);
+      if (error) return c.json({ error: 'Could not change the group' }, 500);
+    }
     try {
       const body = await c.req.json().catch(() => ({}));
       const addIds = new Set((Array.isArray(body.add) ? body.add : []).map(String));
@@ -345,9 +357,12 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     if (w.error) return w.error;
     const g: any = await groupFor(c, w);
     if (g.error) return g.error;
-    if (g.room.kind !== 'custom') return c.json({ error: 'This group follows the staff list and cannot be deleted' }, 400);
     if (!canManageGroup(w.self, g.room)) return c.json({ error: 'Only the person who made the group, the owner or operations can delete it' }, 403);
     try {
+      if (g.room.kind !== 'custom') {
+        const keys: string[] = (await deps.kv.get(DELETED_KEYS)) || [];
+        if (!keys.includes(g.room.key)) await deps.kv.set(DELETED_KEYS, [...keys, g.room.key]);
+      }
       await removeRoom(g.room.id);
       return c.json({ success: true });
     } catch (error: any) {

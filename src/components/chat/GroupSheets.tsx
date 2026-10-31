@@ -1,8 +1,8 @@
 // Groups people make themselves (owner, 1 Nov 2026: "How to form new groups choose people remove
 // people remove group edit group name"): the new-group form and a group's info sheet - rename, add
 // or take out people, leave, delete. The server (chat.ts /chat/groups) decides who may do what: the
-// person who made a group, the owner and operations; the automatic groups follow the staff list and
-// can only be renamed.
+// person who made a group, the owner and operations. The automatic groups follow the staff list
+// until the owner or operations change their people or delete them.
 import { useEffect, useState } from 'react';
 import { LogOut, Pencil, Trash2, UserPlus, X } from 'lucide-react';
 import { useT } from '../../utils/i18n';
@@ -106,7 +106,7 @@ export function GroupInfoSheet({ roomId, open, onOpenChange, token, onChanged, o
   };
   const addPicked = () => run(() => api.chatGroupMembers(roomId, { add: [...picked] }, token), () => { setAdding(null); void load(); onChanged(); });
   const remove = async (m: api.ChatGroupInfo['members'][number]) => {
-    if (!(await confirm({ title: t('chat.removeQ', { name: m.name }), confirmLabel: t('chat.remove'), tone: 'danger' }))) return;
+    if (!(await confirm({ title: t('chat.removeQ', { name: m.name }), body: info?.automatic ? t('chat.stopsFollowing') : undefined, confirmLabel: t('chat.remove'), tone: 'danger' }))) return;
     await run(() => api.chatGroupMembers(roomId, { remove: [m.userId] }, token), () => { void load(); onChanged(); });
   };
   const leave = async () => {
@@ -114,7 +114,7 @@ export function GroupInfoSheet({ roomId, open, onOpenChange, token, onChanged, o
     await run(() => api.chatLeaveGroup(roomId, token), () => { onOpenChange(false); onGone(); });
   };
   const del = async () => {
-    if (!(await confirm({ title: t('chat.deleteQ'), body: t('chat.deleteBody'), confirmLabel: t('chat.deleteGroup'), tone: 'danger' }))) return;
+    if (!(await confirm({ title: t('chat.deleteQ'), body: info?.automatic || info?.handPicked ? `${t('chat.deleteBody')} ${t('chat.autoDeleteBody')}` : t('chat.deleteBody'), confirmLabel: t('chat.deleteGroup'), tone: 'danger' }))) return;
     await run(() => api.chatDeleteGroup(roomId, token), () => { onOpenChange(false); onGone(); });
   };
 
@@ -142,7 +142,7 @@ export function GroupInfoSheet({ roomId, open, onOpenChange, token, onChanged, o
               {info.canRename && <IconButton label={t('chat.rename')} icon={<Pencil />} onClick={() => setRenaming(info.name)} />}
             </div>
           )}
-          <p className="text-body-sm text-text-2">{info.automatic ? t('chat.autoGroupNote') : info.madeBy ? t('chat.madeBy', { name: info.madeBy }) : ''}</p>
+          <p className="text-body-sm text-text-2">{info.automatic ? t('chat.autoGroupNote') : info.handPicked ? t('chat.handPickedNote') : info.madeBy ? t('chat.madeBy', { name: info.madeBy }) : ''}</p>
 
           <div className="flex items-center justify-between gap-2">
             <span className="text-label font-medium text-text-2">{t('chat.membersN', { n: info.members.length })}</span>

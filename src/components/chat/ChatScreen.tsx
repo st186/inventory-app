@@ -6,7 +6,8 @@
 // Everything is read and sent through chatApi.ts; new messages arrive live. Bunny answers in its own
 // chat and when named with @Bunny in a group (server chat.ts).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Camera, Info, Mic, PenSquare, Send, Sparkles, Square, Users, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ArrowLeft, Camera, Info, Keyboard, Mic, PenSquare, Send, Smile, Sparkles, Square, Users, X } from 'lucide-react';
 import { useT } from '../../utils/i18n';
 import * as api from '../../utils/api';
 import { compressPhoto } from '../assets/assetsApi';
@@ -26,6 +27,14 @@ import { EVERYONE, insertMention, mentionQuery, mentionsIn, splitMentions, type 
 const SYNC_KEY = 'bunny-chat-synced';
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }).toLowerCase();
 const dayKey = (iso: string) => new Date(Date.parse(iso) + 330 * 60000).toISOString().slice(0, 10);
+/** The emoji panel (owner, 1 Nov 2026: "where is emoji gif option"): everyday faces and hands, then
+ *  the kitchen and the shop. The phone keyboard's own emoji work in the box too. */
+const EMOJIS = ('😀 😂 🤣 😊 😍 😘 😎 🤩 🥳 😇 🙂 😉 😋 🤤 😴 🤔 🤗 🤭 😅 😬 😢 😭 😡 😱 '
+  + '🙏 👍 👎 👌 ✌️ 🤝 👏 🙌 💪 👋 🫡 ❤️ 🧡 💛 💚 💙 💜 🔥 ✨ 🎉 🎊 💯 ✅ ❌ '
+  + '⚠️ ⏰ 📍 📦 🛵 🚚 💰 📷 🎤 📞 🥟 🍜 🍲 🌶️ 🧀 🌽 🍗 🥬 🧅 🍔 🍟 🥤 ☕ 🍵 '
+  + '🧊 🧂 🍽️ 👨‍🍳 🧹 🧼 🧤 😷 🌧️ ☀️ 🌙 🪔').split(' ');
+/** A GIF is sent as it is, so it keeps moving; the chat-media bucket takes up to 8 MB. */
+const MAX_GIF_BYTES = 8 * 1024 * 1024;
 /** How long "Bunny is looking it up" shows before giving up on a reply. */
 const BUNNY_WAIT_MS = 90 * 1000;
 const BunnyAvatar = ({ size }: { size: number }) => (
@@ -196,6 +205,7 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
   const [caret, setCaret] = useState(0);
   const [infoOpen, setInfoOpen] = useState(false);
   const [peopleVersion, setPeopleVersion] = useState(0);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   useEffect(() => { chat.members(roomId).then(setPeople).catch(() => setPeople([])); }, [roomId, peopleVersion]);
 
   const read = useCallback(() => {
@@ -231,8 +241,24 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    const gif = file.type === 'image/gif';
+    if (gif && file.size > MAX_GIF_BYTES) { toast.error(t('chat.gifTooBig')); return; }
     setSending(true);
-    try { add([await chat.sendMedia(roomId, 'photo', chat.dataUrlToBlob(await compressPhoto(file)), { body: text, mentions: mentionsIn(text, people, me) })]); setText(''); } catch (err) { toast.error(err instanceof Error ? err.message : t('chat.failed')); } finally { setSending(false); }
+    try {
+      const blob = gif ? file : chat.dataUrlToBlob(await compressPhoto(file));
+      add([await chat.sendMedia(roomId, 'photo', blob, { body: text, mentions: mentionsIn(text, people, me) })]);
+      setText('');
+    } catch (err) { toast.error(err instanceof Error ? err.message : t('chat.failed')); } finally { setSending(false); }
+  };
+  const insertEmoji = (emoji: string) => {
+    const at = Math.min(caret, text.length);
+    setText((text.slice(0, at) + emoji + text.slice(at)).slice(0, 2000));
+    setCaret(at + emoji.length);
+  };
+  const toggleEmoji = () => {
+    if (emojiOpen) { setEmojiOpen(false); box.current?.focus(); return; }
+    box.current?.blur(); // the phone keyboard goes down, the panel takes its place
+    setEmojiOpen(true);
   };
 
   const days = useMemo(() => {
@@ -271,9 +297,14 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
   };
   const names = people.map((p) => p.name);
 
-  return (
-    <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface px-2 py-2">
+  // Full screen like a messaging app (owner, 1 Nov 2026: "Why it opens like that not in full
+  // screen"): over the app's top bar and bottom menu (sheets still open above it), the messages
+  // scrolling between the header and the box. In a portal so the page's pull-to-refresh can't catch
+  // the scroll.
+  return createPortal(
+    <div className="fixed inset-0 z-overlay flex flex-col bg-bg md:left-20 lg:left-[248px]">
+      <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col">
+      <div className="flex items-center gap-2 border-b border-border bg-surface px-2 py-2">
         <IconButton label={t('chat.back')} icon={<ArrowLeft />} onClick={onBack} />
         <button type="button" disabled={!group} onClick={() => setInfoOpen(true)} className="flex min-w-0 flex-1 flex-col text-left disabled:cursor-default">
           <span className="truncate text-body-md font-semibold text-text">{room?.name || t('chat.title')}</span>
@@ -292,7 +323,7 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
           onGone={() => { onChanged(); onBack(); }}
         />
       )}
-      <div className="flex flex-1 flex-col gap-3 px-3 py-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-3">
         {more && <Button size="sm" variant="ghost" className="self-center" onClick={earlier}>{t('chat.earlier')}</Button>}
         {msgs === null && <Skeleton className="h-40 w-full rounded-lg" />}
         {msgs?.length === 0 && (bunnyRoom
@@ -333,8 +364,9 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
         )}
         <div ref={bottom} />
       </div>
+      <div className="relative">
       {suggestions.length > 0 && (
-        <ul className="sticky bottom-[60px] mx-2 flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-md" role="listbox" aria-label={t('chat.mention')}>
+        <ul className="absolute inset-x-2 bottom-full mb-1 flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-md" role="listbox" aria-label={t('chat.mention')}>
           {suggestions.map((p) => (
             <li key={p.user_id}>
               <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pickMention(p.name)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-surface-2">
@@ -347,15 +379,17 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
           ))}
         </ul>
       )}
-      <div className="sticky bottom-0 flex items-end gap-2 border-t border-border bg-surface px-2 py-2" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
-        {!bunnyRoom && <IconButton label={t('chat.photo')} icon={<Camera />} onClick={() => photoInput.current?.click()} disabled={sending} />}
+      <div className="flex items-end gap-1 border-t border-border bg-surface px-2 py-2" style={emojiOpen ? undefined : { paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
+        {!bunnyRoom && <IconButton label={t('chat.photoOrGif')} icon={<Camera />} onClick={() => photoInput.current?.click()} disabled={sending} />}
         <input ref={photoInput} type="file" accept="image/*" className="sr-only" onChange={sendPhoto} />
+        <IconButton label={emojiOpen ? t('chat.keyboard') : t('chat.emoji')} icon={emojiOpen ? <Keyboard /> : <Smile />} onClick={toggleEmoji} />
         <textarea
           ref={box}
           value={text}
           onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); }}
           onSelect={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); void send(); } }}
+          onFocus={() => setEmojiOpen(false)}
           rows={1}
           maxLength={2000}
           placeholder={t('chat.write')}
@@ -366,10 +400,20 @@ function RoomView({ roomId, room, me, token, onBack, onChanged }: { roomId: stri
           ? <IconButton label={t('chat.send')} icon={<Send />} variant="primary" loading={sending} disabled={!text.trim()} onClick={send} />
           : <VoiceButton roomId={roomId} onSent={(m) => add([m])} />}
       </div>
+      {emojiOpen && (
+        <div className="grid h-56 grid-cols-8 content-start gap-1 overflow-y-auto overscroll-contain border-t border-border bg-surface p-2" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
+          {EMOJIS.map((e) => (
+            <button key={e} type="button" onClick={() => insertEmoji(e)} aria-label={e} className="flex h-11 items-center justify-center rounded-lg text-2xl hover:bg-surface-2 active:bg-surface-2">{e}</button>
+          ))}
+        </div>
+      )}
+      </div>
+      </div>
       <ResponsiveModal open={!!viewing} onOpenChange={(o) => { if (!o) setViewing(null); }} title={t('chat.photo')} size="detail">
         {viewing && <img src={viewing} alt="" className="w-full rounded-lg" />}
       </ResponsiveModal>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
