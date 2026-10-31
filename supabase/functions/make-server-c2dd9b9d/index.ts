@@ -15859,6 +15859,8 @@ function istMinutesNow(): number {
   return parseInt(now.substring(11, 13), 10) * 60 + parseInt(now.substring(14, 16), 10);
 }
 
+// Ciferon can hang (it did at midnight, while closing its day): no call waits longer than this.
+const CIFERON_TIMEOUT_MS = 15 * 1000;
 // One admin login kept while this server copy is warm (each poll would otherwise log in again).
 let ciferonAdminSession: { authkey: string; at: number } | null = null;
 async function ciferonAdminAuth(fresh = false): Promise<string> {
@@ -15870,19 +15872,43 @@ async function ciferonAdminAuth(fresh = false): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ UserName: adminEmail, Password: adminPassword }),
-  });
+    signal: AbortSignal.timeout(CIFERON_TIMEOUT_MS),
+  }).catch((e) => { throw new Error(`Ciferon login: ${e?.message || e}`); });
   if (!loginRes.ok) throw new Error(`Ciferon login returned HTTP ${loginRes.status}`);
   const loginData = await loginRes.json();
   const authkey = loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey || loginData?.AuthKey || loginData?.token || loginData?.Token;
   if (!authkey) throw new Error('Ciferon login did not return an authkey');
-  ciferonAdminSession = { authkey, at: Date.now() };
-  return authkey;
+  const companyKey = await ciferonCompanyKey(authkey);
+  ciferonAdminSession = { authkey: companyKey, at: Date.now() };
+  return companyKey;
+}
+
+// After signing in, the admin panel picks the company (api/init/getcompanies, then SwitchCompany)
+// and uses the key that hands back for everything. GetLiveOrderDetail, which names no store, hung
+// with the plain login key (1 Nov 2026). The company is the one holding our Ciferon store.
+async function ciferonCompanyKey(loginKey: string): Promise<string> {
+  const get = (url: string) => fetch(url, {
+    headers: { Authorization: `Bearer ${loginKey}`, BrandId: '0', Accept: 'application/json' },
+    signal: AbortSignal.timeout(CIFERON_TIMEOUT_MS),
+  }).catch((e) => { throw new Error(`${new URL(url).pathname}: ${e?.message || e}`); });
+  const res = await get('https://api.ciferon.com/api/init/getcompanies');
+  if (!res.ok) throw new Error(`getcompanies returned HTTP ${res.status}`);
+  const companies: any[] = (await res.json())?.Result?.Companies || [];
+  const ours = new Set((await liveStores()).map((st: any) => String(st.ciferonStoreId)));
+  const company = companies.find((co) => (co?.StoreList || []).some((st: any) => ours.has(String(st?.StoreID)))) || companies[0];
+  if (!company?.CompanyId) throw new Error('getcompanies: no company');
+  const sw = await get(`https://api.ciferon.com/api/V2/InitApi/SwitchCompany?companyId=${encodeURIComponent(String(company.CompanyId))}`);
+  if (!sw.ok) throw new Error(`SwitchCompany returned HTTP ${sw.status}`);
+  const key = (await sw.json())?.Result?.AuthKey;
+  if (!key) throw new Error('SwitchCompany did not return a key');
+  return key;
 }
 
 async function ciferonAdminGet(store: any, url: string): Promise<any> {
   const call = async (authkey: string) => fetch(url, {
     headers: { Authorization: `Bearer ${authkey}`, StoreId: String(store.ciferonStoreId), BrandId: '0', Accept: 'application/json' },
-  });
+    signal: AbortSignal.timeout(CIFERON_TIMEOUT_MS),
+  }).catch((e) => { throw new Error(`${new URL(url).pathname}: ${e?.message || e}`); });
   let res = await call(await ciferonAdminAuth());
   if (res.status === 401 || res.status === 403) res = await call(await ciferonAdminAuth(true));
   if (!res.ok) throw new Error(`Ciferon returned HTTP ${res.status}`);
