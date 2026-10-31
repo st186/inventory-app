@@ -230,8 +230,8 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
                 <div key={m.id} className={`flex max-w-[85%] flex-col ${mine ? 'items-end self-end' : 'items-start self-start'}`}>
                   {showName && <span className="px-1 text-label font-medium text-primary">{m.sender_name}</span>}
                   <div className={`flex flex-col gap-1 rounded-2xl px-3 py-2 ${mine ? 'rounded-br-md bg-primary-soft text-text' : 'rounded-bl-md border border-border bg-surface text-text'}`}>
-                    {m.kind === 'photo' && m.media_path && <PhotoMessage path={m.media_path} onOpen={setViewing} />}
-                    {m.kind === 'voice' && m.media_path && <VoiceMessage path={m.media_path} seconds={m.media_seconds} />}
+                    {m.kind === 'photo' && (m.media_path || m.media_archived_at) && <PhotoMessage message={m} onOpen={setViewing} />}
+                    {m.kind === 'voice' && (m.media_path || m.media_archived_at) && <VoiceMessage message={m} />}
                     {m.body && <span className="whitespace-pre-wrap break-words text-body-md">{m.body}</span>}
                     <span className="num self-end text-[11px] leading-none text-text-3">{timeOf(m.created_at)}</span>
                   </div>
@@ -266,9 +266,9 @@ function RoomView({ roomId, room, me, onBack }: { roomId: string; room: chat.Cha
   );
 }
 
-function PhotoMessage({ path, onOpen }: { path: string; onOpen: (url: string) => void }) {
+function PhotoMessage({ message, onOpen }: { message: chat.ChatMessage; onOpen: (url: string) => void }) {
   const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => { chat.mediaUrl(path).then(setUrl); }, [path]);
+  useEffect(() => { chat.mediaUrl(message).then(setUrl); }, [message]);
   if (!url) return <Skeleton className="h-40 w-56 rounded-xl" />;
   return (
     <button type="button" onClick={() => onOpen(url)} className="overflow-hidden rounded-xl">
@@ -277,9 +277,10 @@ function PhotoMessage({ path, onOpen }: { path: string; onOpen: (url: string) =>
   );
 }
 
-function VoiceMessage({ path, seconds }: { path: string; seconds: number | null }) {
+function VoiceMessage({ message }: { message: chat.ChatMessage }) {
+  const seconds = message.media_seconds;
   const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => { chat.mediaUrl(path).then(setUrl); }, [path]);
+  useEffect(() => { chat.mediaUrl(message).then(setUrl); }, [message]);
   return (
     <div className="flex items-center gap-2">
       {url ? <audio controls preload="none" src={url} className="h-10 w-56 max-w-full" /> : <Skeleton className="h-10 w-56 rounded-full" />}

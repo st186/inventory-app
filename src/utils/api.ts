@@ -955,6 +955,10 @@ export async function chatSync(accessToken?: string): Promise<{ success: boolean
 export async function chatPeople(accessToken?: string): Promise<{ people: { userId: string; name: string; role: string }[] }> {
   return fetchWithAuth(`${API_BASE}/chat/people`, await tokenOr(accessToken));
 }
+/** A chat photo or voice note moved to Google Drive after 30 days (server chat.ts). */
+export async function chatArchivedMedia(messageId: string, accessToken?: string): Promise<{ dataUrl: string }> {
+  return fetchWithAuth(`${API_BASE}/chat/media/${encodeURIComponent(messageId)}`, await tokenOr(accessToken));
+}
 export async function chatDirect(userId: string, accessToken?: string): Promise<{ roomId: string; name: string }> {
   return fetchWithAuth(`${API_BASE}/chat/direct`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ userId }) });
 }

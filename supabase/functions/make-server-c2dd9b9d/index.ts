@@ -43,6 +43,7 @@ import * as liveOrders from './liveOrders.ts';
 import * as onlineStock from './onlineStock.ts';
 import * as rush from './rushInsights.ts';
 import { registerChatRoutes } from './chat.ts';
+import * as gdrive from './gdrive.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -415,7 +416,8 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesig
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
 // Security review, 28 Oct 2026:
 // - The cron secret opens only the scheduled-job routes (it used to skip every check on every route).
-const CRON_ROUTES = /^\/(cron\/|send-|pos-sync$|production\/auto-approve-stale$|timesheets\/auto-approve-stale$|notifications\/auto-cleanup$|app-updates\/cleanup$|admin\/recompute-(paytm-balance|production-cash)$|workplace\/summary$)/;
+// chat/notify is called by the database after each message, chat/sync by the server (chat.ts).
+const CRON_ROUTES = /^\/(cron\/|send-|pos-sync$|chat\/(notify|sync)$|production\/auto-approve-stale$|timesheets\/auto-approve-stale$|notifications\/auto-cleanup$|app-updates\/cleanup$|admin\/recompute-(paytm-balance|production-cash)$|workplace\/summary$)/;
 // - The read-only auditor role writes nothing of the business (site auditors post to their audits).
 const AUDIT_WRITES = /^\/(notifications|push|auth|me|site-audits|insights)(\/|$)/;
 // - Timesheets, leave and salary advances name their person in the body: staff file only their own.
@@ -19371,7 +19373,10 @@ registerRepairRoutes(app, expenseReviewDeps);
 registerComplaintRoutes(app, { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST });
 registerPaperworkRoutes(app, { kv: kvWithRetry, rows: getAllByPrefixWithRetry, verifyUser, storage: supabase.storage });
 // Team chat: groups and one-to-ones, read and sent from the phones; the server keeps the groups and sends notifications (chat.ts).
-registerChatRoutes(app, { kv: kvWithRetry, db: supabase, verifyUser, staff: staffForNotifications, rows: getAllByPrefixWithRetry, notifyUser });
+registerChatRoutes(app, {
+  kv: kvWithRetry, db: supabase, verifyUser, staff: staffForNotifications, rows: getAllByPrefixWithRetry, notifyUser,
+  drive: { configured: gdrive.driveConfigured, folder: gdrive.ensureDriveFolder, upload: gdrive.uploadDriveFile, download: gdrive.downloadDriveFile },
+});
 registerSiteAuditRoutes(app, {
   kv: kvWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST,
   // A sign-in for an independent auditor: role audit, designation site_auditor (trusted keys are

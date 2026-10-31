@@ -16,7 +16,17 @@ export type ChatDeps = {
   staff: () => Promise<any[]>;
   rows: (prefix: string) => Promise<any[]>;
   notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => Promise<unknown>;
+  /** Google Drive (gdrive.ts), where photos and voice notes go after KEEP_DAYS. */
+  drive?: {
+    configured: () => boolean;
+    folder: (path: string[]) => Promise<string>;
+    upload: (opts: { name: string; bytes: Uint8Array; mimeType: string; folderId: string }) => Promise<{ id: string }>;
+    download: (id: string) => Promise<Response>;
+  };
 };
+/** Photos and voice notes stay in Supabase this long, then move to Google Drive. */
+export const KEEP_DAYS = 30;
+const MEDIA_BUCKET = 'chat-media';
 
 const P = '/make-server-c2dd9b9d';
 const SYNC_EVERY_MS = 10 * 60 * 1000;
@@ -93,7 +103,10 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
   }
 
   app.post(`${P}/chat/sync`, async (c: any) => {
-    const w: any = await me(c);
+    // The server itself (X-Cron-Secret) may set the groups up too, without anyone signed in.
+    const secret = Deno.env.get('CRON_SYNC_SECRET');
+    const fromServer = !!secret && c.req.header('X-Cron-Secret') === secret;
+    const w: any = fromServer ? { staff: await deps.staff() } : await me(c);
     if (w.error) return w.error;
     try {
       const last = await deps.kv.get('chat-sync:last');
@@ -135,6 +148,62 @@ export function registerChatRoutes(app: any, deps: ChatDeps) {
     } catch (error: any) {
       console.error('Could not open a chat:', error);
       return c.json({ error: 'Could not open the chat' }, 500);
+    }
+  });
+
+  // ---- Photos and voice notes after 30 days: to Google Drive (owner, 1 Nov 2026: "either supabase
+  // will overflow"). Nightly, each one older than KEEP_DAYS is copied to Drive ("Chat/<month>/<room>")
+  // and removed from Supabase's 1 GB; the chat still opens it, from Drive (GET /chat/media/:id). ----
+  app.post(`${P}/cron/chat-archive`, async (c: any) => {
+    const secret = Deno.env.get('CRON_SYNC_SECRET');
+    if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+    if (!deps.drive?.configured()) return c.json({ success: true, skipped: 'Google Drive is not connected' });
+    const before = new Date(Date.now() - KEEP_DAYS * 86400000).toISOString();
+    const { data: old, error } = await deps.db.from('chat_messages').select('id,room_id,kind,media_path,created_at')
+      .not('media_path', 'is', null).is('media_drive_id', null).lt('created_at', before).order('created_at').limit(150);
+    if (error) return c.json({ error: error.message }, 500);
+    const roomNames = new Map<string, string>();
+    let moved = 0, failed = 0;
+    for (const m of old || []) {
+      try {
+        if (!roomNames.has(m.room_id)) {
+          const { data: room } = await deps.db.from('chat_rooms').select('kind,name').eq('id', m.room_id).single();
+          roomNames.set(m.room_id, room?.kind === 'direct' ? 'One-to-one' : String(room?.name || 'Chat').replace(/[\\/]/g, '-'));
+        }
+        const { data: blob, error: dlErr } = await deps.db.storage.from(MEDIA_BUCKET).download(m.media_path);
+        if (dlErr || !blob) throw new Error(dlErr?.message || 'missing');
+        const folderId = await deps.drive.folder(['Chat', String(m.created_at).slice(0, 7), roomNames.get(m.room_id)!]);
+        const name = `${String(m.created_at).slice(0, 19).replace(/[:T]/g, '-')}-${m.kind}.${String(m.media_path).split('.').pop()}`;
+        const { id } = await deps.drive.upload({ name, bytes: new Uint8Array(await blob.arrayBuffer()), mimeType: blob.type || 'application/octet-stream', folderId });
+        const { error: upErr } = await deps.db.from('chat_messages').update({ media_drive_id: id, media_archived_at: new Date().toISOString() }).eq('id', m.id);
+        if (upErr) throw new Error(upErr.message);
+        await deps.db.storage.from(MEDIA_BUCKET).remove([m.media_path]);
+        moved++;
+      } catch (e) {
+        failed++;
+        console.error('Chat media not moved to Drive:', m.id, e instanceof Error ? e.message : e);
+      }
+    }
+    return c.json({ success: true, moved, failed, more: (old || []).length === 150 });
+  });
+
+  // A photo or voice note moved to Drive, for a member of its room.
+  app.get(`${P}/chat/media/:id`, async (c: any) => {
+    const w: any = await me(c);
+    if (w.error) return w.error;
+    try {
+      const { data: m } = await deps.db.from('chat_messages').select('room_id,media_drive_id,kind').eq('id', c.req.param('id')).single();
+      if (!m?.media_drive_id) return c.json({ error: 'Not found' }, 404);
+      const { data: member } = await deps.db.from('chat_members').select('user_id').eq('room_id', m.room_id).eq('user_id', w.self.authUserId).maybeSingle();
+      if (!member) return c.json({ error: 'Not your chat' }, 403);
+      const res = await deps.drive!.download(m.media_drive_id);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      return c.json({ dataUrl: `data:${res.headers.get('content-type') || (m.kind === 'photo' ? 'image/jpeg' : 'audio/webm')};base64,${btoa(bin)}` });
+    } catch (error: any) {
+      console.error('Chat media from Drive failed:', error);
+      return c.json({ error: 'Could not open it from Google Drive' }, 502);
     }
   });
 

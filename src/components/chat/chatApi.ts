@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { getSupabaseClient } from '../../utils/supabase/client';
+import { chatArchivedMedia } from '../../utils/api';
 
 export type ChatRoom = {
   id: string; key: string; kind: 'team' | 'place' | 'direct'; name: string;
@@ -14,6 +15,8 @@ export type ChatRoom = {
 export type ChatMessage = {
   id: string; room_id: string; sender_id: string; sender_name: string;
   kind: 'text' | 'photo' | 'voice'; body: string; media_path: string | null; media_seconds: number | null; created_at: string;
+  /** Moved to Google Drive after 30 days (chat.ts /cron/chat-archive): opened through the server. */
+  media_archived_at?: string | null;
 };
 
 const db = () => getSupabaseClient();
@@ -78,15 +81,22 @@ export function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type });
 }
 
-// Signed links last an hour; kept so a scrolled-back photo isn't asked for again.
+// Signed links last an hour; kept so a scrolled-back photo isn't asked for again. A photo or voice
+// note older than 30 days lives in Google Drive and comes through the server instead.
 const links = new Map<string, { url: string; until: number }>();
-export async function mediaUrl(path: string): Promise<string | null> {
-  const hit = links.get(path);
+export async function mediaUrl(m: Pick<ChatMessage, 'id' | 'media_path' | 'media_archived_at'>): Promise<string | null> {
+  const cacheKey = m.media_archived_at ? `drive:${m.id}` : m.media_path || '';
+  const hit = links.get(cacheKey);
   if (hit && hit.until > Date.now()) return hit.url;
-  const { data, error } = await db().storage.from(BUCKET).createSignedUrl(path, 3600);
-  if (error || !data?.signedUrl) return null;
-  links.set(path, { url: data.signedUrl, until: Date.now() + 50 * 60 * 1000 });
-  return data.signedUrl;
+  let url: string | null = null;
+  if (m.media_archived_at) {
+    url = await chatArchivedMedia(m.id).then((r) => r.dataUrl).catch(() => null);
+  } else if (m.media_path) {
+    const { data, error } = await db().storage.from(BUCKET).createSignedUrl(m.media_path, 3600);
+    url = error ? null : data?.signedUrl || null;
+  }
+  if (url) links.set(cacheKey, { url, until: Date.now() + 50 * 60 * 1000 });
+  return url;
 }
 
 /** New messages in any of my rooms, as they arrive (Realtime keeps to the read policy). */
