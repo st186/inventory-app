@@ -18,10 +18,10 @@ const MOMO_KEY: Record<string, string> = {
   vegKurkure: 'vegKurkureMomos', chickenKurkure: 'chickenKurkureMomos',
 };
 
-/** "Chicken stuffing", "Dough (shared)". */
+/** "Chicken stuffing", "Dough", "Cheese corn dough". */
 export function poolLabel(id: string): string {
-  if (id === 'dough') return 'Dough (shared)';
-  if (id === 'batter') return 'Batter (shared)';
+  if (id === 'dough') return 'Dough';
+  if (id === 'batter') return 'Batter';
   const [field, type] = id.split(':');
   return `${TYPE_LABEL[type] || type} ${field}`;
 }
@@ -53,8 +53,9 @@ export function piecesPerKg(days: { pools: Record<string, PoolState>; pieces: Re
     }).filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
     if (ratios.length) out[type] = Math.round(ratios[Math.floor((ratios.length - 1) / 2)]);
   }
-  // The shared dough (every steamed / fried momo) and batter (kurkure), the same way.
-  const shared: Record<string, string[]> = { dough: ['chicken', 'chickenCheese', 'veg', 'cheeseCorn', 'paneer'], batter: ['vegKurkure', 'chickenKurkure'] };
+  // The dough, cheese corn's own dough (owner, 31 Oct 2026: "corn cheese dough is different from
+  // the rest") and the kurkure batter, the same way.
+  const shared: Record<string, string[]> = { dough: ['chicken', 'chickenCheese', 'veg', 'paneer'], 'dough:cheeseCorn': ['cheeseCorn'], batter: ['vegKurkure', 'chickenKurkure'] };
   for (const [pool, types] of Object.entries(shared)) {
     const ratios = days.map((d) => {
       const p = d.pools[pool];

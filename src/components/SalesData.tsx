@@ -60,6 +60,8 @@ function classifyMomoCategory(nameLower: string): keyof CategoryData | null {
   if (nameLower.includes('corn') && nameLower.includes('cheese')) return 'Corn Cheese Momos';
   if (nameLower.includes('chicken') && nameLower.includes('cheese')) return 'Chicken Cheese Momos';
   if (nameLower.includes('chicken')) return 'Chicken Momos';
+  // "Non Veg" holds "veg" (31 Oct 2026 stock check; posItemClassifier.tsx the same).
+  if (/non[\s-]*veg/.test(nameLower)) return 'Chicken Momos';
   if (nameLower.includes('veg')) return 'Veg Momos';
   return null;
 }
@@ -72,7 +74,7 @@ type ChannelBreakdown = Record<keyof CategoryData, Record<string, { pieces: numb
 // item detail (Step D) is turned into piece counts the same way Step B's category totals are.
 function extractPiecesPerUnit(productName: string): number {
   const nameLower = productName.toLowerCase();
-  const pcsMatch = productName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+  const pcsMatch = productName.match(/(\d+)\s*(?:pcs|pieces|piece|pc)\b/i);
 
   if (nameLower.includes('mania') && nameLower.includes('combo')) {
     // Every Mania Combo unit (bracketed "[N Pieces, Pack Of 2]" naming or plain) is the
@@ -515,18 +517,23 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
       // -------------------------------------------------
       // RULE 2: Platters (Split Logic)
       // -------------------------------------------------
+      // Same as posItemClassifier.tsx platterSplit (31 Oct 2026): a chicken mix is the non-veg
+      // split, a veg mix the veg split, and a platter of one named kind 12 of that kind.
       if (nameLower.includes('platter')) {
-        if (nameLower.includes('non veg')) {
+        const kind = classifyMomoCategory(nameLower);
+        if (/non[\s-]*veg|chicken mix/.test(nameLower)) {
           // 6 Chicken + 6 Chicken Cheese
           result['Chicken Momos'] += (6 * qty);
           result['Chicken Cheese Momos'] += (6 * qty);
-        } else if (nameLower.includes('veg')) {
+        } else if (/\bveg\b/.test(nameLower) && !/chicken|paneer|corn|kurkure/.test(nameLower)) {
           // 4 Paneer + 4 Veg + 4 Corn Cheese
           result['Paneer Momos'] += (4 * qty);
           result['Veg Momos'] += (4 * qty);
           result['Corn Cheese Momos'] += (4 * qty);
+        } else if (kind) {
+          result[kind] += (12 * qty);
         }
-        return; // Done processing this row
+        return; // Done processing this row (a platter with no kind in its name isn't counted)
       }
 
       // -------------------------------------------------
@@ -540,7 +547,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         let burgersPerPlate = 1;
 
         // Check for multi-burger plates (e.g., "2 pcs")
-        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece|pc)\b/i);
         if (pcsMatch) {
           burgersPerPlate = parseInt(pcsMatch[1]);
         }
@@ -548,7 +555,7 @@ export function SalesData({ context, selectedStoreId }: SalesDataProps) {
         piecesPerUnit = burgersPerPlate * momosPerBurger;
       } else {
         // Standard items: check for explicit counts like "8 pcs"
-        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece)/i);
+        const pcsMatch = itemName.match(/(\d+)\s*(?:pcs|pieces|piece|pc)\b/i);
         if (pcsMatch) {
           let count = parseInt(pcsMatch[1]);
 

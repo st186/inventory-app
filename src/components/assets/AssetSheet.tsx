@@ -196,7 +196,7 @@ export function AssetSheet({ open, asset, mode, locations, editableLocations, ca
       <div className="flex flex-col gap-4">
         {fromExpense && (
           <Callout tone="info" icon={Receipt} title={asset.purchaseDate ? t('assets.fromExpense', { date: shortDate(asset.purchaseDate) }) : t('assets.fromExpenseNoDate')}>
-            {asset.needsReview && !readOnly ? t('assets.reviewBody') : undefined}
+            {asset.needsReview && !readOnly ? [asset.source.aiWhy ? t('assets.bunnyWhy', { why: asset.source.aiWhy }) : '', t('assets.reviewBody')].filter(Boolean).join(' ') : undefined}
           </Callout>
         )}
 

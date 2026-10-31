@@ -33,6 +33,7 @@ import { aiScorePhoto } from './insights.ts';
 import { driveConfigured, ensureDriveFolder, uploadDriveFile, downloadDriveFile } from './gdrive.ts';
 import { AI_KEYS, isLow, photosOf, rollUp, settleFlag, type Photo } from './workplacePhotos.ts';
 import { inBackground } from './background.ts';
+import { holderOn, settled, type Handover } from './workplaceHandover.ts';
 
 type Kv = {
   get: <T = any>(key: string) => Promise<T>;
@@ -56,10 +57,12 @@ type LocationKind = 'store' | 'production' | 'event';
 // it's due, so a check added after the day's window doesn't count as missed that day.
 type Shot = { label: string; labelBn?: string };
 type Sample = { id: string; path: string; thumbPath?: string; type: string; shot?: number; at: string; by: string };
+// handover: from that day the check moves to someone else (workplaceHandover.ts).
 type TemplateItem = {
   id: string; name: string; nameBn: string; hint?: string; assigneeId: string | null; coverId?: string | null; start: string; end: string; days: number[]; from?: string;
-  minPhotos?: number; shots?: Shot[]; samples?: Sample[];
+  minPhotos?: number; shots?: Shot[]; samples?: Sample[]; handover?: Handover;
 };
+const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 // activeFrom/activeTo: an event's checklist only applies on the event days (taken from the event).
 type Template = { locationKind: LocationKind; locationId: string; items: TemplateItem[]; updatedAt?: string; updatedBy?: string; activeFrom?: string; activeTo?: string };
 type Assigned = {
@@ -261,7 +264,7 @@ async function loadEventLocs(kv: Kv): Promise<Loc[]> {
 
 async function loadTemplate(kv: Kv, kind: LocationKind, id: string): Promise<Template | null> {
   const t = await kv.get<Template>(templateKey(kind, id));
-  const saved = t && Array.isArray(t.items) ? t : null;
+  const saved = t && Array.isArray(t.items) ? settled(t, istToday()) : null;
   if (kind !== 'event') return saved;
   const ev = (await loadEventLocs(kv)).find((e) => e.id === id);
   return ev ? eventTemplate(saved, ev) : saved;
@@ -269,7 +272,7 @@ async function loadTemplate(kv: Kv, kind: LocationKind, id: string): Promise<Tem
 
 async function loadAllTemplates(kv: Kv): Promise<Template[]> {
   const [rows, events] = await Promise.all([kv.getByPrefix<Template>('workplace-template:'), loadEventLocs(kv)]);
-  const saved = (rows || []).filter((t) => t && isKind(t.locationKind) && t.locationId && Array.isArray(t.items));
+  const saved = (rows || []).filter((t) => t && isKind(t.locationKind) && t.locationId && Array.isArray(t.items)).map((t) => settled(t, istToday()));
   const open = new Map(events.filter((e) => !e.closed).map((e) => [e.id, e]));
   const out = saved.filter((t) => t.locationKind !== 'event');
   // Open events only: their saved checklist or the default one, with the event days.
@@ -326,11 +329,12 @@ function assignedOn(templates: Template[], date: string, employeeId?: string, co
   for (const t of templates) {
     if ((t.activeFrom && date < t.activeFrom) || (t.activeTo && date > t.activeTo)) continue;
     for (const it of t.items) {
-      if (!it.assigneeId || !(it.days || ALL_DAYS).includes(wd) || (it.from && date < it.from)) continue;
-      let who = it.assigneeId;
+      const holder = holderOn(it, date);
+      if (!holder.assigneeId || !(it.days || ALL_DAYS).includes(wd) || (it.from && date < it.from)) continue;
+      let who = holder.assigneeId;
       let coveringFor: string | undefined;
       if (cover?.away.has(who)) {
-        const stand = (it.coverId && !cover.away.has(it.coverId) ? it.coverId : null) || cover.fallback(t, who);
+        const stand = (holder.coverId && !cover.away.has(holder.coverId) ? holder.coverId : null) || cover.fallback(t, who);
         if (stand && stand !== who) { coveringFor = who; who = stand; }
       }
       if (employeeId && who !== employeeId) continue;
@@ -762,13 +766,13 @@ async function pushAutoFlag(deps: Deps, o: { date: string; employeeId: string; i
     }
     return;
   }
-  // Any other AI flag: the place's incharge and the owner (owner, 28 Oct 2026).
+  // Any other AI flag: the place's incharge (owner, 28 Oct 2026). The owner reads it in Bunny's
+  // roundup at 1 PM and 9 PM instead (owner, 31 Oct 2026; roundupRules.ts).
   const to = new Map<string, any>();
   for (const inc of inchargesOf(employees, o.it.locationKind, o.it.locationId, locs)) {
     if (empIdOf(inc) === o.employeeId || empIdOf(inc) === o.actorEmployeeId) continue;
     if (inc.authUserId) to.set(inc.authUserId, inc);
   }
-  for (const e of (await deps.getAllClusterHeads()) || []) if (e?.authUserId) to.set(e.authUserId, e);
   for (const authUserId of to.keys()) {
     await safeNotify(deps, authUserId, 'workplace_flag', `AI flagged ${o.it.name} at ${locName}`,
       `${person?.name || 'A staff member'}'s photo scored ${o.it.aiScore}/10${en ? `: ${en}` : ''}. Open Workplace checks to confirm or mark it OK.`, related, o.date, { imageUrl, photoCheck });
@@ -867,9 +871,12 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       const minPhotos = Math.min(MAX_PHOTOS, Math.max(1, Math.round(Number(r?.minPhotos) || 1)));
       // Sample photos are added and removed on their own (POST/DELETE /workplace/sample); kept here.
       const samples = before?.items?.find((x) => x.id === id)?.samples;
+      // A handover not started yet stays, unless the check has just been given to that person anyway.
+      const prev = before?.items?.find((x) => x.id === id)?.handover;
+      const handover = prev && prev.to !== assigneeId && staff.has(prev.to) ? prev : undefined;
       items.push({
         id, name, nameBn: str(r?.nameBn, 60), ...(hint ? { hint } : {}), assigneeId, ...(coverId ? { coverId } : {}), start, end, days, ...(DATE.test(from) ? { from } : {}),
-        ...(minPhotos > 1 ? { minPhotos } : {}), ...(shots.length ? { shots } : {}), ...(samples?.length ? { samples } : {}),
+        ...(minPhotos > 1 ? { minPhotos } : {}), ...(shots.length ? { shots } : {}), ...(samples?.length ? { samples } : {}), ...(handover ? { handover } : {}),
       });
     }
     const template: Template = { locationKind: loc.kind, locationId: loc.id, items, updatedAt: new Date().toISOString(), updatedBy: actor!.name };
@@ -980,7 +987,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
         items: t.items.map((it) => ({
           id: it.id, name: it.name, nameBn: it.nameBn, hint: it.hint || '', start: it.start, end: it.end, need: needOf(it),
           shots: it.shots || [], samples: (it.samples || []).map((x) => ({ id: x.id, ...(x.shot !== undefined ? { shot: x.shot } : {}) })),
-          mine: !!actor!.employeeId && (it.assigneeId === actor!.employeeId || it.coverId === actor!.employeeId),
+          mine: !!actor!.employeeId && [holderOn(it, deps.getTodayIST()).assigneeId, holderOn(it, deps.getTodayIST()).coverId].includes(actor!.employeeId),
         })),
       }));
     return c.json({ places, canSetup: actor!.canSetup });
@@ -1387,7 +1394,7 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
       if (!all.length) return c.json({ success: true, people: 0 });
       const byPerson = new Map<string, Assigned[]>();
       for (const a of all) byPerson.set(a.assigneeId, [...(byPerson.get(a.assigneeId) || []), stripAssignee(a)]);
-      const [clusterHeads, sentRaw] = await Promise.all([deps.getAllClusterHeads(), kv.get<any>(sentKey(today))]);
+      const sentRaw = await kv.get<any>(sentKey(today));
       const sent = {
         date: today, due: { ...(sentRaw?.due || {}) } as Record<string, string[]>, last: { ...(sentRaw?.last || {}) } as Record<string, string[]>,
         missed: { ...(sentRaw?.missed || {}) } as Record<string, boolean>,
@@ -1437,7 +1444,8 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
             `${pending.length} still to send: ${names}.${covering.length ? ` Covering for ${covering.join(', ')} (on leave).` : ''} · ${bnBy(end)} ছবি দিন, সময় প্রায় শেষ`, undefined, today)) duePushes++;
         }
 
-        // Window closed without a photo: once a day per person, to the incharge(s) and the owner.
+        // Window closed without a photo: once a day per person, to the incharge(s). The owner reads it
+        // in Bunny's roundup (owner, 31 Oct 2026).
         const missed = list.filter((a) => nowMin > toMin(a.end) && !uploaded[a.id]);
         if (missed.length && !sent.missed[employeeId]) {
           sent.missed[employeeId] = true;
@@ -1446,7 +1454,6 @@ export function registerWorkplaceRoutes(app: any, deps: Deps) {
           const place = findLoc(locs, first.locationKind, first.locationId);
           const recipients = new Map<string, any>();
           for (const e of inchargesOf(employees, first.locationKind, first.locationId, locs)) if (e.authUserId) recipients.set(e.authUserId, e);
-          for (const e of clusterHeads || []) if (e?.authUserId) recipients.set(e.authUserId, e);
           if (person?.authUserId) recipients.delete(person.authUserId);
           const names = missed.slice(0, 5).map((a) => a.name).join(', ') + (missed.length > 5 ? ` +${missed.length - 5}` : '');
           for (const authUserId of recipients.keys()) {

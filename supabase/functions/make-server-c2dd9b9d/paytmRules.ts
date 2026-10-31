@@ -219,10 +219,21 @@ export function recalDayEndBalance(src: PaytmSources, recal: Row, live?: PaytmLi
   const aggregatorPayouts = sumOf(src.settlements.filter((s) => s.settlementDate === date), (s) => s.netPayout);
   const salaryPayouts = sumOf(src.payouts.filter((p) => payoutHitsPaytm(p) && p.date === date), (p) => p.amount);
   const lateTopups = sumOf(src.topups.filter((t) => t.status === 'approved' && topupDrainsPaytm(t) && t.date === date && approvedAfterCount(t, recal)), (t) => t.requestedAmount);
+  // A count logged after the day was over (from 11 PM India time that day, or any time later)
+  // already holds the day's takings, payouts and Paytm-paid salaries: nothing is added on top
+  // (owner, 1 Nov 2026: 31 Oct's balance, logged at 1:58 AM, showed its own day's Paytm twice).
+  if (countedAfterDay(recal)) return recal.actualBalance - lateTopups;
   // Stall collections have no time either, so like the store's own takings they're added in full.
   const eventPaytmReceived = sumOf(src.sales.filter((s) => s.date === date), eventPaytmIn);
   return recal.actualBalance + paytmReceived + aggregatorPayouts + eventPaytmReceived - salaryPayouts - lateTopups;
 }
+
+// The day is over by 11 PM India time (the last orders are in): a count logged then or later is the
+// day's closing balance.
+export const countedAfterDay = (recal: Row): boolean => {
+  const counted = recalCountedAtMs(recal);
+  return counted !== null && typeof recal?.date === 'string' && counted >= Date.parse(`${recal.date}T23:00:00+05:30`);
+};
 
 export interface PaytmAnchor {
   date: string;

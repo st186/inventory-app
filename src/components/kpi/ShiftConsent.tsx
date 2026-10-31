@@ -14,11 +14,13 @@ import { consentKey, openLocationSettings } from './shiftTracker';
 // check-in and then walks through the two phone settings it needs ("Allow all the time" location,
 // no battery restriction). The battery page opens through the same native helper as the rider
 // alert setup. Otherwise it only explains.
-export function ShiftConsent({ open, onOpenChange, employeeId, canAsk, onDecided }: {
+export function ShiftConsent({ open, onOpenChange, employeeId, canAsk, update, onDecided }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   employeeId: string;
   canAsk: boolean;
+  /** Agreed to an earlier note: asks again for the updated one (31 Oct 2026: at work / stepped out). */
+  update?: boolean;
   onDecided?: (accepted: boolean) => void;
 }) {
   const { t, lang } = useT();
@@ -38,11 +40,14 @@ export function ShiftConsent({ open, onOpenChange, employeeId, canAsk, onDecided
   }, [open, step]);
 
   const decide = async (accepted: boolean) => {
+    // The updated note (`update`): not now leaves automatic check-in as it was.
+    if (update && !accepted) { onOpenChange(false); return; }
     setSaving(true);
     try {
       await data.saveShiftConsent(accepted);
       try { localStorage.setItem(consentKey(employeeId), accepted ? 'yes' : 'no'); } catch { /* ignore */ }
-      if (accepted) setStep('settings');
+      if (accepted && update) { onDecided?.(true); onOpenChange(false); }
+      else if (accepted) setStep('settings');
       else { onDecided?.(false); onOpenChange(false); }
     } catch (e: any) {
       toast.error(e?.message || t('consent.saveFailed'));

@@ -17,6 +17,7 @@ export interface TimesheetEntry {
   rejectedBy?: string;
   rejectedAt?: string;
   rejectionReason?: string;
+  source?: 'punch'; // filled from the shift check-in and check-out (server punchTimesheet.ts)
 }
 
 export function useMyAttendance(employeeId: string) {

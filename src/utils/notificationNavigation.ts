@@ -50,7 +50,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   stock_request_partial: { view: 'analytics', tab: 'production-requests' },
   stock_request_cancelled: { view: 'analytics', tab: 'production-requests' },
   stock_request_reminder: { view: 'analytics', tab: 'production-requests' },
-  stock_count_reminder: { view: 'analytics', tab: 'production-requests' },
+  stock_count_reminder: { view: 'stock-requests', tab: 'count' }, // opens the count itself (31 Oct 2026)
   compliance_due: { view: 'compliance' },
   compliance_overdue: { view: 'compliance' },
   stock_request_missed: { view: 'analytics', tab: 'production-requests' },
@@ -63,6 +63,7 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   expense_approval: { view: 'inventory' },
   expense_rejected: { view: 'inventory' },
   production_flag: { view: 'production' },
+  burger_check: { view: 'advanced-inventory' }, // Stock on hand › Boxes (burgerCheck.ts)
   repair_alert: { view: 'production' },
   rider_called: { view: 'riders' },
   rider_ready: { view: 'riders' },
@@ -101,7 +102,17 @@ const NOTIFICATION_VIEW_MAP: Record<string, { view: string; tab?: string }> = {
   performance_report: { view: 'home' }, // under the payslip on Home
   performance_due: { view: 'performance' },
   cctv_ppe: { view: 'cameras' },
+  cctv_ppe_still: { view: 'cameras' },
   cctv_intruder: { view: 'cameras' },
+  order_stuck: { view: 'home' }, // live orders (liveOrders.ts): the order is settled in Ciferon itself
+  orders_unbilled: { view: 'home' }, // the owner's Right now card lists them
+  online_items_off: { view: 'home' }, // switched on in Ciferon itself; the owner's Right now card lists them
+  stockout_explain: { view: 'home' }, // the store incharge's Home: pick why each item was out of stock
+  stockout_explained: { view: 'home' }, // the owner's Right now card
+  steam_now: { view: 'home' }, // the store: put momos in the steamer before the rush
+  chat_direct: { view: 'chat' }, // opens the room (relatedId)
+  chat_group: { view: 'chat' },
+  chat_mention: { view: 'chat' },
   asset_missing: { view: 'assets' },
   equipment_check_due: { view: 'assets' },
   equipment_check_done: { view: 'assets' },

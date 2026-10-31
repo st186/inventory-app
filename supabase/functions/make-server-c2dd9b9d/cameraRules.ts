@@ -41,17 +41,35 @@ export function nextStillSeconds(o: { now: string; from: string; to: string; act
   return Math.max(0, Math.round(o.everyMin * 60 - o.sinceLastS));
 }
 
-/** Kitchen-activity cameras look in bursts (owner, 29 Oct 2026): 20 frames 15 seconds apart. */
-export const BURST = { frames: 20, gapSec: 15 };
+/**
+ * Kitchen-activity cameras look in bursts of 20 frames sent together (owner, 29 Oct 2026). Until
+ * 31 Oct they were 15 seconds apart with a 30-minute wait after; now (owner, 31 Oct: "Spread the 20
+ * pictures over the 35 minutes") they are spread evenly over the camera's `everyMin`, one burst after
+ * the other: 35 minutes = one frame every 105 seconds, for the same AI cost. Bunched frames mostly
+ * repeated each other (84% the same activity 15 s later) and left 30 minutes unseen, so a short phone
+ * call was missed or counted as 20 minutes; spread, a day's folding and phone minutes come out within
+ * a minute or two in a simulation of 3,000 days, against 15-20 minutes before.
+ */
+export const BURST_FRAMES = 20;
+export const BURST = { frames: BURST_FRAMES, gapSec: 15 }; // the shortest gap (everyMin 5)
+export const burstFor = (everyMin: number) => ({ frames: BURST_FRAMES, gapSec: Math.max(BURST.gapSec, Math.round((everyMin * 60) / BURST_FRAMES)) });
+/** Frames this far apart are judged one by one (people may move or switch work in between). */
+export const SPREAD_GAP_SEC = 60;
 
-/** Minutes each burst frame stands for: the burst plus the wait after it, shared by its frames. */
-export const minutesPerFrame = (everyMin: number, burst = BURST) => (everyMin + (burst.frames * burst.gapSec) / 60) / burst.frames;
+/** Minutes each burst frame stands for: spread frames their gap (they cover the whole time, back to
+ *  back); a bunched burst (an older camera PC) its share of the camera's interval. */
+export const minutesPerFrame = (everyMin: number, burst: { frames: number; gapSec: number } = BURST) =>
+  burst.gapSec >= SPREAD_GAP_SEC ? burst.gapSec / 60 : everyMin / burst.frames;
+
+/** A burst that started before the last one ended: sent twice or too soon, so not looked at. */
+export const burstTooSoon = (sinceLastS: number, burst: { frames: number; gapSec: number }) =>
+  sinceLastS < (burst.frames - 1) * burst.gapSec - 120;
 
 /**
  * Whether a burst that has just come in was taken in working hours: it counts when it started
  * inside them (one that runs a few minutes past closing still counts).
  */
-export function burstInHours(nowMs: number, from: string, to: string, burst = BURST): boolean {
+export function burstInHours(nowMs: number, from: string, to: string, burst: { frames: number; gapSec: number } = BURST): boolean {
   const startedMs = nowMs - (burst.frames * burst.gapSec + 60) * 1000;
   return inHours(istClock(nowMs), from, to) || inHours(istClock(startedMs), from, to);
 }

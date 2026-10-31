@@ -8,7 +8,7 @@
 // with 5 of 12 ticked, a delivery on the way, the flagged tandoori masala, tomorrow's request not
 // sent, and so on. Change one, check the other (scripts: the lesson runner in the guide sources).
 import { two, type Two } from './learn';
-import { button, field, filled, input, section, text, topSheet, tour, type Find, type Words } from './find';
+import { allFilled, button, field, filled, input, section, step, text, topSheet, tour, type Find, type Words } from './find';
 import { translate, type I18nKey } from '../../utils/i18n';
 
 export type LessonStep = {
@@ -32,6 +32,24 @@ const sheet = { sheet: true };
 // A label in English and Bengali, from the app's own words (the crew practise on Bengali screens).
 const k = (...keys: I18nKey[]): Words => keys.flatMap((key) => [translate('en', key), translate('bn', key)]);
 const q = (selector: string): Find => () => document.querySelector(selector);
+
+// The production day's four steps (KitchenDay.tsx), by their titles.
+const STEP1 = k('kd.step1');
+const STEP2 = k('kd.step2');
+const STEP3 = k('kd.step3');
+const STEP4 = k('kd.step4');
+const inStep = (name: Words): Find => () => step(name);
+// The None button of the first box in a step not counted yet (tapping a filled row's None would
+// wipe a real count).
+const noneForEmpty = (name: Words): Find => () => {
+  const none = (Array.isArray(k('kd.none')) ? k('kd.none') : [k('kd.none')]) as string[];
+  for (const box of Array.from(step(name)?.querySelectorAll('input[inputmode="decimal"]') || []) as HTMLInputElement[]) {
+    if (box.value.trim()) continue;
+    const btn = Array.from(box.parentElement?.querySelectorAll('button') || []).find((b) => none.includes((b.textContent || '').trim()));
+    if (btn) return btn;
+  }
+  return null;
+};
 
 // Chapter 1 for every role: the tabs, the bell and the account, on the real app.
 function findYourWay(tabs: { path: string; title: Two; say: Two }[], extra: LessonStep[] = []): Chapter {
@@ -92,7 +110,7 @@ const STORE_INCHARGE: Chapter[] = [
     about: two('Check what came from production and confirm it.', 'প্রোডাকশন থেকে যা এল মিলিয়ে কনফার্ম।'),
     steps: [
       { id: 'row', go: 'stock/requests', find: button('On the way'), act: 'tap', title: two('A delivery on the way', 'রাস্তায় আছে এমন ডেলিভারি'), body: two('Stock › Requests lists your recent requests. When the rider brings one, tap it.', 'Stock › Requests-এ সাম্প্রতিক রিকোয়েস্ট থাকে। রাইডার মাল আনলে সেটায় চাপুন।') },
-      { id: 'lines', find: text('short', sheet), title: two('Count against the list', 'লিস্ট মিলিয়ে গুনুন'), body: two('Each line shows what was sent. Short items are marked: here Veg came 20 short.', 'প্রতিটা লাইনে কত পাঠানো হয়েছে লেখা। কম এলে দাগানো থাকে: এখানে Veg ২০টা কম।') },
+      { id: 'lines', find: text('short', sheet), title: two('Count against the list', 'লিস্ট মিলিয়ে গুনুন'), body: two('Each line shows what was sent. Short items are marked: here Veg came 50 short.', 'প্রতিটা লাইনে কত পাঠানো হয়েছে লেখা। কম এলে দাগানো থাকে: এখানে Veg ৫০টা কম।') },
       { id: 'confirm', find: button('Confirm delivery', sheet), act: 'tap', title: two('Tap Confirm delivery', 'Confirm delivery চাপুন'), body: two('Once you have counted it. The store\'s stock is wrong until every delivery is confirmed.', 'গোনা হয়ে গেলে। প্রতিটা ডেলিভারি কনফার্ম না হলে দোকানের স্টক ভুল থাকে।') },
       { id: 'done', find: text('Received', sheet), title: two('Received', 'রিসিভ হয়ে গেল'), body: two('Missed one? Home shows "A delivery to check" until it is confirmed.', 'কোনোটা বাকি থাকলে Home-এ "A delivery to check" দেখাবে, কনফার্ম না করা পর্যন্ত।') },
     ],
@@ -164,7 +182,7 @@ const STORE_INCHARGE: Chapter[] = [
     about: two('Send it by midnight: let Bunny fill it, check, send.', 'রাত ১২টার মধ্যে: বানি ভরে দেবে, মিলিয়ে পাঠান।'),
     steps: [
       { id: 'due', go: 'stock/requests', find: text('Send by midnight'), title: two('Due by midnight', 'রাত ১২টার মধ্যে'), body: two('Reminders start at 9:30 PM and turn urgent at 11:15 PM. Late requests count against your KPI.', 'রাত ৯:৩০ থেকে মনে করানো শুরু, ১১:১৫-য় জরুরি। দেরি হলে KPI-তে কাটে।') },
-      { id: 'fill', find: button('Fill in for me'), act: 'tap', title: two('Tap Fill in for me', 'Fill in for me চাপুন'), body: two('Bunny fills it from tomorrow\'s expected sales plus 15%, less what is left from the last delivery.', 'কালকের আন্দাজি বিক্রি আর ১৫% বেশি, শেষ ডেলিভারির বাকি মাল বাদ দিয়ে বানি ভরে দেয়।') },
+      { id: 'fill', find: button('Fill in for me'), act: 'tap', title: two('Tap Fill in for me', 'Fill in for me চাপুন'), body: two('Bunny fills the momos from what the store still has and tomorrow\'s expected sales, in bags of 50, and adds the sauces and supplies you usually ask for by now.', 'দোকানে যা আছে আর কালকের আন্দাজি বিক্রি দেখে বানি মোমো ভরে দেয়, ৫০-এর ব্যাগে, আর সাধারণত এই সময়ে যে সস আর জিনিসপত্র চান সেগুলোও যোগ করে।') },
       { id: 'left', find: text('Left now'), title: two('Check against the freezer', 'ফ্রিজারের সঙ্গে মেলান'), body: two('"Left now" is what the app thinks is left. Look in the freezer before you send.', '"Left now" মানে অ্যাপের হিসাবে কত বাকি। পাঠানোর আগে ফ্রিজার দেখে নিন।') },
       { id: 'more', find: button('More Chicken', { exact: true }), act: 'tap', title: two('Change a number', 'সংখ্যা বদলান'), body: two('Tap + for one more bag of Chicken, − for one less.', 'চিকেন এক ব্যাগ বেশি চাইলে +, কম চাইলে −।') },
       { id: 'sauce', find: button('Pan-Fried Sauce'), act: 'tap', title: two('Sauces', 'সস'), body: two('Tap each sauce you need, e.g. Pan-Fried Sauce.', 'যে যে সস লাগবে চাপুন, যেমন Pan-Fried Sauce।') },
@@ -222,7 +240,7 @@ const PRODUCTION_INCHARGE: Chapter[] = [
       { id: 'card', go: 'home', find: tour('shift'), title: two('Your shift', 'আপনার শিফট'), body: two('8 AM to 7 PM at the production house. Practice: made-up data, nothing is saved.', 'প্রোডাকশন হাউসে সকাল ৮টা থেকে সন্ধ্যা ৭টা। অভ্যাস: বানানো হিসাব, কিছু সেভ হয় না।') },
       { id: 'start', find: button('Start shift'), act: 'tap', title: two('Tap Start shift', 'Start shift চাপুন'), body: two('When you arrive. The phone checks you are at the production house, so allow location if asked.', 'পৌঁছেই চাপুন। ফোন দেখে নেয় আপনি প্রোডাকশন হাউসে আছেন কিনা, তাই লোকেশন চাইলে Allow দিন।') },
       { id: 'on', find: tour('shift'), title: two('You are on shift', 'শিফট চলছে'), body: two('The start time is your attendance. Late by more than 10 minutes counts against your KPI.', 'শুরুর সময়টাই আপনার হাজিরা। ১০ মিনিটের বেশি দেরি হলে KPI-তে কাটে।') },
-      { id: 'end', find: button('End shift'), title: two('End shift when you leave', 'যাওয়ার সময় End shift'), body: two('After today\'s production is sent. Forgetting it leaves your day open.', 'আজকের প্রোডাকশন পাঠানোর পর। ভুলে গেলে দিনটা খোলা থেকে যায়।') },
+      { id: 'end', find: button('End shift'), title: two('End shift when you leave', 'যাওয়ার সময় End shift'), body: two('After the day is closed. Start and End shift fill your timesheet by themselves; forgetting End shift leaves your day open.', 'দিন বন্ধ করার পর। Start আর End shift থেকেই টাইমশিট নিজে ভরে যায়; End shift ভুলে গেলে দিনটা খোলা থেকে যায়।') },
     ],
   },
   {
@@ -251,11 +269,11 @@ const PRODUCTION_INCHARGE: Chapter[] = [
       { id: 'pack', find: button('Start packing', sheet), act: 'tap', title: two('Tap Start packing', 'Start packing চাপুন'), body: two('When you start filling the bags.', 'ব্যাগ ভরা শুরু করলে।') },
       { id: 'packed', find: button('Mark packed', sheet), act: 'tap', title: two('Tap Mark packed', 'Mark packed চাপুন'), body: two('Every bag packed and labelled.', 'সব ব্যাগ প্যাক করে লেবেল লাগানো হয়ে গেলে।') },
       { id: 'ship', find: button('Ship', { ...sheet, exact: true }), act: 'tap', title: two('Tap Ship', 'Ship চাপুন'), body: two('You check what is really going, bag by bag.', 'ব্যাগ ধরে ধরে কী যাচ্ছে মিলিয়ে নিন।') },
-      { id: 'less', find: button('Less Veg', sheet), act: 'tap', title: two('Short of something?', 'কিছু কম?'), body: two('Say only 4 bags of Veg are ready: tap − once.', 'ধরুন Veg মাত্র ৪ ব্যাগ তৈরি: একবার − চাপুন।') },
+      { id: 'less', find: button('Less Veg', sheet), act: 'tap', title: two('Short of something?', 'কিছু কম?'), body: two('Say only 1 bag of Veg is ready: tap − once.', 'ধরুন Veg মাত্র ১ ব্যাগ তৈরি: একবার − চাপুন।') },
       { id: 'why', find: field('Why is it different?', sheet), act: 'do', ready: filled('Why is it different?', sheet), title: two('Write why', 'কারণ লিখুন'), body: two('Anything different needs a reason, e.g. Not enough in stock. The store sees it.', 'আলাদা হলে কারণ লাগে, যেমন Not enough in stock। দোকান দেখতে পায়।') },
       { id: 'checked', find: button('I am sending these', sheet), act: 'tap', title: two('You checked it', 'মিলিয়ে নিয়েছেন'), body: two('Tick: I am sending these and have checked the quantities.', 'টিক দিন: যা পাঠাচ্ছি মিলিয়ে নিয়েছি।') },
       { id: 'send', find: button('Ship', { ...sheet, exact: true }), act: 'tap', title: two('Ship it', 'পাঠিয়ে দিন'), body: two('Tap Ship.', 'Ship চাপুন।') },
-      { id: 'way', find: text('20 short', sheet), title: two('On the way', 'রওনা হয়ে গেল'), body: two('The store sees Veg 20 short with your reason. Shipped by 3 PM counts as on time for your KPI.', 'দোকান দেখবে Veg ২০টা কম, আপনার কারণসহ। দুপুর ৩টের মধ্যে পাঠালে KPI-তে সময়মতো ধরা হয়।') },
+      { id: 'way', find: text('50 short', sheet), title: two('On the way', 'রওনা হয়ে গেল'), body: two('The store sees Veg 50 short with your reason. Shipped by 3 PM counts as on time for your KPI.', 'দোকান দেখবে Veg ৫০টা কম, আপনার কারণসহ। দুপুর ৩টের মধ্যে পাঠালে KPI-তে সময়মতো ধরা হয়।') },
     ],
   },
   {
@@ -271,20 +289,82 @@ const PRODUCTION_INCHARGE: Chapter[] = [
       { id: 'track', find: section('In progress'), title: two('Follow the ride', 'রাইড দেখুন'), body: two('Called, on the way, delivered: each step shows here. Fares are paid from Team › Pay.', 'ডাকা হল, রাস্তায়, পৌঁছে গেল: প্রতিটা ধাপ এখানে দেখায়। ভাড়া Team › Pay থেকে দেওয়া হয়।') },
     ],
   },
+  // The production day, in the owner's four steps (31 Oct 2026: "create a learn the app module for
+  // production data entry in utmost detail"). Practice data (stockPreview/mockServer.ts) starts each
+  // chapter at its point of the day: a fresh morning; the morning counted; the day's batches logged.
   {
-    id: 'batches', practice: true, minutes: 2,
-    title: two('Log today\'s production', 'আজকের প্রোডাকশন লেখা'),
-    about: two('Each batch as it is made, then send the day.', 'প্রতিটা ব্যাচ বানানোর সঙ্গে সঙ্গে, তারপর দিনটা পাঠান।'),
+    id: 'prod-morning', practice: true, minutes: 3,
+    title: two('Production day 1: the morning count', 'প্রোডাকশনের দিন ১: সকালের গোনা'),
+    about: two('First thing every morning: count dough, stuffing, batter and sauces before making anything.', 'রোজ সকালে প্রথমে: কিছু বানানোর আগে ডো, পুর, ব্যাটার আর সস গোনা।'),
     steps: [
-      { id: 'plan', go: 'production/batches', find: text('planned pieces'), title: two('Today\'s plan', 'আজকের প্ল্যান'), body: two('Tomorrow\'s expected sales plus 15%, in bags, for each momo.', 'প্রতিটা মোমোর জন্য কালকের আন্দাজি বিক্রি আর ১৫% বেশি, ব্যাগে।') },
-      { id: 'open', find: button('Stuffing and coating'), act: 'tap', title: two('Log a batch', 'ব্যাচ লিখুন'), body: two('Tap Stuffing and coating each time a batch is made.', 'প্রতিবার ব্যাচ বানালে Stuffing and coating চাপুন।') },
-      { id: 'kg', find: field('Stuffing (kg)'), act: 'do', ready: filled('Stuffing (kg)'), title: two('How much stuffing', 'কত স্টাফিং'), body: two('Pick the momo type above, then type the kg, e.g. 5.', 'ওপরে মোমোর ধরন বেছে kg লিখুন, যেমন 5।') },
-      { id: 'add', find: button('Add to today\'s batches'), act: 'tap', title: two('Tap Add to today\'s batches', 'Add to today\'s batches চাপুন'), body: two('It joins today\'s list with the time.', 'সময়সহ আজকের লিস্টে উঠে যায়।') },
-      { id: 'made', find: field('Chicken · Pieces made'), act: 'do', ready: filled('Chicken · Pieces made'), title: two('Pieces made', 'কত পিস হল'), body: two('Type the pieces made, e.g. 250 Chicken. Keep it up to date through the day.', 'কত পিস হল লিখুন, যেমন চিকেন 250। সারাদিন আপডেট রাখুন।') },
-      { id: 'left', find: button('Leftover count'), title: two('At the end of the day', 'দিনের শেষে'), body: two('Count what is left. It becomes tomorrow\'s opening stock. Wastage goes under Other wastage.', 'কী বাকি গুনে লিখুন। সেটাই কালকের শুরুর স্টক। নষ্ট হলে Other wastage-এ লিখুন।') },
-      { id: 'send', find: button('Send today\'s production'), act: 'tap', title: two('Tap Send today\'s production', 'Send today\'s production চাপুন'), body: two('Once a day, when production is done.', 'দিনে একবার, প্রোডাকশন শেষ হলে।') },
-      { id: 'final', find: button('Send today\'s production', sheet), act: 'tap', title: two('Check and send', 'মিলিয়ে পাঠান'), body: two('Pieces made against the plan. Tap Send today\'s production.', 'প্ল্যানের সঙ্গে কত পিস হল মিলিয়ে Send today\'s production চাপুন।') },
-      { id: 'done', title: two('Sent for approval', 'মঞ্জুরির জন্য পাঠানো হল'), body: two('Operations approves it. Logging production every day is 15 points of your KPI.', 'অপারেশনস মঞ্জুর করে। রোজ প্রোডাকশন লেখা আপনার KPI-র ১৫ পয়েন্ট।') },
+      { id: 'intro', title: two('The day in four steps', 'চার ধাপে দিন'), body: two('Every day, the same order: 1. count in the morning, 2. log each batch as you make it, 3. at night, the momos and sauces made, 4. count what is left and close the day. This chapter is step 1.', 'রোজ একই নিয়মে: ১. সকালে গোনা, ২. যখনই ব্যাচ বানাবেন তখনই লেখা, ৩. রাতে কত মোমো আর সস হল, ৪. কী বাকি গুনে দিন বন্ধ। এই অধ্যায়ে ১ নম্বর ধাপ।') },
+      { id: 'plan', go: 'production/batches', find: text('planned pieces'), title: two('Today\'s plan', 'আজকের প্ল্যান'), body: two('The momos the stores need: what they asked for tomorrow, or what their freezers will run short of. Bunny plans your batches from this.', 'দোকানগুলোর যত মোমো লাগবে: কালকের জন্য যা চেয়েছে, নইলে ওদের ফ্রিজারে যা কম পড়বে। বানি এটা দেখেই আপনার ব্যাচের হিসেব করে।') },
+      { id: 'day', find: text(k('kd.title')), title: two('Production day', 'প্রোডাকশনের দিন'), body: two('Under the plan are the four steps, top to bottom. Work down them through the day; each gets a tick when it is done.', 'প্ল্যানের নিচে চারটে ধাপ, ওপর থেকে নিচে। সারাদিন এক এক করে নামুন; হয়ে গেলে প্রতিটায় টিক পড়ে।') },
+      { id: 'bunny', find: text(k('kd.bunny')), title: two('Bunny', 'বানি'), body: two('Before the count, Bunny only asks you to count. Once you have, it says how much of each thing to make today.', 'গোনার আগে বানি শুধু গুনতে বলে। গোনা হলে বলে দেয় আজ কোনটা কতটা বানাতে হবে।') },
+      { id: 'step1', find: inStep(STEP1), title: two('Step 1: Morning count', '১ নম্বর ধাপ: সকালের গোনা'), body: two('First thing, before anything new is made. Everything in the kitchen: dough, cheese corn dough, each stuffing, batter, the kurkure coating and every sauce.', 'সকালে প্রথমে, নতুন কিছু বানানোর আগে। রান্নাঘরে যা আছে সব: ডো, চিজ কর্ন ডো, প্রতিটা পুর, ব্যাটার, কুড়কুড়ে কোটিং আর সব সস।') },
+      { id: 'last-night', find: text('Counted last night', { within: STEP1 }), title: two('Last night\'s count is filled in', 'কাল রাতের গোনা বসানো আছে'), body: two('Last night\'s figure is already in the box. Look at the real thing: if it is the same, leave it; if not, type the right figure.', 'কাল রাতের সংখ্যা ঘরে বসানোই আছে। আসল জিনিসটা দেখুন: এক থাকলে রেখে দিন; না হলে ঠিক সংখ্যা লিখুন।') },
+      { id: 'stale', find: text('Last counted', { within: STEP1 }), optional: true, wait: 1500, title: two('Orange: count it now', 'কমলা লেখা: এখনই গুনুন'), body: two('Orange writing means it was last counted days ago, or never. Weigh it now; don\'t guess and don\'t copy an old figure.', 'কমলা লেখা মানে শেষ গোনা অনেকদিন আগে, বা কখনও হয়নি। এখনই ওজন করুন; আন্দাজ করবেন না, পুরনো সংখ্যা বসাবেন না।') },
+      { id: 'weigh', find: field('Cheese corn stuffing', { within: STEP1 }), act: 'do', ready: filled('Cheese corn stuffing', { within: STEP1 }), title: two('Type what the scale shows', 'দাঁড়িপাল্লায় যা দেখায় লিখুন'), body: two('Cheese corn stuffing: type the kilos, e.g. 2.4. Kilos, not grams: 2 kg 400 g is 2.4, never 2400.', 'চিজ কর্ন পুর: কেজি লিখুন, যেমন 2.4। কেজিতে, গ্রামে নয়: ২ কেজি ৪০০ গ্রাম মানে 2.4, কখনও 2400 নয়।') },
+      { id: 'none', find: noneForEmpty(STEP1), act: 'tap', title: two('None', 'নেই'), body: two('Nothing of it in the kitchen? Tap None: it puts 0. Never leave a box empty: empty means "not counted".', 'রান্নাঘরে একটুও নেই? "নেই" চাপুন: 0 বসে যায়। কোনো ঘর খালি রাখবেন না: খালি মানে "গোনা হয়নি"।') },
+      { id: 'frozen', find: button('Frozen', { within: STEP1 }), optional: true, wait: 1500, title: two('Stuffing: frozen or thawed?', 'পুর: জমানো না গলানো?'), body: two('For stuffing that is there: frozen takes about 4½ hours to thaw, so Bunny plans fresh stuffing for the first hours. Thawed in the fridge overnight is ready now.', 'যে পুর আছে: জমানো হলে গলতে প্রায় সাড়ে ৪ ঘণ্টা লাগে, তাই বানি প্রথম কয়েক ঘণ্টার জন্য নতুন পুরের হিসেব দেয়। রাতে ফ্রিজে গলানো থাকলে এখনই চলবে।') },
+      { id: 'sauces', find: text(k('stock.prod.sauces'), { within: STEP1 }), title: two('Sauces too', 'সসও'), body: two('Count every sauce and chutney, in litres (soup premix in kg). A 5 litre tub half full is 2.5.', 'সব সস আর চাটনি গুনুন, লিটারে (স্যুপ প্রিমিক্স কেজিতে)। ৫ লিটারের টাব অর্ধেক ভরা মানে 2.5।') },
+      { id: 'sauce', find: field('Spicy Red Chutney', { within: STEP1 }), act: 'do', ready: filled('Spicy Red Chutney', { within: STEP1 }), title: two('Spicy red chutney', 'স্পাইসি রেড চাটনি'), body: two("How many litres are there? Last night's figure is in: check the tub and change it if it is different.", 'কত লিটার আছে? কাল রাতের সংখ্যা বসানো আছে: টাব দেখে মিলিয়ে নিন, আলাদা হলে বদলান।') },
+      { id: 'rest', find: inStep(STEP1), act: 'do', ready: allFilled(STEP1), title: two('Fill every box', 'সব ঘর ভরুন'), body: two('The rest: a number, or None. The app won\'t save with an empty box, and says which one is missing.', 'বাকিগুলো: সংখ্যা, নয়তো "নেই"। একটা ঘরও খালি থাকলে অ্যাপ সেভ করবে না, কোনটা বাকি তা বলে দেবে।') },
+      { id: 'save', find: button(k('kd.saveWeighIn'), { within: STEP1 }), act: 'tap', title: two('Save the morning count', 'সকালের গোনা সেভ করুন'), body: two('Tap it once every box is filled.', 'সব ঘর ভরা হলে চাপুন।') },
+      { id: 'saved', find: text('Counted by', { within: STEP1 }), wait: 5000, title: two('Saved', 'সেভ হয়ে গেছে'), body: two('Step 1 is ticked, with who counted and when. Only what is there is listed; the rest is under None. A mistake? Tap Count again (until the day is closed).', '১ নম্বর ধাপে টিক, কে কখন গুনল সহ। যা আছে শুধু তার লিস্ট; বাকিগুলো "নেই"-এর মধ্যে। ভুল হলে Count again চাপুন (দিন বন্ধ হওয়ার আগে পর্যন্ত)।') },
+      { id: 'advice', find: text(k('kd.bunny')), title: two('Now Bunny says what to make', 'এবার বানি বলে কী বানাতে হবে'), body: two('From today\'s plan, what is already in the kitchen and how many momos a kilo makes here. Use what is left from yesterday first.', 'আজকের প্ল্যান, রান্নাঘরে যা আছে আর এখানে এক কেজিতে কটা মোমো হয়, সেই হিসেবে। কালকের বাকিটা আগে শেষ করুন।') },
+      { id: 'sums', find: text(k('kd.checkTitle')), title: two('How the day adds up', 'দিনের হিসেব'), body: two('At the bottom: each item\'s morning count. Through the day it adds what you make and takes away what the momos used.', 'একদম নিচে: প্রতিটার সকালের গোনা। সারাদিন যা বানাবেন তা যোগ হয়, মোমোতে যা লাগল তা বাদ যায়।') },
+      { id: 'done', title: two('Step 1 done', '১ নম্বর ধাপ শেষ'), body: two('Do this every morning before making anything. Next chapter: logging each batch.', 'রোজ সকালে কিছু বানানোর আগে এটা করুন। পরের অধ্যায়: প্রতিটা ব্যাচ লেখা।') },
+    ],
+  },
+  {
+    id: 'prod-batches', practice: true, minutes: 3,
+    title: two('Production day 2: log each batch', 'প্রোডাকশনের দিন ২: প্রতিটা ব্যাচ লেখা'),
+    about: two('Each dough, stuffing and batter batch, the moment it is made.', 'প্রতিটা ডো, পুর আর ব্যাটারের ব্যাচ, বানানোর সঙ্গে সঙ্গে।'),
+    steps: [
+      { id: 'step2', go: 'production/batches', find: inStep(STEP2), title: two('Step 2: Batches made', '২ নম্বর ধাপ: ব্যাচ বানানো'), body: two('Every time dough, stuffing, batter or coating is made, log it straight away, not in the evening. The app keeps the time; the owner sees when each was made.', 'যখনই ডো, পুর, ব্যাটার বা কোটিং বানাবেন, সঙ্গে সঙ্গে লিখুন, সন্ধ্যায় একসঙ্গে নয়। অ্যাপ সময়টা রাখে; কোনটা কখন বানানো হল মালিক দেখতে পান।') },
+      { id: 'dough', find: button(['Dough', 'ডো'], { within: STEP2, exact: true }), act: 'tap', title: two('What did you make? Dough', 'কী বানালেন? ডো'), body: two('Tap Dough.', 'ডো চাপুন।') },
+      { id: 'which', find: text(k('kd.whichDough'), { within: STEP2 }), title: two('Which dough?', 'কোন ডো?'), body: two('Main dough is for chicken, veg, paneer and chicken cheese. Cheese corn has its own dough. The app won\'t save until you pick one.', 'সাধারণ ডো চিকেন, ভেজ, পনির আর চিকেন চিজের জন্য। চিজ কর্নের আলাদা ডো। একটা না বাছলে অ্যাপ সেভ করবে না।') },
+      { id: 'main', find: button(k('kd.mainDough'), { within: STEP2 }), act: 'tap', title: two('Main dough', 'সাধারণ ডো'), body: two('Tap Main dough.', 'সাধারণ ডো চাপুন।') },
+      { id: 'kg', find: field('How much', { within: STEP2 }), act: 'do', ready: filled('How much', { within: STEP2 }), title: two('How much', 'কতটা'), body: two('Weigh the whole mix and type the kilos, e.g. 9.', 'পুরো মাখা ডো ওজন করে কেজি লিখুন, যেমন 9।') },
+      { id: 'save', find: button(k('kd.logBatch'), { within: STEP2 }), act: 'tap', title: two('Save the batch', 'ব্যাচ সেভ করুন'), body: two('Tap Save the batch.', 'ব্যাচ সেভ করুন চাপুন।') },
+      { id: 'list', find: text(k('stock.prod.todaysBatches'), { within: STEP2 }), wait: 4000, title: two('In today\'s list', 'আজকের লিস্টে উঠল'), body: two('With the time and your name.', 'সময় আর আপনার নামসহ।') },
+      { id: 'stuffing', find: button('Chicken stuffing', { within: STEP2, exact: true }), act: 'tap', title: two('Now chicken stuffing', 'এবার চিকেন পুর'), body: two('Tap Chicken stuffing.', 'চিকেন পুর চাপুন।') },
+      { id: 'left', find: text('left from yesterday', { within: STEP2 }), optional: true, wait: 2000, title: two('Yesterday\'s is still there', 'কালকেরটা এখনও আছে'), body: two('0.8 kg chicken stuffing from yesterday is in the kitchen: use it first. Making more anyway? The app asks why.', 'কালকের ০.৮ কেজি চিকেন পুর রান্নাঘরে আছে: আগে ওটা দিন। তবুও বানালে অ্যাপ কারণ জিজ্ঞেস করে।') },
+      { id: 'kg2', find: field('How much', { within: STEP2 }), act: 'do', ready: filled('How much', { within: STEP2 }), title: two('How much stuffing', 'কতটা পুর'), body: two('Type the kilos, e.g. 9.', 'কেজি লিখুন, যেমন 9।') },
+      { id: 'why', find: text(k('stock.prod.more.why'), { within: STEP2 }), optional: true, wait: 2000, title: two('Why make more now?', 'এখন আরও কেন?'), body: two('Because yesterday\'s is still there. Pick the reason: it goes to operations and the owner straight away.', 'কারণ কালকেরটা এখনও আছে। কারণ বাছুন: সঙ্গে সঙ্গে অপারেশনস আর মালিকের কাছে যায়।') },
+      { id: 'reason', find: button(k('stock.prod.more.notEnough'), { within: STEP2 }), act: 'tap', optional: true, wait: 1500, title: two('Today\'s plan needs more', 'আজকের প্ল্যানে আরও লাগবে'), body: two('Tap it. Someone told you to? Pick that and write who.', 'চাপুন। কেউ বলেছে বলে বানাচ্ছেন? সেটা বেছে নাম লিখুন।') },
+      { id: 'save2', find: button(k('kd.logBatch'), { within: STEP2 }), act: 'tap', title: two('Save the batch', 'ব্যাচ সেভ করুন'), body: two('Tap Save the batch.', 'ব্যাচ সেভ করুন চাপুন।') },
+      { id: 'remove', find: button(k('stock.prod.remove'), { within: STEP2 }), optional: true, wait: 3000, title: two('A mistake?', 'ভুল হলে?'), body: two('Logged the wrong thing or amount? Tap the bin and log it again. Only until the day is closed.', 'ভুল জিনিস বা ভুল পরিমাণ লিখেছেন? বিনে চেপে আবার লিখুন। দিন বন্ধ হওয়ার আগে পর্যন্ত।') },
+      { id: 'sums', find: text(k('kd.checkTitle')), title: two('+ Made fills in', '+ বানানো ভরে যায়'), body: two('The sums now show what you made, and Bunny\'s advice changes: "make about 2 kg more" or "enough made".', 'হিসেবে এখন যা বানালেন তা দেখায়, আর বানির কথা বদলে যায়: "আরও প্রায় ২ কেজি বানান" বা "যথেষ্ট হয়েছে"।') },
+      { id: 'waste', find: text(k('stock.prod.otherWastage')), title: two('Something thrown away?', 'কিছু ফেলে দিতে হল?'), body: two('Dough that didn\'t work, stuffing that fell: log it under Other wastage with the reason. Kilos: 200 g is 0.2.', 'ডো ঠিক হয়নি, পুর পড়ে গেছে: Other wastage-এ কারণসহ লিখুন। কেজিতে: ২০০ গ্রাম মানে 0.2।') },
+      { id: 'done', title: two('Step 2 done', '২ নম্বর ধাপ শেষ'), body: two('Log every batch the moment it is made. Next chapter: the evening.', 'প্রতিটা ব্যাচ বানানোর সঙ্গে সঙ্গে লিখুন। পরের অধ্যায়: সন্ধ্যা।') },
+    ],
+  },
+  {
+    id: 'prod-evening', practice: true, minutes: 3,
+    title: two('Production day 3: momos, sauces and the close', 'প্রোডাকশনের দিন ৩: মোমো, সস আর দিন বন্ধ'),
+    about: two('At night: momos and sauces made, what is left, and Close the day.', 'রাতে: কত মোমো আর সস হল, কী বাকি, আর দিন বন্ধ।'),
+    steps: [
+      { id: 'step3', go: 'production/batches', find: inStep(STEP3), title: two('Step 3: Made today', '৩ নম্বর ধাপ: আজ কী তৈরি হল'), body: two('At the end of the day: how many momos of each type, and the sauces made.', 'দিনের শেষে: কোন মোমো কটা হল, আর কত সস বানানো হল।') },
+      // Before batch codes (until 31 Oct 2026): one box per type.
+      { id: 'pieces', find: field('Chicken · Pieces made', { within: STEP3 }), act: 'do', ready: filled('Chicken · Pieces made', { within: STEP3 }), optional: true, wait: 1500, title: two('Chicken momos', 'চিকেন মোমো'), body: two('Type the pieces made, e.g. 900.', 'কত পিস হল লিখুন, যেমন 900।') },
+      // With batch codes (from 1 Nov 2026): open the type, add its batch, type the pieces.
+      { id: 'type', find: button('Chicken', { within: STEP3 }), act: 'tap', optional: true, wait: 1500, title: two('Tap Chicken', 'Chicken চাপুন'), body: two('Each type opens to its batches.', 'প্রতিটা ধরনে চাপলে তার ব্যাচগুলো খোলে।') },
+      { id: 'batch', find: button('Batch B', { within: STEP3 }), act: 'tap', optional: true, wait: 1500, title: two('Add the batch', 'ব্যাচ যোগ করুন'), body: two('One stuffing mix = one batch. Its code (date-type-batch, e.g. 0111-CHK-B1) is the same as on the tray card and bag label.', 'এক বার মাখা পুর = এক ব্যাচ। কোড (তারিখ-ধরন-ব্যাচ, যেমন 0111-CHK-B1) ট্রে কার্ড আর ব্যাগের লেবেলের মতোই।') },
+      { id: 'batch-pieces', find: field('Pieces in', { within: STEP3 }), act: 'do', ready: filled('Pieces in', { within: STEP3 }), optional: true, wait: 1500, title: two('Pieces from this batch', 'এই ব্যাচে কত পিস'), body: two('Type the pieces, e.g. 900. Folded from yesterday\'s stuffing? Tap From leftover instead.', 'পিস লিখুন, যেমন 900। কালকের পুর দিয়ে মোড়ানো হলে From leftover চাপুন।') },
+      { id: 'sauces', find: text(k('stock.prod.sauces'), { within: STEP3 }), title: two('Sauces made', 'সস বানানো'), body: two('Sauces are finished products: they go here, not in the batches. Litres; soup premix in kg.', 'সস তৈরি জিনিস: এখানে লিখুন, ব্যাচে নয়। লিটারে; স্যুপ প্রিমিক্স কেজিতে।') },
+      { id: 'sauce', find: field('Spicy Red Chutney', { within: STEP3 }), act: 'do', ready: filled('Spicy Red Chutney', { within: STEP3 }), title: two('Spicy red chutney made', 'স্পাইসি রেড চাটনি কত হল'), body: two('Type the litres made today, e.g. 2.', 'আজ কত লিটার হল লিখুন, যেমন 2।') },
+      { id: 'send', find: button(k('stock.prod.send'), { within: STEP3 }), optional: true, wait: 1500, title: two('Send now, or at the close', 'এখন পাঠান, নয়তো দিন বন্ধের সময়'), body: two('You can send it now. If you don\'t, Close the day sends it for you.', 'চাইলে এখনই পাঠান। না পাঠালে দিন বন্ধ করলে নিজে থেকেই চলে যায়।') },
+      { id: 'step4', find: inStep(STEP4), title: two('Step 4: Left tonight', '৪ নম্বর ধাপ: রাতে কী বাকি'), body: two('Weigh what is left of each item, and of every sauce that was there or made today.', 'প্রতিটা জিনিস কতটা বাকি ওজন করুন, আর যে সস ছিল বা আজ বানানো হল সেগুলোও।') },
+      { id: 'should', find: text('Should be about', { within: STEP4 }), title: two('Should be about', 'থাকার কথা'), body: two('Morning + made − what the momos used. Weigh and type the real figure; don\'t copy this. A count far off turns orange.', 'সকাল + বানানো − মোমোতে যা লাগল। ওজন করে আসল সংখ্যা লিখুন; এটা দেখে বসাবেন না। অনেক আলাদা হলে কমলা হয়ে যায়।') },
+      { id: 'count', find: field('Chicken stuffing', { within: STEP4 }), act: 'do', ready: filled('Chicken stuffing', { within: STEP4 }), title: two('Chicken stuffing left', 'চিকেন পুর কত বাকি'), body: two('Weigh it and type the kilos, e.g. 0.2.', 'ওজন করে কেজি লিখুন, যেমন 0.2।') },
+      { id: 'rest', find: inStep(STEP4), act: 'do', ready: allFilled(STEP4), title: two('Count the rest', 'বাকিগুলো গুনুন'), body: two('Every box: a number, or None.', 'প্রতিটা ঘর: সংখ্যা, নয়তো "নেই"।') },
+      { id: 'leftover', find: text('left over - why', { within: STEP4 }), optional: true, wait: 1500, title: two('Stuffing left over?', 'পুর বেঁচে গেছে?'), body: two('Half a kilo or more of stuffing left: tick why, and what you will do with it (fridge, use first, freezer or throw away). The owner sees it.', 'আধ কেজি বা তার বেশি পুর বাকি থাকলে: কেন, আর কী করবেন (ফ্রিজ, আগে ব্যবহার, ফ্রিজার বা ফেলে দেওয়া) টিক দিন। মালিক দেখতে পান।') },
+      { id: 'close', find: button(k('kd.closeDay'), { within: STEP4 }), act: 'tap', title: two('Close the day', 'দিন বন্ধ করুন'), body: two('It sends the momos and sauces for approval, and keeps tonight\'s count as tomorrow morning\'s figures.', 'এতে মোমো আর সস অনুমোদনে যায়, আর আজ রাতের গোনাটাই কাল সকালের সংখ্যা হয়ে থাকে।') },
+      { id: 'closed', find: text(k('stock.prod.dayClosed'), { within: STEP4 }), optional: true, wait: 5000, title: two('Day closed', 'দিন বন্ধ হল'), body: two('Every step is ticked.', 'সব ধাপে টিক পড়ে গেছে।') },
+      { id: 'sums', find: text(k('kd.checkTitle')), title: two('How the day adds up', 'দিনের হিসেব'), body: two('Morning + made − used for the momos = should be left, next to what you counted; orange means check it. Sauces: morning + made − left = what went out to the store. The owner reads this every day.', 'সকাল + বানানো − মোমোতে লাগা = যা থাকার কথা, পাশে আপনার গোনা; কমলা মানে মিলিয়ে দেখুন। সস: সকাল + বানানো − বাকি = দোকানে যা গেল। মালিক রোজ এটা দেখেন।') },
+      { id: 'done', title: two('That\'s the whole day', 'এই হল পুরো দিন'), body: two('Count in the morning, log each batch, then momos and sauces, count what is left and close. Then End shift: your timesheet fills itself.', 'সকালে গোনা, প্রতিটা ব্যাচ লেখা, তারপর মোমো আর সস, বাকি গুনে দিন বন্ধ। তারপর End shift: টাইমশিট নিজে থেকেই ভরে যায়।') },
     ],
   },
   {

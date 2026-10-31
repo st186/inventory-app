@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { getLastRecalibration } from '../../utils/api';
 import { ExplainComplaintSheet, useComplaintsToExplain } from '../complaints/ExplainComplaint';
+import { StockOutExplainSheet, dayWord, useStockOutsToExplain } from '../stock/StockOutExplain';
 import type { Complaint as ComplaintT } from '../complaints/complaintsApi';
 import { useShell } from '../shell/ShellContext';
 import { Callout } from '../ui/callout';
@@ -19,7 +20,7 @@ import { ShiftClockCard } from '../kpi/ShiftClockCard';
 import { useWorkplaceDue } from '../workplace/WorkplaceDueCard';
 import { fmt12 } from '../workplace/workplaceUtils';
 import { useProfileCompletion } from '../ProfileCompletionCard';
-import { planFromForecast, sumForecasts } from '../insights/ProductionPlanCards';
+import { housePlan, loadStorePlanData } from '../../utils/requestPlanLoad';
 import { getAssignedProductionHouseIds, getAssignedStoreIds } from '../../utils/entityAccess';
 import { countedCashInHand, isPlaceholderSale } from '../../utils/paytmRules';
 import type { StockOutEntry } from '../../utils/stockOuts';
@@ -64,20 +65,21 @@ function useTimesheetsWaiting(enabled: boolean, employeeId: string | null) {
 // The month-end momo count (owner, 29 Oct 2026: due on the month's last day; reminders from 6 PM
 // the day before, server send-stock-count-reminders). Shown from 6 PM the day before until it is
 // in; the store's latest count is fetched only on those two days.
-function useMonthEndCount(store: string | null, today: string, now: number, token: string) {
+// `place`: the store, or the production house (owner, 31 Oct 2026: the production house counts too).
+function useMonthEndCount(place: string | null, today: string, now: number, token: string, kind: 'store' | 'production_house' = 'store') {
   const nextMonth = new Date(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) + 32 * 86400000).toISOString().slice(0, 7);
   const last = new Date(Date.parse(`${nextMonth}-01T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
   const eve = new Date(Date.parse(`${last}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
-  const show = !!store && (today === last || (today === eve && now >= 18 * 60));
+  const show = !!place && (today === last || (today === eve && now >= 18 * 60));
   const [countedAt, setCountedAt] = useState<string | null>(null);
   useEffect(() => {
-    if (!show || !store || !token) return;
+    if (!show || !place || !token) return;
     let alive = true;
-    getLastRecalibration(token, store, 'store')
+    getLastRecalibration(token, place, kind)
       .then((r: any) => { if (alive) setCountedAt(typeof r?.lastRecalibration === 'string' ? r.lastRecalibration : null); })
       .catch(() => undefined);
     return () => { alive = false; };
-  }, [show, store, token]);
+  }, [show, place, token, kind]);
   return { show, isLastDay: today === last, last, done: !!countedAt && countedAt >= `${eve}T18:00` };
 }
 
@@ -95,7 +97,7 @@ function InchargeHome() {
   const suppliedStoreIds = useMemo(() => (isProduction ? getAssignedStoreIds(user as any, stores as any) : []), [isProduction, user, stores]);
   const today = clock.today;
   const now = clock.minutes;
-  const monthEnd = useMonthEndCount(store, today, now, token);
+  const monthEnd = useMonthEndCount(isProduction ? houseIds[0] || null : store, today, now, token, isProduction ? 'production_house' : 'store');
 
   const profile = useProfileCompletion(token);
   const focusProfile = useFocusProfile();
@@ -106,9 +108,14 @@ function InchargeHome() {
   const timesheets = useTimesheetsWaiting(nav.perms.isEmployee && nav.perms.isAnyIncharge, user.employeeId);
   const stockOuts = useLoad(store ? () => data.getStockOuts(token, store, today, today) : null, [store, today, token, data]);
   const wastage = useLoad(store ? () => data.getStockWastageEntry(token, store, today) : null, [store, today, token, data]);
+  // Tomorrow's bags for the stores this kitchen supplies (utils/requestPlan.ts, same as the Production page).
   const plan = useLoad(isProduction && suppliedStoreIds.length
-    ? async () => planFromForecast(sumForecasts(await Promise.all(suppliedStoreIds.map((id) => data.getInsightsOverview(token, id)))))
-    : null, [isProduction, suppliedStoreIds.join(','), token, data]);
+    ? async () => {
+      const tomorrow = addDays(today, 1);
+      const list = await loadStorePlanData(token, suppliedStoreIds, { getOverview: data.getInsightsOverview, items: context.inventoryItems });
+      return housePlan(list, tomorrow, tomorrow)[0] || null;
+    }
+    : null, [isProduction, suppliedStoreIds.join(','), token, data, today]);
 
   const requests = context.productionRequests || [];
   const mine = requests.filter((r) => (isProduction ? suppliedStoreIds.includes(r.storeId) : r.storeId === store));
@@ -130,8 +137,20 @@ function InchargeHome() {
   // Customer complaints the owner asked this person to explain (complaints.ts).
   const complaintsToExplain = useComplaintsToExplain(true);
   const [explaining, setExplaining] = useState<ComplaintT | null>(null);
+  // Items switched off on Zomato and Swiggy during the day: the store incharge says why (onlineStock.ts).
+  const stockOutsToExplain = useStockOutsToExplain(nav.perms.isStoreIncharge || nav.perms.isStoreInchargeManager, token);
+  const [stockOutsOpen, setStockOutsOpen] = useState(false);
   const tasks = useMemo(() => {
     const list: ChecklistTask[] = [];
+    if (stockOutsToExplain.waiting.length) {
+      const n = stockOutsToExplain.waiting.length;
+      list.push({
+        key: 'stock-outs-explain', icon: PackageOpen, title: n === 1 ? t('stock.oos.taskOne') : t('stock.oos.taskMany', { n }),
+        meta: `${dayWord(stockOutsToExplain.waiting[0].report.date)} · ${stockOutsToExplain.waiting.slice(0, 3).map((w) => w.item.name).join(', ')}`.slice(0, 90),
+        status: 'late', count: n, due: 0,
+        onOpen: () => setStockOutsOpen(true),
+      });
+    }
     if (complaintsToExplain.items.length) {
       list.push({
         key: 'complaints', icon: MessageSquareWarning, title: complaintsToExplain.items.length === 1 ? 'Explain a customer complaint' : `Explain ${complaintsToExplain.items.length} customer complaints`,
@@ -179,7 +198,7 @@ function InchargeHome() {
         key: 'stock-count', icon: ListChecks, title: t('home.task.stockCount'), due: monthEnd.isLastDay ? 1320 : 1439,
         meta: monthEnd.done ? t('home.task.stockCountDone') : monthEnd.isLastDay ? t('home.task.stockCountToday') : t('home.task.stockCountTomorrow'),
         status: monthEnd.done ? 'done' : monthEnd.isLastDay ? (now >= 20 * 60 ? 'late' : 'due') : 'later',
-        onOpen: () => open('stock/requests'),
+        onOpen: () => open(isProduction ? 'production/requests' : 'stock/requests', { tab: 'count' }),
       });
     }
     if (!isProduction && store) {
@@ -219,8 +238,7 @@ function InchargeHome() {
         count: toPack.length || undefined,
         onOpen: () => open('production/requests'),
       });
-      const tomorrow = plan.data?.[1];
-      const pieces = tomorrow ? Object.values(tomorrow.need).reduce((s, n) => s + n, 0) : 0;
+      const pieces = plan.data ? Object.values(plan.data.need).reduce((s, n) => s + n, 0) : 0;
       if (has('production/batches')) {
         list.push({
           key: 'plan', icon: ClipboardList, title: t('home.task.plan'), due: 660, status: 'none',
@@ -288,7 +306,7 @@ function InchargeHome() {
       list.push({ key: 'profile', icon: IdCard, title: t('home.task.profile'), meta: t('home.task.profileMeta'), due: 1439, status: 'due', onOpen: profile.openSheet });
     }
     return list;
-  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items, monthEnd]);
+  }, [isProduction, store, mine, today, now, t, open, has, plan.data, context.productionData, context.salesData, houseIds, photos, checksPath, wastage.data, timesheets.data, profile.needed, profile.openSheet, expenseFlags.flags, productionFlags.flags, repairs.alerts, extraHours.days, dirtAlerts, reviewPath, complaintsToExplain.items, monthEnd, stockOutsToExplain.waiting]);
 
   // Alerts: what's out of stock now, and the day close the owner hasn't decided on.
   const outNow: StockOutEntry[] = (stockOuts.data || []).filter((e) => !e.endAt);
@@ -371,6 +389,7 @@ function InchargeHome() {
       <RepairAlertsSheet open={repairsOpen} onOpenChange={setRepairsOpen} alerts={repairs.alerts} onChanged={repairs.reload} />
       <ExtraHoursSheet open={extraOpen} onOpenChange={setExtraOpen} days={extraHours.days} onChanged={extraHours.reload} />
       <ExplainComplaintSheet complaint={explaining} onClose={() => setExplaining(null)} onDone={complaintsToExplain.reload} />
+      <StockOutExplainSheet open={stockOutsOpen} onOpenChange={setStockOutsOpen} reports={stockOutsToExplain.reports} accessToken={token} onDone={stockOutsToExplain.reload} />
     </HomePage>
   );
 }

@@ -27,6 +27,7 @@ import {
   dismissAsset, getEquipmentCheck, importPastPurchases, inr, listAssets, locationKey, shortDate, updateAsset,
   type AssetList, type AssetRow, type EquipmentCheck,
 } from './assetsApi';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 // Equipment & assets register (owner, 27 Oct 2026): everything each store and production house
 // has, with what needs checking first. Items bought through expenses appear here by themselves
@@ -79,6 +80,7 @@ export function EquipmentRegister() {
   }, [showRemoved, t]);
 
   useEffect(() => { load(); }, [load]);
+  useRefreshSignal(load);
 
   const perms = data?.permissions;
   const locations = data?.locations || [];
@@ -260,6 +262,7 @@ export function EquipmentRegister() {
                   subtitle={
                     <>
                       <span className="num">{subtitle}</span>
+                      {a.needsReview && a.source.aiWhy && <span className="mt-0.5 block text-text-3">{t('assets.bunnyShort', { why: a.source.aiWhy })}</span>}
                       {a.expenseChanged && (
                         <span className="mt-0.5 block font-medium text-warning">
                           {a.expenseChanged.kind === 'changed' ? t('assets.expenseChanged') : a.expenseChanged.kind === 'deleted' ? t('assets.expenseDeleted') : t('assets.expenseNotEquipment')}

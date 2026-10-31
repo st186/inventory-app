@@ -21,6 +21,7 @@ import { ProductionTab } from './insights/tabs/ProductionTab';
 import { SlaTab } from './insights/tabs/SlaTab';
 import { RecalibrationTab } from './insights/tabs/RecalibrationTab';
 import { TrendsTab } from './insights/tabs/TrendsTab';
+import { RushTab } from './insights/tabs/RushTab';
 import { EventsTab } from './insights/tabs/EventsTab';
 import { PlateSettingsSheet, StockAlertSheet } from './insights/tabs/ProductionSettingsSheets';
 import { SegmentedControl } from './ui/segmented-control';
@@ -55,7 +56,7 @@ export function Analytics(props: AnalyticsProps) {
   );
 }
 
-type View = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends';
+type View = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends' | 'rush';
 type Mode = 'store' | 'production' | 'events';
 
 const TAB_LABEL: Record<View, I18nKey> = {
@@ -65,6 +66,7 @@ const TAB_LABEL: Record<View, I18nKey> = {
   expense: 'insights.tab.costs',
   'unit-economics': 'insights.tab.perPlate',
   trends: 'insights.tab.trends',
+  rush: 'insights.tab.rush',
   'cash-reconciliation': 'insights.tab.cash',
   'production-requests': 'insights.tab.requests',
   production: 'insights.tab.production',
@@ -102,7 +104,7 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
   const mode: Mode = eventsMode && showEvents ? 'events' : analyticsMode;
 
   const storeTabs: View[] = [
-    'overview', 'profit', 'sales', 'expense', 'unit-economics', 'trends',
+    'overview', 'profit', 'sales', 'expense', 'unit-economics', 'trends', 'rush',
     ...(cashInInsights ? (['cash-reconciliation'] as View[]) : []),
     ...(slaInStore ? (['stock-request-analysis'] as View[]) : []),
     ...(showRequestsTab ? (['production-requests'] as View[]) : []),
@@ -238,6 +240,8 @@ const AnalyticsScreen = memo(function AnalyticsScreen({ context, selectedStoreId
             {activeView === 'cash-reconciliation' && <CashTab d={d} />}
             {activeView === 'production' && <ProductionTab d={d} />}
             {activeView === 'trends' && analyticsMode === 'store' && <TrendsTab d={d} />}
+            {/* Rush hours and the steamer plan (owner, 1 Nov 2026; server rushInsights.ts). */}
+            {activeView === 'rush' && analyticsMode === 'store' && <RushTab d={d} />}
             {activeView === 'stock-request-analysis' && <SlaTab d={d} />}
             {activeView === 'recalibration-reports' && <RecalibrationTab d={d} />}
             {activeView === 'production-requests' && (

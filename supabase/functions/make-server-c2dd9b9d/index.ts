@@ -7,15 +7,20 @@ import * as kv from './kv_store.tsx';
 import inventoryItemsRoutes from './inventory-items.tsx';
 import { classifyAndSumProductsByChannel, classifyAndSumProductsByItemAndChannel, classifyOrderItems, classifyProductBreakdown } from './posItemClassifier.tsx';
 import { MOMO_TYPES as PRODUCTION_MOMO_TYPES, GLOBAL_POOLS } from './momoTypes.ts';
-import { AiError, aiProductionCoach, registerInsightsRoutes } from './insights.ts';
-import { recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
+import { AiError, aiProductionCoach, askBunnyInChat, askClaudeForJson, registerInsightsRoutes } from './insights.ts';
+import { CATEGORY_CHOICES, catLabel, recheckAmount, closeFlagsOf, registerExpenseReviewRoutes, reviewExpense, settleApproval, type ExpenseReviewDeps } from './expenseReview.ts';
 import { registerPaperworkRoutes } from './expensePaperwork.ts';
 import { registerSiteAuditRoutes } from './siteAudits.ts';
 import { flagLedgerDay, registerProductionReviewRoutes, reviewProduction } from './productionReview.ts';
 import { LEFTOVER_PLANS, OVER_PREPARED_CAUSES, checkNewReason, cleanWithLeftover, leftoverLines, piecesPerKg, poolLabel, reasonsText, uncountedPools, withLeftoverLines } from './leftoverRules.ts';
+import { checkBurgers, isBurgerPurchase, salesByDay } from './burgerCheck.ts';
+import { BUILT_IN, homeElsewhere, homeLabel, itemHomes, settleCategory } from './itemHome.ts';
+import { roundupFor } from './roundup.ts';
+import { RUNNING_HOMES, decideName, itemLike, loadAliases, reviewNewName, settleName, type EntryType, type NameReviewDeps } from './itemNameReview.ts';
+import { matchName, nameKey, type KnownItem } from './itemNames.ts';
 import { raiseRepairAlert, registerRepairRoutes } from './repairs.ts';
 import { registerComplaintRoutes } from './complaints.ts';
-import { BENGALI_TITLE, BUNDLE_MINUTES, DEFAULT_PREFS, bundles, inQuietHours, notificationCategory } from './notificationRules.ts';
+import { BENGALI_TITLE, BUNDLE_MINUTES, DAILY_BUZZ_CAP, DEFAULT_PREFS, bundles, escalates, inQuietHours, loudness, notificationCategory, oneADay, oneRowPerRecord, ownerBuzzes } from './notificationRules.ts';
 import { DEFAULT_GRACE_MIN, DEFAULT_SHIFTS, lateStartIssues, parseHHMM } from './kpiCore.ts';
 import { registerProfileRoutes } from './profile.ts';
 import { registerPasswordRoutes, passwordGate, warmPasswordPolicy } from './passwords.ts';
@@ -25,6 +30,7 @@ import { CHECKS_FROM, CHECK_MONTHS } from './assetRules.ts';
 import { registerWorkplaceRoutes, markCheckOk } from './workplace.ts';
 import { registerBackupRoutes } from './backup.ts';
 import { registerKpiRoutes } from './kpi.ts';
+import { syncTimesheet } from './attendance.ts';
 import { idempotencyMiddleware } from './idempotency.ts';
 import { registerBootstrapRoutes } from './bootstrap.ts';
 import {
@@ -32,6 +38,12 @@ import {
   registerEventsRoutes, runEventPosSync, withoutEventRollups, type EventsDeps,
 } from './events.ts';
 import { registerRecipeRoutes } from './recipes.ts';
+import * as stockCheck from './stockCheck.ts';
+import * as liveOrders from './liveOrders.ts';
+import * as onlineStock from './onlineStock.ts';
+import * as rush from './rushInsights.ts';
+import { registerChatRoutes } from './chat.ts';
+import * as gdrive from './gdrive.ts';
 
 // ---- Trusted roles (security review, 27 Oct 2026) ----
 // A person's role, designation, store and employee id are trusted only from app_metadata, which
@@ -256,6 +268,13 @@ function getCiferonOrderEntryDateIST(order: any): string | null {
   return m ? m[1] : null;
 }
 
+// Minutes since midnight India time of an order's EntryDate ("2026-07-28T16:40:15" -> 1000), for the
+// rush-hours page (rushInsights.ts); null when there is no time in it.
+function getCiferonOrderEntryMinIST(order: any): number | null {
+  const m = String(order?.EntryDate || '').trim().match(/^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
 function getCiferonOrderHourIST(order: any): number | null {
   // EntryDate is OrderReport/Sale's real per-order timestamp field (confirmed against a
   // live sample response, e.g. "2026-07-28T16:40:15" - see
@@ -397,7 +416,8 @@ const ROLE_GATES: { test: RegExp; methods?: string[]; roles: string[]; alsoDesig
 const PUSH_SELF_ROUTES = /^\/push\/(subscribe|unsubscribe|subscribe-fcm|unsubscribe-fcm)$/;
 // Security review, 28 Oct 2026:
 // - The cron secret opens only the scheduled-job routes (it used to skip every check on every route).
-const CRON_ROUTES = /^\/(cron\/|send-|pos-sync$|production\/auto-approve-stale$|timesheets\/auto-approve-stale$|notifications\/auto-cleanup$|app-updates\/cleanup$|admin\/recompute-(paytm-balance|production-cash)$|workplace\/summary$)/;
+// chat/notify is called by the database after each message, chat/sync by the server (chat.ts).
+const CRON_ROUTES = /^\/(cron\/|send-|pos-sync$|chat\/(notify|sync)$|production\/auto-approve-stale$|timesheets\/auto-approve-stale$|notifications\/auto-cleanup$|app-updates\/cleanup$|admin\/recompute-(paytm-balance|production-cash)$|workplace\/summary$)/;
 // - The read-only auditor role writes nothing of the business (site auditors post to their audits).
 const AUDIT_WRITES = /^\/(notifications|push|auth|me|site-audits|insights)(\/|$)/;
 // - Timesheets, leave and salary advances name their person in the body: staff file only their own.
@@ -1184,6 +1204,13 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
 
     const item = await c.req.json();
     console.log('💾 [INVENTORY POST] Item data received:', { date: item.date, itemName: item.itemName, amount: item.amount });
+    // One item, one name (itemNameReview.ts): a known item typed another way is saved under its name.
+    const known = await knownNames();
+    const named = settleName(item.itemName, 'inventory', item.category, known.items, known.aliases);
+    if (named.typedAs) Object.assign(item, { itemName: named.name, typedAs: named.typedAs });
+    // One item, one category (itemHome.ts): a known item goes under its own, whatever the form sent.
+    const settled = settleCategory(item.itemName, item.category, await loadItemHomes());
+    if (settled.moved) console.log(`[INVENTORY POST] ${item.itemName} sent under ${item.category}: saved under ${settled.category}, its own category`);
     
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `inventory:${userId}:${itemId}`;
@@ -1226,6 +1253,7 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
 
     const inventoryItem = {
       ...item,
+      category: settled.category,
       id: itemId,
       userId,
       storeId: resolvedStoreId,
@@ -1247,6 +1275,8 @@ app.post('/make-server-c2dd9b9d/inventory', async (c) => {
     await cascadeProductionCashForExpense(inventoryItem);
     // Checked for slips, odd categories and repeat buys, after the response (expenseReview.ts).
     await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'inventory', key, inventoryItem, userName || userEmail, role));
+    // A name the app doesn't know: Bunny reads it, else it waits for the owner (itemNameReview.ts).
+    if (!named.typedAs) await afterResponse('Item name check', () => reviewNewName(nameReviewDeps, { key, type: 'inventory', row: inventoryItem, by: userName || userEmail, byOwner: role === 'cluster_head' }));
 
     // Notify the production incharge (bill paid from production cash) and cluster heads about
     // the inventory data entry - after the response (afterResponse).
@@ -1325,6 +1355,8 @@ app.put('/make-server-c2dd9b9d/inventory/:id', async (c) => {
       id: itemId,
       userId: ownerId
     });
+    const settled = settleCategory(inventoryItem.itemName, inventoryItem.category, await loadItemHomes());
+    if (settled.moved) inventoryItem.category = settled.category;
     inventoryItem.paidFromProductionHouseId = resolvePaidFromProductionHouseId(inventoryItem, role, existing);
 
     await kvWithRetry.set(key, inventoryItem);
@@ -1438,7 +1470,14 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       return c.json({ error: 'Only the cluster head can write off a loss.' }, 403);
     }
     console.log('💰 Expense/Overhead item data received:', JSON.stringify(item, null, 2));
-    
+    // One item, one name and one category (itemNameReview.ts) - never into a category this person
+    // couldn't pick (fuel, write-offs) or one closed for the date (meals from November).
+    const known = await knownNames();
+    const named = settleName(item.description, 'overhead', item.category, known.items, known.aliases);
+    if (named.typedAs) Object.assign(item, { description: named.name, typedAs: named.typedAs });
+    const ownerOnly = ['fuel', 'losses_writeoffs', 'ai_credits'].includes(named.category) && role !== 'cluster_head';
+    if (named.category !== item.category && !ownerOnly && !mealsStopped(named.category, item?.date)) item.category = named.category;
+
     const itemId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = `overhead:${userId}:${itemId}`;
 
@@ -1487,6 +1526,7 @@ app.post('/make-server-c2dd9b9d/overheads', async (c) => {
       await afterResponse('Store bill notification', () => notifyStoreBillPaidFromProductionCash(overheadItem, authResult.user.user_metadata?.name || authResult.user.email));
     }
     await afterResponse('Expense review', () => reviewExpense(expenseReviewDeps, 'overhead', key, overheadItem, authResult.user.user_metadata?.name || authResult.user.email, role));
+    if (!named.typedAs) await afterResponse('Item name check', () => reviewNewName(nameReviewDeps, { key, type: 'overhead', row: overheadItem, by: authResult.user.user_metadata?.name || authResult.user.email, byOwner: role === 'cluster_head' }));
 
     return c.json({ success: true, item: overheadItem });
   } catch (error) {
@@ -3070,6 +3110,8 @@ const expenseReviewDeps: ExpenseReviewDeps = {
   rows: (prefix, range) => getAllByPrefixWithRetry(prefix, range),
   verifyUser,
   notifyUser: (authUserId, type, title, message, relatedId, relatedDate, quickAction) => notifyUser(authUserId, type, title, message, relatedId, relatedDate, quickAction),
+  // Bill photos are read and checked against the entry (billCheck.ts).
+  storage: supabase.storage,
 };
 
 // From 1 November 2026 staff food is Rs 500 a month in salary (owner, 28 Oct): meals are no longer
@@ -5656,6 +5698,12 @@ const ALL_POOL_IDS: string[] = [
   ...PRODUCTION_MOMO_TYPES.map((t) => `${t.globalPoolField}:${t.inventoryKey}`),
 ];
 
+// Sauces are counted with the kitchen stock in the morning and at night (owner, 31 Oct 2026: "morning
+// stock count for dough, sauces or batter ... and what is left in dough and stuffing and batter or
+// sauces"). Litres, soup premix kg. Not pools: what's made comes from the day's production entry,
+// so a closed day keeps them apart as sauceLeft.
+const SAUCE_IDS: string[] = ['panfriedSauce', 'chilliChickenSauce', 'spicyKoreanSauce', 'hotGarlicSauce', 'tandooriSauce', 'soupPremix', 'greenMayoChutney', 'spicyRedChutney'].map((k) => `sauce:${k}`);
+
 function emptyPoolState() {
   return { opening: 0, prepared: 0, closingActual: null as number | null, wastage: null as number | null, wastageOverride: null as number | null };
 }
@@ -5667,6 +5715,12 @@ function emptyPoolState() {
 // globalPoolQty means "dedicated dough/batter for JUST this type" (only present when the
 // "Unique dough for this?" toggle was used) and routes to that type's own pool instead of
 // the shared one; perTypePoolQty (stuffing/coating) always accumulates within its own type.
+// Only cheese corn has a dough of its own (owner, 31 Oct 2026: "corn cheese dough is different from
+// the rest"). From 30 Oct any other type's "own" dough or batter is the shared one (30 Oct's 9 kg
+// went under chicken by a tick-box; the app no longer offers it).
+const OWN_DOUGH_TYPES = new Set(['cheeseCorn']);
+const OWN_DOUGH_ONLY_FROM = '2026-10-30';
+
 function aggregatePreparedByPool(items: any[]): Record<string, number> {
   const prepared: Record<string, number> = {};
   for (const id of ALL_POOL_IDS) prepared[id] = 0;
@@ -5676,8 +5730,9 @@ function aggregatePreparedByPool(items: any[]): Record<string, number> {
     const momoType = PRODUCTION_MOMO_TYPES.find((t) => t.key === item.momoKey);
     if (!momoType) continue;
     if (item.globalPoolQty) {
-      const uniqueGlobalPoolId = `${momoType.globalPoolField}:${momoType.inventoryKey}`;
-      prepared[uniqueGlobalPoolId] += item.globalPoolQty;
+      const shared = String(item.date || '') >= OWN_DOUGH_ONLY_FROM && !OWN_DOUGH_TYPES.has(momoType.inventoryKey);
+      const poolId = shared ? momoType.globalPoolField : `${momoType.globalPoolField}:${momoType.inventoryKey}`;
+      prepared[poolId] += item.globalPoolQty;
     }
     const perTypePoolId = `${momoType.perTypePoolField}:${momoType.inventoryKey}`;
     prepared[perTypePoolId] += item.perTypePoolQty || 0;
@@ -5720,6 +5775,7 @@ function lastCountedBefore(houseRecords: any[], mornings: Record<string, any>, d
   for (const r of houseRecords) {
     if (r.date >= date) continue;
     for (const id of ALL_POOL_IDS) if (typeof r.pools?.[id]?.closingActual === 'number') seen(id, r.date, r.pools[id].closingActual, 'night');
+    for (const [id, left] of Object.entries(r.sauceLeft || {})) if (typeof left === 'number') seen(id, r.date, left, 'night');
   }
   for (const [d, m] of Object.entries(mornings)) {
     if (d >= date) continue;
@@ -6266,7 +6322,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/morning', async 
     if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
     const body = await c.req.json().catch(() => ({}));
     const counts: Record<string, number> = {};
-    for (const id of ALL_POOL_IDS) {
+    for (const id of [...ALL_POOL_IDS, ...SAUCE_IDS]) {
       const v = Number(body?.counts?.[id]);
       if (body?.counts?.[id] !== undefined && body?.counts?.[id] !== null && Number.isFinite(v) && v >= 0) counts[id] = Math.round(v * 1000) / 1000;
     }
@@ -6430,12 +6486,19 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     if (date < PRODUCTION_LEDGER_GO_LIVE_DATE) {
       return c.json({ error: `Production ledger tracking starts ${PRODUCTION_LEDGER_GO_LIVE_DATE}` }, 400);
     }
-    const { closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport: rawLeftover } = await c.req.json();
+    const { closingActuals, manualOpeningOverride, wastageOverrides, leftoverReport: rawLeftover, sauceLeft: rawSauceLeft } = await c.req.json();
     if (!closingActuals || typeof closingActuals !== 'object') {
       return c.json({ error: 'closingActuals (per pool) is required' }, 400);
     }
+    // Sauces left (app 1.21+): litres, soup premix kg.
+    const sauceLeft: Record<string, number> = {};
+    for (const id of SAUCE_IDS) {
+      const v = Number(rawSauceLeft?.[id]);
+      if (rawSauceLeft?.[id] !== undefined && rawSauceLeft?.[id] !== null && Number.isFinite(v) && v >= 0) sauceLeft[id] = Math.round(v * 1000) / 1000;
+    }
     const gramsError = ledgerGramsError([
       ...Object.values(closingActuals),
+      ...Object.values(sauceLeft),
       ...Object.values(wastageOverrides && typeof wastageOverrides === 'object' ? wastageOverrides : {}),
       ...Object.values(manualOpeningOverride && typeof manualOpeningOverride === 'object' ? manualOpeningOverride : {}),
     ]);
@@ -6509,6 +6572,7 @@ app.put('/make-server-c2dd9b9d/production-ledger/:houseId/:date/close', async (c
     const record = {
       id: existing?.id || `${productionHouseId}-${date}`,
       productionHouseId, date, pools,
+      ...(Object.keys(sauceLeft).length || existing?.sauceLeft ? { sauceLeft: { ...(existing?.sauceLeft || {}), ...sauceLeft } } : {}),
       ...(leftoverReport ? { leftoverReport } : {}),
       closed: true,
       closedBy: submittedBy, closedByName: submittedByName, closedByUserId: authResult.user.id,
@@ -6586,6 +6650,8 @@ app.post('/make-server-c2dd9b9d/production-wastage-notes', async (c) => {
     if (!productionHouseId || !date || !description || typeof quantity !== 'number' || !unit) {
       return c.json({ error: 'productionHouseId, date, description, quantity, and unit are required' }, 400);
     }
+    // 30 Oct 2026: "200 kg" of dough thrown away was 200 g.
+    if ((unit === 'kg' || unit === 'L') && quantity > LEDGER_MAX_KG) return c.json({ error: ledgerGramsError([quantity]) }, 400);
     const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const loggedBy = authResult.user.user_metadata?.employeeId || authResult.user.email;
     const loggedByName = authResult.user.user_metadata?.name || authResult.user.email;
@@ -6901,12 +6967,75 @@ app.get('/make-server-c2dd9b9d/utilities-consumption', async (c) => {
       unattributedOrders,
       beverageConsumption,
       movedToEvents: toEvents,
+      burgers: await burgerCheckFor(records, storeId || undefined, startDate, endDate || getTodayIST()),
     });
   } catch (error) {
     console.log('Error computing utilities consumption:', error);
     return c.json({ error: 'Failed to compute utilities consumption' }, 500);
   }
 });
+
+// Burger buns bought (logged "Burger" purchases) against burgers sold (POS orders) over the same
+// days, and what doesn't add up - burgerCheck.ts (owner, 30 Oct 2026). A purchase with no store on
+// it (the early ones were logged against the production house) counts for every store: only Bunny
+// Momos 1 sells burgers.
+async function burgerCheckFor(records: any[], storeId: string | undefined, since: string, today: string) {
+  const settings = await kv.get('burger-settings').catch(() => null);
+  const purchases = (await getAllByPrefixWithRetry('inventory:'))
+    .filter((i: any) => isBurgerPurchase(i) && (!storeId || !i.storeId || i.storeId === storeId))
+    .map((i: any) => ({ date: String(i.date || '').slice(0, 10), quantity: Number(i.quantity) || 0, category: i.category, unit: i.unit }));
+  // Days with enough orders synced to trust a day with no burgers (21 Oct 2026 came through with one).
+  const posDays = records.filter((r: any) => (r.orders || []).length >= 15).map((r: any) => r.date);
+  return checkBurgers({ purchases, sales: salesByDay(records), since, today, bunsPerUnit: Number(settings?.bunsPerUnit) || null, posDays });
+}
+
+// PUT /burger-settings {bunsPerUnit} - how many buns one logged "Burger" (a packet) holds. Owner or
+// operations managers. Until it's set the burger alerts stay off: every count would be off by it.
+app.put('/make-server-c2dd9b9d/burger-settings', async (c) => {
+  const authResult = await verifyUser(c.req.header('Authorization'));
+  if ('error' in authResult) return c.json({ error: authResult.error }, authResult.status);
+  const role = authResult.user.user_metadata?.role;
+  const designation = authResult.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (role !== 'cluster_head' && !isOperationsManager) return c.json({ error: 'Only the owner or an operations manager sets this' }, 403);
+  const body = await c.req.json().catch(() => ({}));
+  const n = Number(body?.bunsPerUnit);
+  if (!Number.isInteger(n) || n < 1 || n > 24) return c.json({ error: 'How many buns are in one packet? 1 to 24' }, 400);
+  const settings = { bunsPerUnit: n, setBy: authResult.user.user_metadata?.name || authResult.user.email, setAt: new Date().toISOString() };
+  await kv.set('burger-settings', settings);
+  return c.json({ settings });
+});
+
+// After the nightly POS sync: the last 30 days' burger check for the burger store(s); anything that
+// doesn't add up goes to the owner, operations managers and store incharges, once a week per kind.
+async function sendBurgerAlerts(): Promise<number> {
+  const today = getTodayIST();
+  const since = new Date(Date.parse(`${today}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
+  const records = ((await kv.getByPrefix('order-item-detail:')) || []).filter((r: any) => r.date >= since && r.date <= today);
+  const check = await burgerCheckFor(records, undefined, since, today);
+  if (!check.anomalies.length) return 0;
+  const monday = new Date(Date.parse(`${today}T00:00:00Z`) - (((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7) * 86400000)).toISOString().slice(0, 10);
+  const people = new Map<string, any>();
+  const employees = await kv.getByPrefix('unified-employee:');
+  for (const p of [...(await getAllClusterHeads()), ...(await getOperationsManagers()), ...employees.filter((e: any) => e.designation === 'store_incharge' && e.status !== 'inactive')]) {
+    if (p?.authUserId) people.set(p.authUserId, p);
+  }
+  let sent = 0;
+  for (const a of check.anomalies) {
+    const key = `burger-alert:${a.kind}:${a.kind === 'odd-entry' ? a.date : monday}`;
+    if (await kv.get(key)) continue;
+    const title = a.kind === 'sold-more' ? 'Burgers: more sold than buns bought' : a.kind === 'bought-more' ? 'Buns going stale'
+      : a.kind === 'none-sold' ? 'Burgers: none sold for 2 days' : 'Burgers: check a bun purchase';
+    const why = a.kind === 'sold-more' ? ' Buns bought and not logged, or the count is off.' : a.kind === 'bought-more' ? ' Bought too many, or burgers made and not billed.'
+      : a.kind === 'none-sold' ? ' Out of buns, or burgers and meals switched off in Ciferon? If they are being sold, they are not being billed.' : '';
+    for (const p of people.values()) {
+      await notifyUser(p.authUserId, 'burger_check', `🍔 ${title}`, `${a.text}.${why} Stock on hand › Boxes.`, undefined, today).catch(() => undefined);
+    }
+    await kv.set(key, { at: new Date().toISOString(), ...a });
+    sent++;
+  }
+  return sent;
+}
 
 app.delete('/make-server-c2dd9b9d/aggregator-settlements/:id', async (c) => {
   const authResult = await verifyUser(c.req.header('Authorization'));
@@ -7535,6 +7664,31 @@ app.get('/make-server-c2dd9b9d/timesheets/:employeeId', async (c) => {
   }
 });
 
+// "Timesheet Approval Needed" to the person's own approver - their incharge or manager (see
+// approversFor); cluster heads only for someone with neither on file.
+async function notifyTimesheetApprovers(savedTimesheet: any) {
+  // attendance-employee: is an empty/legacy collection - real employee records
+  // (with the actual name and authUserId) live under unified-employee:.
+  const employee = await kv.get(`unified-employee:${savedTimesheet.employeeId}`);
+  const employeeName = employee?.name || savedTimesheet.employeeId;
+  const recipients = await approversFor(employee);
+  const timeSummary = formatTimesheetSummary(savedTimesheet);
+  const fromPunch = savedTimesheet.source === 'punch' ? ' (from check-in and check-out away from the workplace)' : '';
+  for (const recipient of recipients) {
+    if (recipient.authUserId) {
+      await notifyUser(
+        recipient.authUserId,
+        'timesheet_pending',
+        'Timesheet Approval Needed',
+        `${employeeName} (${savedTimesheet.employeeId}) submitted timesheet for ${savedTimesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}${fromPunch}`,
+        savedTimesheet.id,
+        savedTimesheet.date,
+        { recordType: 'timesheet', recordId: savedTimesheet.id }
+      );
+    }
+  }
+}
+
 // Save single timesheet
 app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
   try {
@@ -7550,34 +7704,10 @@ app.post('/make-server-c2dd9b9d/timesheets', async (c) => {
 
     await kv.set(key, savedTimesheet);
 
-    // Route the approval notification to the employee's own approver - their incharge or
-    // manager (see approversFor). Cluster heads are only a fallback for someone with
-    // neither on file - this route used to hardcode cluster heads unconditionally.
-    // Sent after the response (afterResponse).
+    // Route the approval notification to the employee's own approver - this route used to
+    // hardcode cluster heads unconditionally. Sent after the response (afterResponse).
     if (timesheet.status === 'pending') {
-      await afterResponse('Timesheet notifications', async () => {
-        // attendance-employee: is an empty/legacy collection - real employee records
-        // (with the actual name and authUserId) live under unified-employee:.
-        const employee = await kv.get(`unified-employee:${timesheet.employeeId}`);
-        const employeeName = employee?.name || timesheet.employeeId;
-
-        const recipients = await approversFor(employee);
-
-        const timeSummary = formatTimesheetSummary(savedTimesheet);
-        for (const recipient of recipients) {
-          if (recipient.authUserId) {
-            await notifyUser(
-              recipient.authUserId,
-              'timesheet_pending',
-              'Timesheet Approval Needed',
-              `${employeeName} (${timesheet.employeeId}) submitted timesheet for ${timesheet.date}${timeSummary ? ` - ${timeSummary}` : ''}`,
-              id,
-              timesheet.date,
-              { recordType: 'timesheet', recordId: id }
-            );
-          }
-        }
-      });
+      await afterResponse('Timesheet notifications', () => notifyTimesheetApprovers(savedTimesheet));
     }
 
     return c.json({ success: true, id });
@@ -9852,6 +9982,191 @@ app.get('/make-server-c2dd9b9d/custom-items', async (c) => {
   }
 });
 
+// One item, one category (itemHome.ts): the built-in list plus the items added to it, read again
+// at most every 10 minutes and straight after the list changes.
+let itemHomesCache: { at: number; homes: Map<string, string[]> } | null = null;
+async function loadItemHomes(): Promise<Map<string, string[]>> {
+  if (itemHomesCache && Date.now() - itemHomesCache.at < 10 * 60_000) return itemHomesCache.homes;
+  const custom = await kv.getByPrefix('custom-item:').catch(() => null);
+  const homes = itemHomes(Array.isArray(custom) ? custom : []);
+  if (Array.isArray(custom)) itemHomesCache = { at: Date.now(), homes };
+  return homes;
+}
+
+// The names the app knows (itemNameReview.ts): the built-in items, running costs with a home, the
+// item list, and names used at least twice in the last 120 days (their usual spelling, no
+// category: "Toto" is both goods transport and travel). Plus the aliases the owner or Bunny decided.
+let knownCache: { at: number; items: KnownItem[]; aliases: Map<string, KnownItem> } | null = null;
+async function knownNames(): Promise<{ items: KnownItem[]; aliases: Map<string, KnownItem> }> {
+  if (knownCache && Date.now() - knownCache.at < 10 * 60_000) return knownCache;
+  const from = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+  const [custom, purchases, running, aliases] = await Promise.all([
+    kv.getByPrefix('custom-item:').catch(() => []),
+    getAllByPrefixWithRetry('inventory:', { from, field: 'date' }).catch(() => []),
+    getAllByPrefixWithRetry('overhead:', { from, field: 'date' }).catch(() => []),
+    loadAliases({ rows: (prefix) => getAllByPrefixWithRetry(prefix) }),
+  ]);
+  const items: KnownItem[] = [];
+  const has = new Set<string>();
+  const add = (it: KnownItem) => { const k = `${it.type}|${nameKey(it.name)}`; if (nameKey(it.name) && !has.has(k)) { has.add(k); items.push(it); } };
+  for (const [category, names] of Object.entries(BUILT_IN)) for (const name of names) add({ name, category, type: 'inventory' });
+  for (const [name, category] of Object.entries(RUNNING_HOMES)) add({ name, category, type: 'overhead' });
+  for (const ci of (custom || []) as any[]) if (ci?.itemName) add({ name: ci.itemName, category: ci.category || null, type: ci.entryType === 'overhead' ? 'overhead' : ci.entryType === 'fixedcost' ? 'fixedcost' : 'inventory' });
+  const used = new Map<string, Map<string, number>>();
+  const count = (name: unknown, type: EntryType) => {
+    const n = String(name || '').trim();
+    if (!nameKey(n) || n.length > 30 || n.split(/\s+/).length > 3) return;
+    const k = `${type}|${nameKey(n)}`;
+    const m = used.get(k) || new Map<string, number>();
+    m.set(n, (m.get(n) || 0) + 1);
+    used.set(k, m);
+  };
+  for (const r of (purchases || []) as any[]) count(r?.itemName, 'inventory');
+  for (const r of (running || []) as any[]) count(r?.description, 'overhead');
+  for (const [k, spellings] of used) {
+    const total = [...spellings.values()].reduce((a, b) => a + b, 0);
+    if (total < 2) continue;
+    const name = [...spellings.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    add({ name, category: null, type: k.split('|')[0] as EntryType });
+  }
+  knownCache = { at: Date.now(), items, aliases };
+  return knownCache;
+}
+
+const nameReviewDeps: NameReviewDeps = {
+  kv: kvWithRetry,
+  rows: (prefix) => getAllByPrefixWithRetry(prefix),
+  known: async () => (await knownNames()).items,
+  ownerIds: async () => (await getAllClusterHeads()).map((u: any) => u.authUserId).filter(Boolean),
+  notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate),
+  askBunny: async (p) => {
+    const { data } = await askClaudeForJson(kvWithRetry as any, {
+      purpose: 'item-names',
+      user: { id: 'item-names', isOwner: true },
+      system: [
+        'You keep the expense item list of a small momo shop in West Bengal tidy. Names are often Bengali or Hindi words typed in English letters, and often misspelled.',
+        'Given a newly typed name and the names already on the list, say whether it is the same thing as one of them (sameAs: that exact list name, or an empty string).',
+        'confident: true only when it is clearly the same thing - a misspelling, the same thing in another language, the same product - not when it is only related (Tomato and Tomato Sauce are different items; so are Butter and Butter paper).',
+        'cleanName: how it should be written if it is a new item - the usual name, capitalised, with the local word in brackets when that helps (hata -> Ladle (hata)).',
+      ].join(' '),
+      prompt: JSON.stringify(p),
+      schema: { type: 'object', additionalProperties: false, required: ['sameAs', 'confident', 'cleanName'], properties: { sameAs: { type: 'string' }, confident: { type: 'boolean' }, cleanName: { type: 'string' } } },
+      maxTokens: 300,
+    });
+    return { sameAs: String(data?.sameAs || ''), confident: !!data?.confident, cleanName: String(data?.cleanName || '') };
+  },
+  addToList: async (it) => {
+    const id = `custom-item-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    await kv.set(`custom-item:${id}`, { category: it.category, itemName: it.itemName, entryType: it.entryType, entityType: it.entityType || undefined, createdAt: new Date().toISOString(), addedFrom: 'owner name check' });
+    itemHomesCache = null;
+    knownCache = null;
+  },
+  categoryLabel: (category) => catLabel(category),
+};
+
+// Bunny's roundup (roundup.ts): the day's camera PPE and photo checks in a few plain lines.
+const roundupDeps = {
+  kv: kvWithRetry,
+  getAllByPrefix: (prefix: string) => getAllByPrefixWithRetry(prefix),
+  ask: async (facts: any) => {
+    const { data } = await askClaudeForJson(kvWithRetry as any, {
+      purpose: 'roundup',
+      user: { id: 'roundup', isOwner: true },
+      system: [
+        'You write the owner\'s short roundup for a small momo business in West Bengal (a production house and a store), from facts counted by the app.',
+        'Plain English, short sentences, no greeting. At most 5 lines; lead with what needs attention. Use only the numbers given - never invent or round them differently.',
+        'Say when a problem is a pattern (in every check, since the morning, worse than yesterday) rather than listing each time. Name people only when names are given ("Person 3" stays "Person 3").',
+        'End a problem line with one concrete action for the owner or the incharge. Mention reminders already sent and false alarms marked. Skip anything that is fine, except one short "all fine" line if everything is.',
+        'headline: under 60 characters, the main thing (e.g. "Caps off all morning at the production house").',
+      ].join(' '),
+      prompt: JSON.stringify(facts),
+      schema: { type: 'object', additionalProperties: false, required: ['headline', 'lines'], properties: { headline: { type: 'string' }, lines: { type: 'array', items: { type: 'string' } } } },
+      maxTokens: 700,
+    });
+    return { headline: String(data?.headline || ''), lines: Array.isArray(data?.lines) ? data.lines.map(String) : [] };
+  },
+};
+
+// The owner's list of new names to check, and the decision on one (itemNameReview.ts).
+app.get('/make-server-c2dd9b9d/item-names', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ open: [], known: [] });
+  try {
+    const [rows, known] = await Promise.all([getAllByPrefixWithRetry('item-name:'), knownNames()]);
+    const open = (rows || []).filter((r: any) => r?.status === 'open').sort((a: any, b: any) => String(b.lastAt).localeCompare(String(a.lastAt)));
+    return c.json({ open, known: known.items.map((k) => ({ name: k.name, type: k.type, category: k.category || null })) });
+  } catch (error) {
+    console.log('Error loading the new item names:', error);
+    return c.json({ error: 'Could not load the new names' }, 500);
+  }
+});
+
+// While someone types a name the app doesn't know (owner, 31 Oct 2026: "jhul jhara when written it
+// should suggest cobweb - can it do it using Bunny"): the known item it means, else Bunny's reading -
+// the usual name, purchase or running cost, and the category. Each word is asked about once and
+// kept 60 days (item-suggest:{nameKey}). Registered before /item-names/:key, which would take it.
+app.post('/make-server-c2dd9b9d/item-names/suggest', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (!canWriteExpenses(auth.user)) return c.json({});
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const typed = String(body?.typed || '').trim().slice(0, 60);
+    const nk = nameKey(typed);
+    if (nk.length < 3) return c.json({});
+    const known = await knownNames();
+    const hit = known.aliases.get(nk) || matchName(typed, known.items)?.item;
+    if (hit) return c.json({ sameAs: hit.name, type: hit.type || null, category: hit.category || null });
+    const cached = await kv.get(`item-suggest:${nk}`).catch(() => null);
+    if (cached?.at && Date.now() - Date.parse(cached.at) < 60 * 86400000) return c.json(cached.answer || {});
+    const { data } = await askClaudeForJson(kvWithRetry as any, {
+      purpose: 'item-names',
+      user: { id: auth.user.id, isOwner: auth.user.user_metadata?.role === 'cluster_head' },
+      system: [
+        'You help staff of a small momo shop in West Bengal log what they bought. Names are often Bengali or Hindi words typed in English letters, often misspelled (jhul jhara = cobweb brush on a stick, hata = ladle, balti = bucket, tar brush = wire brush).',
+        'Given what was typed and the names already on the list: if it is clearly the same thing as one of them, sameAs is that exact list name; otherwise sameAs is empty.',
+        'cleanName: how a new item should be written - the usual English name, capitalised, with the local word in brackets (Cobweb brush (jhul jhara)).',
+        'type: "inventory" for a purchase of goods (ingredients, packaging, cleaning things, utensils), "overhead" for a running cost (transport, repairs, labour, services). category: one key from that type\'s list.',
+      ].join(' '),
+      prompt: JSON.stringify({ typed, onTheList: known.items.slice(0, 500).map((k) => `${k.name} (${k.type === 'overhead' ? 'running cost' : 'purchase'})`), purchaseCategories: CATEGORY_CHOICES.inventory, runningCostCategories: CATEGORY_CHOICES.overhead }),
+      schema: {
+        type: 'object', additionalProperties: false, required: ['sameAs', 'cleanName', 'type', 'category'],
+        properties: { sameAs: { type: 'string' }, cleanName: { type: 'string' }, type: { type: 'string', enum: ['inventory', 'overhead'] }, category: { type: 'string' } },
+      },
+      maxTokens: 300,
+    });
+    const same = data?.sameAs ? known.items.find((k) => k.name === data.sameAs) : null;
+    const type = data?.type === 'overhead' ? 'overhead' : 'inventory';
+    const answer = same
+      ? { sameAs: same.name, type: same.type || null, category: same.category || null }
+      : { cleanName: String(data?.cleanName || '').slice(0, 60) || null, type, category: CATEGORY_CHOICES[type][data?.category] ? data.category : null, byBunny: true };
+    await kv.set(`item-suggest:${nk}`, { key: nk, typed, answer, at: new Date().toISOString() });
+    return c.json(answer);
+  } catch (error) {
+    // No suggestion is fine: the person picks the category as before.
+    console.log('Item name suggestion failed:', error instanceof Error ? error.message : String(error));
+    return c.json({});
+  }
+});
+
+app.post('/make-server-c2dd9b9d/item-names/:key', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ error: 'Only the owner decides new item names' }, 403);
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    if (!['new', 'same', 'keep'].includes(body?.action)) return c.json({ error: 'Choose new item, same as, or leave it' }, 400);
+    const result = await decideName(nameReviewDeps, decodeURIComponent(c.req.param('key')), { action: body.action, name: body.name, category: body.category, by: auth.user.user_metadata?.name || 'Owner' });
+    if (result.error) return c.json({ error: result.error }, 400);
+    knownCache = null;
+    return c.json({ record: result.record });
+  } catch (error) {
+    console.log('Error deciding a new item name:', error);
+    return c.json({ error: 'Could not save that' }, 500);
+  }
+});
+
 // Add custom item to a category - cluster-head only (see the InventoryForm/QuickAddExpense
 // "+ Add Custom Item" gating on the frontend for why: store/operations incharges shouldn't
 // be able to expand the item catalog on their own, only pick from what's already there).
@@ -9893,6 +10208,12 @@ app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
       item.value.category === category && item.value.itemName === itemName
     );
 
+    // Already on the list under another category: one item, one category.
+    if ((entryType || 'inventory') === 'inventory') {
+      const other = homeElsewhere(itemName, category, await loadItemHomes());
+      if (other) return c.json({ error: `"${itemName}" is already on the list under ${homeLabel(other)}. One item goes under one category.`, category: other }, 409);
+    }
+
     if (duplicate) {
       return c.json({
         customItem: {
@@ -9917,6 +10238,8 @@ app.post('/make-server-c2dd9b9d/custom-items', async (c) => {
     };
 
     await kv.set(`custom-item:${id}`, customItem);
+    itemHomesCache = null;
+    knownCache = null;
 
     return c.json({
       customItem: {
@@ -9952,7 +10275,14 @@ app.put('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
     }
 
     const updated = { ...existing, ...updates };
+    if ((updated.entryType || 'inventory') === 'inventory' && (updates.category || updates.itemName)) {
+      // Its own row doesn't count, so an added item the built-in list doesn't have can still be moved.
+      const others = ((await kv.getByPrefix('custom-item:')) || []).filter((x: any) => !(x?.itemName === (existing as any).itemName && x?.category === (existing as any).category));
+      const other = homeElsewhere(updated.itemName, updated.category, itemHomes(others));
+      if (other) return c.json({ error: `"${updated.itemName}" is already on the list under ${homeLabel(other)}. One item goes under one category.`, category: other }, 409);
+    }
     await kv.set(key, updated);
+    itemHomesCache = null;
 
     return c.json({ customItem: { id, ...updated } });
   } catch (error) {
@@ -9966,6 +10296,7 @@ app.delete('/make-server-c2dd9b9d/custom-items/:id', async (c) => {
   try {
     const id = c.req.param('id');
     await kv.del(`custom-item:${id}`);
+    itemHomesCache = null;
     return c.json({ success: true });
   } catch (error) {
     console.log('Error deleting custom item:', error);
@@ -10575,8 +10906,10 @@ app.post('/make-server-c2dd9b9d/notifications/test', async (c) => {
   return c.json({ sent });
 });
 
-// 7 AM and 9 PM IST (pg_cron): one buzz for what was held - overnight (quiet hours) in the
-// morning, the day's updates (digest) in the evening.
+// 7 AM, 1 PM and 9 PM IST (pg_cron): one buzz for what was held - overnight (quiet hours) in the
+// morning, the day's updates (digest) at 1 PM and in the evening. At 1 PM and 9 PM the owner and the
+// operations managers get Bunny's roundup with it (roundup.ts, owner 31 Oct 2026): the day's camera
+// PPE checks and photo checks in a few lines, instead of an alert for each.
 app.post('/make-server-c2dd9b9d/cron/notification-digest', async (c) => {
   const secret = Deno.env.get('CRON_SYNC_SECRET');
   if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
@@ -10589,6 +10922,17 @@ app.post('/make-server-c2dd9b9d/cron/notification-digest', async (c) => {
     if (error) throw new Error(error.message);
     const byUser = new Map<string, any[]>();
     for (const row of data || []) byUser.set(row.value.userId, [...(byUser.get(row.value.userId) || []), row]);
+    // Bunny's roundup, for the owner and the operations managers (with or without held updates).
+    const roundup = held === 'digest' ? await roundupFor(roundupDeps).catch((e) => { console.log('Roundup failed:', e?.message || e); return null; }) : null;
+    const readers = new Set<string>();
+    if (roundup) {
+      for (const u of await staffForNotifications()) {
+        if (u?.authUserId && (u.role === 'cluster_head' || (u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation)))) {
+          readers.add(u.authUserId);
+          if (!byUser.has(u.authUserId)) byUser.set(u.authUserId, []);
+        }
+      }
+    }
     let sent = 0;
     for (const [userId, rows] of byUser) {
       const employeeId = await getEmployeeIdByAuthUserId(userId);
@@ -10596,8 +10940,16 @@ app.post('/make-server-c2dd9b9d/cron/notification-digest', async (c) => {
       for (const r of rows) kinds.set(r.value.title, (kinds.get(r.value.title) || 0) + (Number(r.value.count) || 1));
       const total = [...kinds.values()].reduce((a, b) => a + b, 0);
       const list = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(' · ');
-      if (employeeId) {
-        await push.sendPushNotification(employeeId, {
+      const withRoundup = !!roundup && readers.has(userId);
+      // The roundup in full stays in the inbox; a quiet day's "all clear" doesn't buzz on its own.
+      if (withRoundup) await createNotification(userId, 'bunny_roundup', `Bunny's roundup: ${roundup!.headline}`, roundup!.lines.join('\n'), undefined, getTodayIST());
+      const buzzRoundup = withRoundup && roundup!.worth;
+      if (employeeId && (total > 0 || buzzRoundup)) {
+        await push.sendPushNotification(employeeId, buzzRoundup ? {
+          title: `Bunny: ${roundup!.headline}`,
+          message: `${roundup!.lines.slice(0, 3).join(' ')}${total ? ` · Also ${total} update${total === 1 ? '' : 's'} in your inbox.` : ''}`,
+          tag: 'digest_roundup', data: { type: 'bunny_roundup', category: 'update' },
+        } : {
           title: held === 'quiet' ? `While you were away: ${total} notification${total === 1 ? '' : 's'}` : `Today's updates: ${total}`,
           message: list, tag: `digest_${held}`, data: { type: 'digest', category: 'update' },
         }).catch(() => undefined);
@@ -10631,7 +10983,8 @@ app.post('/make-server-c2dd9b9d/cron/notification-escalations', async (c) => {
     for (const row of data || []) {
       const n = row.value;
       await kvWithRetry.set(row.key, { ...n, escalatedAt: new Date().toISOString() });
-      if (ownerIds.has(n.userId)) continue;
+      // Reminders that ask again by themselves aren't sent on to the owner (notificationRules.ts).
+      if (ownerIds.has(n.userId) || !escalates(n.type)) continue;
       const who = staff.find((u: any) => u.authUserId === n.userId)?.name || 'Someone';
       const time = new Date(Date.parse(n.createdAt) + IST_OFFSET_MS).toISOString().slice(11, 16);
       for (const o of owners) {
@@ -10734,42 +11087,82 @@ app.delete('/make-server-c2dd9b9d/notifications/cleanup', async (c) => {
 
 // Create notification (internal helper)
 async function createNotification(userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) {
+  return (await saveNotification(userId, type, title, message, relatedId, relatedDate))?.record || null;
+}
+
+// Midnight today in India, as an ISO time.
+function istDayStartISO(nowMs = Date.now()): string {
+  return new Date(`${new Date(nowMs + IST_OFFSET_MS).toISOString().slice(0, 10)}T00:00:00+05:30`).toISOString();
+}
+
+// Saves the inbox row and says whether it should buzz (notificationRules.ts, owner 30 Oct 2026: too
+// many notifications). null = not sent at all. A quiet kind is saved already read; a stock request
+// keeps one row per person that each step replaces; a noisy kind keeps one row a day.
+async function saveNotification(userId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string): Promise<{ record: any; buzz: boolean } | null> {
+  const loud = loudness(type);
+  if (loud === 'off') return null;
   const category = notificationCategory(type);
   const now = new Date().toISOString();
+  const quiet = loud === 'quiet';
+  const unread = (n: any) => {
+    const { resolvedAt: _a, resolvedBy: _b, resolvedVerb: _c, readAt: _d, escalatedAt: _e, ...rest } = n;
+    return quiet ? { ...rest, read: true, readAt: now } : { ...rest, read: false };
+  };
   try {
-    // Another of the same kind within 30 minutes, still unread, folds into the last one
-    // ("Inventory logged +3 more") - notificationRules.ts says which kinds bundle.
-    if (bundles(type)) {
-      const since = new Date(Date.now() - BUNDLE_MINUTES * 60000).toISOString();
-      const { data } = await supabase.from('kv_store_c2dd9b9d').select('key, value')
-        .like('key', `notification:${userId}:%`).eq('value->>type', type).eq('value->>read', 'false').gte('value->>createdAt', since)
-        .order('value->>createdAt', { ascending: false }).limit(1);
+    if (relatedId && oneRowPerRecord(type)) {
+      const keys: string[] = ((await kvWithRetry.get(`notification-related:${relatedId}`)) || []).filter((k: string) => k.startsWith(`notification:${userId}:`));
+      for (const key of keys) {
+        const p = await kvWithRetry.get(key);
+        if (!p?.id || !oneRowPerRecord(String(p.type || ''))) continue;
+        const record = unread({ ...p, type, category, title, message, relatedDate: relatedDate || p.relatedDate || null, createdAt: now, steps: [p.title, ...(p.steps || [])].filter(Boolean).slice(0, 8) });
+        await kvWithRetry.set(key, record);
+        return { record, buzz: !quiet && p.type !== type };
+      }
+    }
+    // Another of the same kind today (one-a-day kinds), or within 30 minutes and still unread (the
+    // kinds that bundle), folds into the last one ("Inventory logged +3 more").
+    const daily = oneADay(type);
+    if (daily || bundles(type)) {
+      let q = supabase.from('kv_store_c2dd9b9d').select('key, value')
+        .like('key', `notification:${userId}:%`).eq('value->>type', type)
+        .gte('value->>createdAt', daily ? istDayStartISO() : new Date(Date.now() - BUNDLE_MINUTES * 60000).toISOString());
+      if (!daily) q = q.eq('value->>read', 'false');
+      const { data } = await q.order('value->>createdAt', { ascending: false }).limit(1);
       const prev = data?.[0];
       if (prev?.value?.id) {
         const p = prev.value;
         const merged = {
           ...p, title, message, category, relatedId: relatedId || p.relatedId || null, relatedDate: relatedDate || p.relatedDate || null,
-          count: (Number(p.count) || 1) + 1, items: [p.message, ...(p.items || [])].filter(Boolean).slice(0, 6), createdAt: now,
+          // The earlier one's title too when it said something else ("Workplace photos missed · Rohan").
+          count: (Number(p.count) || 1) + 1, items: [p.title && p.title !== title ? `${p.title}: ${p.message}` : p.message, ...(p.items || [])].filter(Boolean).slice(0, 6), createdAt: now,
         };
-        await kvWithRetry.set(prev.key, merged);
+        const record = daily ? unread(merged) : merged;
+        await kvWithRetry.set(prev.key, record);
         if (relatedId) await indexRelatedNotification(relatedId, prev.key);
-        return merged;
+        return { record, buzz: !daily && !quiet };
       }
     }
     const notificationId = crypto.randomUUID();
     const notification = {
       id: notificationId, userId, type, category, title, message,
-      relatedId: relatedId || null, relatedDate: relatedDate || null, read: false, createdAt: now,
+      relatedId: relatedId || null, relatedDate: relatedDate || null, read: quiet, ...(quiet ? { readAt: now } : {}), createdAt: now,
     };
     const key = `notification:${userId}:${notificationId}`;
     await kvWithRetry.set(key, notification);
     if (relatedId) await indexRelatedNotification(relatedId, key);
-    return notification;
+    return { record: notification, buzz: !quiet };
   } catch (error: any) {
     console.error(`Failed to create notification for user ${userId}:`, error);
     // Don't throw - notifications are non-critical, don't fail the main operation
     return null;
   }
+}
+
+// Buzzes a person has had today, urgent apart (DAILY_BUZZ_CAP).
+async function buzzedToday(userId: string): Promise<number> {
+  const { count } = await supabase.from('kv_store_c2dd9b9d').select('key', { count: 'exact', head: true })
+    .like('key', `notification:${userId}:%`).eq('value->>buzzed', 'true').neq('value->>category', 'urgent').gte('value->>createdAt', istDayStartISO());
+  return count || 0;
 }
 
 // Which notifications are about one record (notification-related:{relatedId}), so they can all be
@@ -10916,7 +11309,10 @@ async function notifyUser(
   // imageUrl: a photo shown inside the Android notification (a link that works for a day).
   extras?: { imageUrl?: string }
 ) {
-  const notificationResult = await createNotification(userId, type, title, message, relatedId, relatedDate);
+  const saved = await saveNotification(userId, type, title, message, relatedId, relatedDate);
+  const notificationResult = saved?.record || null;
+  // Not sent, quiet, or added to a row that already buzzed: no buzz (notificationRules.ts).
+  if (!saved?.buzz) return notificationResult;
 
   try {
     const emp = (await staffForNotifications()).find((u: any) => u.authUserId === userId) || null;
@@ -10929,7 +11325,9 @@ async function notifyUser(
     if (category !== 'urgent') {
       if (prefs.muted?.[category]) held = 'muted';
       else if (inQuietHours(prefs)) held = 'quiet';
-      else if (prefs.digest && category === 'update') held = 'digest';
+      // The owner's phone: urgent and what only the owner decides; the rest in the 9 PM summary.
+      else if (prefs.digest && (emp?.role === 'cluster_head' ? !ownerBuzzes(type) : category === 'update')) held = 'digest';
+      else if (await buzzedToday(userId) >= DAILY_BUZZ_CAP) held = 'digest';
     }
     if (held && notificationResult?.id) {
       await kvWithRetry.set(`notification:${userId}:${notificationResult.id}`, { ...notificationResult, pushHeld: held }).catch(() => undefined);
@@ -10973,6 +11371,11 @@ async function notifyUser(
         tag: type,
         data,
       });
+      // Counted for the daily cap; a row that buzzed now isn't held for the digest any more.
+      if (notificationResult?.id && (!notificationResult.buzzed || notificationResult.pushHeld)) {
+        const { pushHeld: _held, ...rest } = notificationResult;
+        await kvWithRetry.set(`notification:${userId}:${notificationResult.id}`, { ...rest, buzzed: true }).catch(() => undefined);
+      }
     }
   } catch (pushError) {
     console.log(`Push notification failed for user ${userId}:`, pushError);
@@ -15294,9 +15697,9 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
     if (!def || today !== (def.day === 'eve' ? eve : last)) return c.json({ success: true, skipped: 'not a count reminder time', today, slot: slot || null });
     // Counted: a stock count for the store saved since 6 PM the day before the last day (IST).
     const since = `${eve}T18:00`;
-    const counted = new Set((await getAllByPrefixWithRetry('recalibration_'))
-      .filter((r: any) => r?.locationType === 'store' && typeof r.date === 'string' && r.date >= since)
-      .map((r: any) => r.locationId));
+    const recentCounts = (await getAllByPrefixWithRetry('recalibration_'))
+      .filter((r: any) => typeof r?.date === 'string' && r.date >= since && r.status !== 'rejected');
+    const counted = new Set(recentCounts.filter((r: any) => r.locationType === 'store').map((r: any) => r.locationId));
     const stores = (await kv.getByPrefix('store:')).filter((st: any) => st?.id && st.status !== 'inactive' && st.status !== 'closed');
     const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
     const lastName = new Date(`${last}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -15311,12 +15714,36 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
         continue;
       }
       const title = def.day === 'eve' ? `Month-end momo count tomorrow (${lastName})` : `Count the momos today: month-end stock count`;
+      // Tapping it opens the count (notificationNavigation: stock_count_reminder, 31 Oct 2026).
       const message = def.day === 'eve'
         ? `${store.name}: tomorrow is the month-end stock count. Count every momo type in the freezer and enter it in Stock > Count stock. Reminder ${def.n} of 5.`
-        : `${store.name}: count every momo type in the freezer and enter it in Stock > Count stock today. It shows how many momos went missing this month. Reminder ${def.n} of 5.`;
+        : `${store.name}: count every momo type in the freezer and enter it today - tap here to open the count. It shows how many momos went missing this month. Reminder ${def.n} of 5.`;
       for (const u of to) await notifyUser(u.authUserId, 'stock_count_reminder', title, message, undefined, last).catch(() => undefined);
       await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
       results.push({ store: store.name, to: to.map((u: any) => u.name) });
+    }
+    // The production house's count too (owner, 31 Oct 2026: Vijay was never reminded): to its
+    // production incharge, the same five times, until a count is saved for the house - after the
+    // day's momos have gone. A count saved under a store id the house supplies (older records) counts.
+    const countHouses = (await getAllByPrefixWithRetry('production_house_')).filter((h: any) => h?.id && h.status !== 'inactive');
+    for (const house of countHouses) {
+      const storeIds = new Set(stores.filter((st: any) => st.productionHouseId === house.id).map((st: any) => st.id));
+      if (recentCounts.some((r: any) => r.locationType === 'production_house' && (r.locationId === house.id || storeIds.has(r.locationId)))) continue;
+      const onceKey = `stock-count-reminder:${house.id}:${last.slice(0, 7)}:${slot}`;
+      if (await kv.get(onceKey)) continue;
+      const to = staff.filter((u: any) => u.designation === 'production_incharge'
+        && (u.storeId === house.id || u.productionHouseId === house.id || (u.assignedProductionHouseIds || []).includes(house.id)));
+      if (dry) {
+        results.push({ house: house.name, to: to.map((u: any) => u.name), dry: true });
+        continue;
+      }
+      const title = def.day === 'eve' ? `Month-end momo count tomorrow (${lastName})` : `Count the momos today: month-end stock count`;
+      const message = def.day === 'eve'
+        ? `${house.name}: tomorrow is the month-end stock count. After the day's momos have gone, count every momo type in the freezer and enter it in Production > Requests > Count stock. Reminder ${def.n} of 5.`
+        : `${house.name}: after the day's momos have gone, count every momo type in the freezer and enter it today - tap here to open the count. Reminder ${def.n} of 5.`;
+      for (const u of to) await notifyUser(u.authUserId, 'stock_count_reminder', title, message, undefined, last).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+      results.push({ house: house.name, to: to.map((u: any) => u.name) });
     }
     // Every 3 months the equipment check goes with the momo count (owner, 30 Oct 2026): each store
     // and production house incharge, same five reminders, until their place's check is saved.
@@ -15341,6 +15768,804 @@ app.post('/make-server-c2dd9b9d/send-stock-count-reminders', async (c) => {
     return c.json({ success: true, slot, monthEnd: last, reminded: results, equipment });
   } catch (error: any) {
     console.error('Error sending stock count reminders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// DAILY STOCK CHECK (owner, 31 Oct 2026: "keep a daily check on item sales and stock left logic
+// for production and store and validate if logic is correct or not and then on 30th nov we will
+// check again how it spanned out") - stockCheck.ts
+// ============================================
+// pg_cron calls this at 11:40 PM IST, after the POS syncs (10:30 and 11 PM). For each store and
+// production house: the day's in and out, what should be left since its last count, and what looks
+// wrong. Saved as stock-check:{date}; nobody is notified. ?date= checks another day; ?dry=1 doesn't save.
+async function runStockCheck(date: string) {
+  const [counts, storesAll, houses, requests, sales, wastage, production, itemsRaw] = await Promise.all([
+    getAllByPrefixWithRetry('recalibration_'), kv.getByPrefix('store:'), getAllByPrefixWithRetry('production_house_'),
+    getAllByPrefixWithRetry('production_request_'), getAllByPrefixWithRetry('sales_data_'), getAllByPrefixWithRetry('stock-wastage:'),
+    getAllByPrefixWithRetry('production:'), getAllByPrefixWithRetry('inventory_item_'),
+  ]);
+  const items = (itemsRaw || []).filter((i: any) => i?.id && i?.name).map((i: any) => ({ id: String(i.id), name: String(i.name) }));
+  const stores = (storesAll || []).filter((s: any) => s?.id && s.status !== 'inactive' && s.status !== 'closed');
+  const upTo = (rows: any[]) => rows.filter((r: any) => typeof r?.date === 'string' && r.date.slice(0, 10) <= date);
+  const prev = await kv.get(`stock-check:${addDaysToDateString(date, -1)}`) as { places?: stockCheck.PlaceDay[] } | null;
+  const places: stockCheck.PlaceDay[] = [];
+
+  for (const store of stores) {
+    const base = stockCheck.lastCount(upTo(counts).filter((r: any) => r.locationType === 'store' && r.locationId === store.id), items);
+    const day = stockCheck.storeDay({ id: store.id, name: store.name, date, base, requests, sales, wastage });
+    const itemRecords = (sales || []).filter((s: any) => s.storeId === store.id && s.date === date);
+    const inTransit = (requests || []).filter((r: any) => r.storeId === store.id && !r.eventId && (r.status === 'shipped' || r.status === 'partially-shipped')
+      && (stockCheck.istOf(r.shippedAt) || '').slice(0, 10) <= date);
+    const syncLog = await kv.get(`pos-sync-log:${date}:${store.id}`) as any;
+    const sold = !!syncLog?.stepA?.success || (Number(syncLog?.stepA?.totalSales) || 0) > 0;
+    day.flags = [
+      ...stockCheck.lateChanges(prev?.places?.find((p) => p.kind === 'store' && p.id === store.id), day.opening),
+      ...stockCheck.storeFlags(day, { itemRecords, inTransit, syncLog, sold }),
+    ];
+    places.push(day);
+  }
+  for (const house of houses || []) {
+    if (!house?.id || house.status === 'inactive') continue;
+    const storeIds = stores.filter((s: any) => s.productionHouseId === house.id).map((s: any) => s.id);
+    const ids = [house.id, ...storeIds];
+    // A house's counts are also saved under a store id it supplies (older records).
+    const base = stockCheck.lastCount(upTo(counts).filter((r: any) => r.locationType === 'production_house' && ids.includes(r.locationId)), items);
+    const day = stockCheck.houseDay({ id: house.id, name: house.name || 'Production house', date, base, ids, storeIds, production, requests });
+    const entries = (production || []).filter((p: any) => p.date === date && p.approvalStatus !== 'rejected' && (ids.includes(p.productionHouseId) || ids.includes(p.storeId)));
+    day.flags = [
+      ...stockCheck.lateChanges(prev?.places?.find((p) => p.kind === 'production' && p.id === house.id), day.opening),
+      ...stockCheck.houseFlags(day, { entries }),
+    ];
+    places.push(day);
+  }
+  return { date, at: new Date().toISOString(), places };
+}
+
+app.post('/make-server-c2dd9b9d/cron/stock-check', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const q = c.req.query('date') || '';
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : getTodayIST();
+    const result = await runStockCheck(date);
+    if (c.req.query('dry') === '1') return c.json(result);
+    await kv.set(`stock-check:${date}`, result);
+    const summary = result.places.map((p) => ({ place: p.name, since: p.since, flags: p.flags.map((f) => f.code) }));
+    console.log(`Stock check ${date}:`, JSON.stringify(summary));
+    return c.json({ success: true, date, places: summary });
+  } catch (error: any) {
+    console.error('Error running the stock check:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// GET /stock-check?from=&to= - the owner: the saved nightly checks (up to 62 days).
+app.get('/make-server-c2dd9b9d/stock-check', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ error: 'Only the owner sees the stock check' }, 403);
+  const today = getTodayIST();
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('to') || '') ? c.req.query('to')! : today;
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('from') || '') ? c.req.query('from')! : addDaysToDateString(to, -6);
+  if (from > to || addDaysToDateString(from, 62) < to) return c.json({ error: 'Pick up to 62 days' }, 400);
+  const dates: string[] = [];
+  for (let d = from; d <= to; d = addDaysToDateString(d, 1)) dates.push(d);
+  const days = (await kv.mget(dates.map((d) => `stock-check:${d}`))).filter(Boolean);
+  return c.json({ from, to, days });
+});
+
+// ============================================
+// LIVE ORDERS (owner, 31 Oct 2026: "Build 1, 2 and 3") - liveOrders.ts
+// ============================================
+// Ciferon's admin Live Status list (GET Api/OrderReport/GetLiveOrderDetail, the same admin login
+// as OrderReport/Sale) every 3 minutes from 3 PM to 11:45 PM IST (pg_cron live-orders):
+//   1. at 11:45 PM (live-orders-close, before Ciferon's 11:50 PM day close) each order seen open is
+//      checked against the day's bills: never billed, billed for less, or still open -> the owner
+//   2. an order open past its limit -> the store incharge (order_stuck, urgent: escalates)
+//   3. GET /live-orders/now -> the "Right now" card on the owner's Home
+// Saved per store and day as live-orders:{storeId}:{date} and live-orders-check:{storeId}:{date}.
+const LIVE_FROM_MIN = 15 * 60;
+const LIVE_TO_MIN = 23 * 60 + 45;
+function istMinutesNow(): number {
+  const now = getNowIST();
+  return parseInt(now.substring(11, 13), 10) * 60 + parseInt(now.substring(14, 16), 10);
+}
+
+// Ciferon can hang (it did at midnight, while closing its day): no call waits longer than this.
+const CIFERON_TIMEOUT_MS = 15 * 1000;
+// One admin login kept while this server copy is warm (each poll would otherwise log in again).
+let ciferonAdminSession: { authkey: string; at: number } | null = null;
+async function ciferonAdminAuth(fresh = false): Promise<string> {
+  if (!fresh && ciferonAdminSession && Date.now() - ciferonAdminSession.at < 20 * 60 * 1000) return ciferonAdminSession.authkey;
+  const adminEmail = Deno.env.get('CIFERON_ADMIN_EMAIL');
+  const adminPassword = Deno.env.get('CIFERON_ADMIN_PASSWORD');
+  if (!adminEmail || !adminPassword) throw new Error('CIFERON_ADMIN_EMAIL/PASSWORD not configured');
+  const loginRes = await fetch('https://api.ciferon.com/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ UserName: adminEmail, Password: adminPassword }),
+    signal: AbortSignal.timeout(CIFERON_TIMEOUT_MS),
+  }).catch((e) => { throw new Error(`Ciferon login: ${e?.message || e}`); });
+  if (!loginRes.ok) throw new Error(`Ciferon login returned HTTP ${loginRes.status}`);
+  const loginData = await loginRes.json();
+  const authkey = loginData?.Result?.authkey || loginData?.Result?.AuthKey || loginData?.authkey || loginData?.AuthKey || loginData?.token || loginData?.Token;
+  if (!authkey) throw new Error('Ciferon login did not return an authkey');
+  const companyKey = await ciferonCompanyKey(authkey);
+  ciferonAdminSession = { authkey: companyKey, at: Date.now() };
+  return companyKey;
+}
+
+// After signing in, the admin panel picks the company (api/init/getcompanies, then SwitchCompany)
+// and uses the key that hands back for everything. GetLiveOrderDetail, which names no store, hung
+// with the plain login key (1 Nov 2026). The company is the one holding our Ciferon store.
+async function ciferonCompanyKey(loginKey: string): Promise<string> {
+  const get = (url: string) => fetch(url, {
+    headers: { Authorization: `Bearer ${loginKey}`, BrandId: '0', Accept: 'application/json' },
+    signal: AbortSignal.timeout(CIFERON_TIMEOUT_MS),
+  }).catch((e) => { throw new Error(`${new URL(url).pathname}: ${e?.message || e}`); });
+  const res = await get('https://api.ciferon.com/api/init/getcompanies');
+  if (!res.ok) throw new Error(`getcompanies returned HTTP ${res.status}`);
+  const companies: any[] = (await res.json())?.Result?.Companies || [];
+  const ours = new Set((await liveStores()).map((st: any) => String(st.ciferonStoreId)));
+  const company = companies.find((co) => (co?.StoreList || []).some((st: any) => ours.has(String(st?.StoreID)))) || companies[0];
+  if (!company?.CompanyId) throw new Error('getcompanies: no company');
+  const sw = await get(`https://api.ciferon.com/api/V2/InitApi/SwitchCompany?companyId=${encodeURIComponent(String(company.CompanyId))}`);
+  if (!sw.ok) throw new Error(`SwitchCompany returned HTTP ${sw.status}`);
+  const key = (await sw.json())?.Result?.AuthKey;
+  if (!key) throw new Error('SwitchCompany did not return a key');
+  return key;
+}
+
+async function ciferonAdminGet(store: any, url: string): Promise<any> {
+  const call = async (authkey: string) => fetch(url, {
+    headers: { Authorization: `Bearer ${authkey}`, StoreId: String(store.ciferonStoreId), BrandId: '0', Accept: 'application/json' },
+    signal: AbortSignal.timeout(CIFERON_TIMEOUT_MS),
+  }).catch((e) => { throw new Error(`${new URL(url).pathname}: ${e?.message || e}`); });
+  let res = await call(await ciferonAdminAuth());
+  if (res.status === 401 || res.status === 403) res = await call(await ciferonAdminAuth(true));
+  if (!res.ok) throw new Error(`Ciferon returned HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data?.IsSuccess) throw new Error('Ciferon responded with IsSuccess=false');
+  return data;
+}
+
+// The day's bills (OrderReport/Sale, as Step D of runPosSync): only orders that weren't cancelled.
+async function fetchBilledOrders(store: any, date: string): Promise<liveOrders.FinalOrder[]> {
+  const day = new Date(`${date}T00:00:00Z`).toUTCString();
+  const params = new URLSearchParams({
+    StartDate: day, EndDate: day, ReportType: 'SaleReport', IsAllVisible: 'true', IsSplitPaymentMode: 'false', SaleOrderType: 'undefined',
+    IsCancel: 'false', IsComplementary: 'false', IsPending: 'false', IsSettle: 'false', IsInit: 'false', PaymentModeIds: 'undefined',
+    StoreIds: 'undefined', PaymentFilter: 'undefined', IsEdit: 'false', IsReprint: 'false', IsCustomerGst: 'false', IsDiscount: 'false',
+    CompanyBrandId: '0', IsDeliveryApp: 'false', TerminalId: '0',
+  });
+  const data = await ciferonAdminGet(store, `https://api.ciferon.com/api/OrderReport/Sale?${params.toString()}`);
+  const all = data.Result?.OrderList || [];
+  const sameDay = all.filter((o: any) => { const d = getCiferonOrderEntryDateIST(o); return !d || d === date; });
+  if (all.length > 0 && sameDay.length === 0) throw new Error(`OrderReport/Sale returned ${all.length} orders, none dated ${date}`);
+  return sameDay.map((o: any) => ({
+    orderId: o.OrderId ?? null, serialNo: o.SerialNo ?? null, externalId: o.ExternalId ?? null,
+    grandTotal: Number(o.GrandTotal) || 0, orderType: o.SaleOrderType || null, entryDate: o.EntryDate || null,
+  }));
+}
+
+const liveStores = async () => (await kv.getByPrefix('store:'))
+  .filter((s: any) => s?.id && s.ciferonStoreId && s.status !== 'inactive' && s.status !== 'closed');
+
+// Tells the store incharge (else the operations managers) about orders open too long, once each.
+async function alertStuckOrders(store: any, date: string, stuck: liveOrders.SeenOrder[]): Promise<number> {
+  const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+  let to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+  if (!to.length) to = staff.filter((u: any) => u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation));
+  let sent = 0;
+  for (const o of stuck) {
+    const onceKey = `live-order-alert:${store.id}:${date}:${o.key}`;
+    if (await kv.get(onceKey)) continue;
+    const mins = liveOrders.ageMin(o, Date.now());
+    const what = [`${liveOrders.typeWord(o.type)} order`, o.serial ? `#${o.serial}` : '', o.table ? `(table ${o.table})` : ''].filter(Boolean).join(' ');
+    const title = `Order open ${mins} min: ${what}`;
+    const items = liveOrders.itemsLine(o.items);
+    const message = `${store.name}: ${what}, Rs ${Math.round(o.total)}, has been open in Ciferon for ${mins} minutes${items ? ` - ${items}` : ''}. If it has gone out, settle it in Ciferon; if it is still being made, hurry it along.`;
+    for (const u of to) await notifyUser(u.authUserId, 'order_stuck', title, message, o.key, date).catch(() => undefined);
+    await kv.set(onceKey, { at: new Date().toISOString(), mins, to: to.map((u: any) => u.id) });
+    sent++;
+  }
+  return sent;
+}
+
+// One look at each store's open orders, added to the day. Only the cron's look sends alerts; the
+// owner's pull down only refreshes the list.
+async function pollLiveOrders(opts: { alert: boolean; storeIds?: string[] }) {
+  const date = getTodayIST();
+  const nowIso = new Date().toISOString();
+  const results: any[] = [];
+  for (const store of await liveStores()) {
+    if (opts.storeIds && !opts.storeIds.includes(store.id)) continue;
+    const key = `live-orders:${store.id}:${date}`;
+    const prev = await kv.get(key) as liveOrders.LiveDay | null;
+    try {
+      const { orders, fields } = liveOrders.parseLive(await ciferonAdminGet(store, 'https://api.ciferon.com/Api/OrderReport/GetLiveOrderDetail'));
+      const day = liveOrders.mergePoll(prev, { storeId: store.id, date }, orders, nowIso, fields);
+      let alerted = 0;
+      const settings = (await kv.get('live-orders:settings')) as { alerts?: boolean } | null;
+      if (opts.alert && settings?.alerts !== false) {
+        const stuck = liveOrders.stuckToAlert(day, Date.now());
+        if (stuck.length) {
+          alerted = await alertStuckOrders(store, date, stuck);
+          for (const o of stuck) day.orders[o.key] = { ...day.orders[o.key], alertedAt: nowIso };
+        }
+      }
+      // The cron's looks make the day's line of open orders (Insights > Rush hours).
+      if (opts.alert) day.timeline = [...(day.timeline || []), [istMinutesNow(), Object.values(day.orders).filter((o) => !o.goneAt).length]];
+      await kv.set(key, day);
+      const view = liveOrders.nowView(day, Date.now());
+      results.push({ store: store.name, open: view.open, openTotal: view.openTotal, stuck: view.stuck, alerted });
+    } catch (error: any) {
+      await kv.set(key, { ...(prev || { storeId: store.id, date, orders: {}, lastPoll: null, polls: 0 }), error: error?.message || String(error) }).catch(() => undefined);
+      results.push({ store: store.name, error: error?.message || String(error) });
+    }
+    // The cron's look also notes which items are switched off on Zomato and Swiggy, for the day's
+    // out-of-stock report (onlineStock.trackStatus). Saved only when something changed.
+    if (opts.alert) await trackOnlineStock(store, date, nowIso).catch((e) => console.error(`[online stock] ${store.name}:`, e?.message || e));
+    // And sends the store its "steam now" pushes when they're due (rushInsights.steamNudges).
+    if (opts.alert) await steamNudgeCheck(store, date).catch((e) => console.error(`[steam now] ${store.name}:`, e?.message || e));
+  }
+  return results;
+}
+
+const STOCK_STATUS_URL = 'https://api.ciferon.com/Api/ZomatoApi/StockStatus';
+async function trackOnlineStock(store: any, date: string, nowIso: string) {
+  const items = onlineStock.parseStockStatus(await ciferonAdminGet(store, STOCK_STATUS_URL));
+  if (!items.length) return;
+  const key = `online-stock-day:${store.id}:${date}`;
+  const prev = await kv.get(key) as onlineStock.StatusDay | null;
+  const next = onlineStock.trackStatus(prev, date, items, nowIso);
+  if (!prev || JSON.stringify(prev.items) !== JSON.stringify(next.items)) await kv.set(key, next);
+}
+
+app.post('/make-server-c2dd9b9d/cron/live-orders', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  const minutes = istMinutesNow();
+  if (c.req.query('force') !== '1' && (minutes < LIVE_FROM_MIN || minutes >= LIVE_TO_MIN)) return c.json({ success: true, skipped: true });
+  try {
+    return c.json({ success: true, stores: await pollLiveOrders({ alert: c.req.query('alert') !== '0' }) });
+  } catch (error: any) {
+    console.error('Error checking live orders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// 11:45 PM: a last look, then every order seen today against the day's bills. ?date= checks another
+// day's saved orders; ?dry=1 neither saves nor tells anyone.
+app.post('/make-server-c2dd9b9d/cron/live-orders-close', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const today = getTodayIST();
+    const q = c.req.query('date') || '';
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : today;
+    const dry = c.req.query('dry') === '1';
+    if (date === today && !dry && !inPosQuietHours()) await pollLiveOrders({ alert: false });
+    const nowIso = new Date().toISOString();
+    const results: any[] = [];
+    const owners = (await staffForNotifications()).filter((u: any) => u.role === 'cluster_head' && u.authUserId && u.status !== 'inactive');
+    for (const store of await liveStores()) {
+      const day = await kv.get(`live-orders:${store.id}:${date}`) as liveOrders.LiveDay | null;
+      if (!day || !Object.keys(day.orders || {}).length) { results.push({ store: store.name, seen: 0 }); continue; }
+      let check: liveOrders.CloseCheck;
+      try {
+        check = liveOrders.closeCheck(day, await fetchBilledOrders(store, date), nowIso);
+      } catch (error: any) {
+        results.push({ store: store.name, error: `Bills not read: ${error?.message || error}` });
+        continue;
+      }
+      const s = liveOrders.checkSummary(check.findings);
+      results.push({ store: store.name, seen: check.seen, matched: check.matched, bills: check.finals, ...s });
+      if (dry) continue;
+      await kv.set(`live-orders-check:${store.id}:${date}`, check);
+      const onceKey = `live-orders-check-sent:${store.id}:${date}`;
+      if (!check.findings.length || await kv.get(onceKey)) continue;
+      const parts = [
+        s.notBilled ? `${s.notBilled} order${s.notBilled > 1 ? 's were' : ' was'} open but never became a bill (Rs ${s.notBilledTotal})` : '',
+        s.billedLess ? `${s.billedLess} ${s.billedLess > 1 ? 'were' : 'was'} billed Rs ${s.lessBy} less than ${s.billedLess > 1 ? 'they' : 'it'} came to` : '',
+        s.openAtClose ? `${s.openAtClose} ${s.openAtClose > 1 ? 'are' : 'is'} still open in Ciferon (Rs ${s.openTotal})` : '',
+      ].filter(Boolean);
+      const message = `${store.name}, ${date}: ${parts.join(', ')}. Open Home > Right now to see which.`;
+      for (const u of owners) await notifyUser(u.authUserId, 'orders_unbilled', `Orders to check: ${store.name}`, message, undefined, date).catch(() => undefined);
+      await kv.set(onceKey, { at: nowIso, findings: check.findings.length });
+    }
+    // The day's out-of-stock report, and the store incharge asked why (stock-out-day:{store}:{date}).
+    const outOfStock: any[] = [];
+    for (const store of await liveStores()) {
+      try {
+        const report = await buildOutOfStockDay(store, date);
+        outOfStock.push({ store: store.name, items: report.items.map((i) => `${i.name}${i.periods.some((p) => !p.to) ? ' (still off)' : ''}`) });
+        if (dry) continue;
+        await kv.set(`stock-out-day:${store.id}:${date}`, report);
+        if (report.items.some((i) => !i.explanation)) await askStockOutReasons(store, report, false);
+      } catch (error: any) {
+        outOfStock.push({ store: store.name, error: error?.message || String(error) });
+      }
+    }
+    console.log(`Live orders closing check ${date}:`, JSON.stringify(results), 'out of stock:', JSON.stringify(outOfStock));
+    return c.json({ success: true, date, stores: results, outOfStock });
+  } catch (error: any) {
+    console.error('Error running the live orders closing check:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// GET /live-orders/now - the owner and operations managers: what is open now in each store, and the
+// latest closing check (today's, else last night's). ?fresh=1 (a pull down) looks again when the last
+// look is over a minute old.
+app.get('/make-server-c2dd9b9d/live-orders/now', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  const role = auth.user.user_metadata?.role;
+  const designation = auth.user.user_metadata?.designation;
+  const isOperationsManager = role === 'manager' && designation !== 'store_incharge' && designation !== 'production_incharge';
+  if (role !== 'cluster_head' && !isOperationsManager) return c.json({ error: 'Only the owner and operations see live orders' }, 403);
+  try {
+    const date = getTodayIST();
+    const minutes = istMinutesNow();
+    const open = minutes >= LIVE_FROM_MIN && minutes < LIVE_TO_MIN;
+    const stores = await liveStores();
+    const keys = stores.map((s: any) => `live-orders:${s.id}:${date}`);
+    if (c.req.query('fresh') === '1' && open) {
+      const prev = await kv.mget(keys) as (liveOrders.LiveDay | null)[];
+      const stale = stores.filter((_: any, i: number) => !prev[i]?.lastPoll || Date.now() - Date.parse(prev[i]!.lastPoll!) > 60 * 1000);
+      if (stale.length) await pollLiveOrders({ alert: false, storeIds: stale.map((s: any) => s.id) }).catch(() => undefined);
+    }
+    const days = await kv.mget(keys) as (liveOrders.LiveDay | null)[];
+    const yesterday = addDaysToDateString(date, -1);
+    const checks = await kv.mget(stores.flatMap((s: any) => [`live-orders-check:${s.id}:${date}`, `live-orders-check:${s.id}:${yesterday}`])) as (liveOrders.CloseCheck | null)[];
+    const offs = await kv.mget(stores.flatMap((s: any) => [`online-stock:${s.id}:${date}`, `online-stock:${s.id}:${yesterday}`])) as any[];
+    const outDays = await kv.mget(stores.flatMap((s: any) => [`stock-out-day:${s.id}:${date}`, `stock-out-day:${s.id}:${yesterday}`])) as (OutOfStockDay | null)[];
+    return c.json({
+      date, open,
+      stores: stores.map((s: any, i: number) => {
+        const check = checks[2 * i] || checks[2 * i + 1] || null;
+        const off = offs[2 * i] || offs[2 * i + 1] || null;
+        return {
+          storeId: s.id, storeName: s.name,
+          ...liveOrders.nowView(days[i], Date.now()),
+          error: days[i]?.error || null,
+          check: check ? { ...check, summary: liveOrders.checkSummary(check.findings) } : null,
+          // Items switched off on Zomato and Swiggy that the store still sells (4 PM check).
+          offOnline: off ? { date: off.date, at: off.at, sells: off.sells || [], kept: (off.kept || []).length, idle: off.idle || 0, off: off.off || 0 } : null,
+          // The latest day's out-of-stock report with the store incharge's reasons.
+          outOfStock: outDays[2 * i] || outDays[2 * i + 1] || null,
+        };
+      }),
+    });
+  } catch (error: any) {
+    console.error('Error reading live orders:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// ITEMS SWITCHED OFF ONLINE (owner, 1 Nov 2026: "can we detect this on a regular basis") - onlineStock.ts
+// ============================================
+// pg_cron online-stock at 4 PM IST (an hour after opening, when last night's switch-offs should be
+// back on): Ciferon's Item Stock Status for Zomato and Swiggy against the last 30 days of sales. Items
+// the store still sells -> the store incharge and the owner, once a day, with when and by whom each
+// was switched off (Ciferon's item log). Saved as online-stock:{storeId}:{date}; the owner's Right now
+// card lists them. Kept off on purpose: online-stock:kept-off:{storeId} (cleared when it's back on).
+async function runOnlineStockCheck(store: any, date: string) {
+  const items = onlineStock.parseStockStatus(await ciferonAdminGet(store, 'https://api.ciferon.com/Api/ZomatoApi/StockStatus'));
+  if (!items.length) throw new Error('Ciferon sent no items');
+  const dates: string[] = [];
+  for (let i = 0; i <= onlineStock.ONLINE_DAYS; i++) dates.push(addDaysToDateString(date, -i));
+  const records = (await kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`))) as any[];
+  const stats = onlineStock.soldStats(records.filter(Boolean).map((r: any) => ({ date: r.date, orders: r.orders || [] })), date);
+  // Kept off on purpose until it's back on: switched on again, it's watched like any other item.
+  const keptKey = `online-stock:kept-off:${store.id}`;
+  const kept = ((await kv.get(keptKey)) || {}) as Record<string, any>;
+  const backOn = items.filter((i) => i.inStock && kept[i.productId]).map((i) => i.productId);
+  if (backOn.length) { backOn.forEach((id) => delete kept[id]); await kv.set(keptKey, kept); }
+  const result = onlineStock.offOnline(items, stats, kept, date);
+  for (const row of result.sells.slice(0, 15)) {
+    try {
+      const logs = await ciferonAdminGet(store, `https://api.ciferon.com/api/ViewLogs/GetProductLogs?productId=${encodeURIComponent(row.productId)}`);
+      const off = onlineStock.lastSwitchOff(Array.isArray(logs?.Result) ? logs.Result : []);
+      Object.assign(row, { offSince: off.at, offBy: off.by, platforms: off.platforms });
+    } catch { /* no log for it: the item still shows, without since when */ }
+  }
+  return { storeId: store.id, storeName: store.name, date, at: new Date().toISOString(), ...result };
+}
+
+app.post('/make-server-c2dd9b9d/cron/online-stock', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  try {
+    const date = getTodayIST();
+    const dry = c.req.query('dry') === '1';
+    const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+    const owners = staff.filter((u: any) => u.role === 'cluster_head');
+    const results: any[] = [];
+    for (const store of await liveStores()) {
+      // Yesterday's out-of-stock items still without a reason: the store incharge once more, and the owner.
+      if (!dry) {
+        const yday = addDaysToDateString(date, -1);
+        const report = await kv.get(`stock-out-day:${store.id}:${yday}`) as OutOfStockDay | null;
+        if (report?.items.some((i) => !i.explanation)) {
+          await askStockOutReasons(store, report, true).catch(() => undefined);
+          const lateKey = `stock-out-day-owner-late:${store.id}:${yday}`;
+          if (!(await kv.get(lateKey))) {
+            await tellOwnerStockOuts(store, report, true).catch(() => undefined);
+            await kv.set(lateKey, { at: new Date().toISOString() });
+          }
+        }
+      }
+      let check: Awaited<ReturnType<typeof runOnlineStockCheck>>;
+      try {
+        check = await runOnlineStockCheck(store, date);
+      } catch (error: any) {
+        results.push({ store: store.name, error: error?.message || String(error) });
+        continue;
+      }
+      results.push({ store: store.name, items: check.total, off: check.off, sells: check.sells.map((s) => s.name), kept: check.kept.length, idle: check.idle });
+      if (dry) continue;
+      await kv.set(`online-stock:${store.id}:${date}`, check);
+      const onceKey = `online-stock-sent:${store.id}:${date}`;
+      if (!check.sells.length || await kv.get(onceKey)) continue;
+      const incharges = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+      const sinceWord = (iso?: string | null) => {
+        if (!iso) return '';
+        const d = new Date(Date.parse(iso) + IST_OFFSET_MS);
+        const h = d.getUTCHours(), m = d.getUTCMinutes();
+        return ` (off since ${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })} ${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'})`;
+      };
+      const names = check.sells.slice(0, 6).map((s) => `${s.name.replace(/\s*-\s*[OA]\.?$/, '')}${sinceWord(s.offSince)}`);
+      const more = check.sells.length > 6 ? ` and ${check.sells.length - 6} more` : '';
+      const title = `${check.sells.length} item${check.sells.length > 1 ? 's' : ''} switched off on Zomato and Swiggy`;
+      const message = `${store.name}: ${names.join(', ')}${more}. These still sell - if you have them, switch them on in Ciferon (Item Stock Status); if they're off on purpose, tell the owner.`;
+      for (const u of [...incharges, ...owners]) await notifyUser(u.authUserId, 'online_items_off', title, message, undefined, date).catch(() => undefined);
+      await kv.set(onceKey, { at: new Date().toISOString(), items: check.sells.length });
+    }
+    console.log(`Online stock check ${date}:`, JSON.stringify(results));
+    return c.json({ success: true, date, stores: results });
+  } catch (error: any) {
+    console.error('Error checking items switched off online:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ---- The day's out-of-stock report (owner, 1 Nov 2026: "for a day which items were not in stock and
+// when they were stocked and send notification to the store manager explaining why it was out of
+// stock") ----
+// Built at 11:45 PM (live-orders-close) for each store: every item switched off on Zomato and Swiggy
+// during the day that the store sells, with when it went off and came back (Ciferon's item log, else
+// the 3-minute looks). The store incharge picks a reason for each; the owner hears when all are in,
+// and at 4 PM the next day if they aren't. Saved as stock-out-day:{storeId}:{date}.
+type OutOfStockDay = { storeId: string; storeName: string; date: string; at: string; items: onlineStock.OutItem[]; ownerToldAt?: string };
+
+async function buildOutOfStockDay(store: any, date: string): Promise<OutOfStockDay> {
+  const items = onlineStock.parseStockStatus(await ciferonAdminGet(store, STOCK_STATUS_URL));
+  const seen = await kv.get(`online-stock-day:${store.id}:${date}`) as onlineStock.StatusDay | null;
+  const kept = ((await kv.get(`online-stock:kept-off:${store.id}`)) || {}) as Record<string, any>;
+  const dates: string[] = [];
+  for (let i = 0; i <= onlineStock.ONLINE_DAYS; i++) dates.push(addDaysToDateString(date, -i));
+  const records = (await kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`))) as any[];
+  const stats = onlineStock.soldStats(records.filter(Boolean).map((r: any) => ({ date: r.date, orders: r.orders || [] })), date);
+  // Off at any look today, or off now; only what the store sells, and not what's kept off on purpose.
+  const byId = new Map(items.map((i) => [i.productId, i]));
+  const ids = new Set([...items.filter((i) => !i.inStock).map((i) => i.productId), ...Object.keys(seen?.items || {})]);
+  const candidates = [...ids].map((id) => ({ productId: id, name: byId.get(id)?.name || seen?.items[id]?.name || id, category: byId.get(id)?.category || seen?.items[id]?.category || '', inStock: false }));
+  const { sells } = onlineStock.offOnline(candidates, stats, kept, date, items);
+  const prev = await kv.get(`stock-out-day:${store.id}:${date}`) as OutOfStockDay | null;
+  const out: onlineStock.OutItem[] = [];
+  for (const row of sells.slice(0, 25)) {
+    let periods: onlineStock.OffPeriod[] = [];
+    try {
+      const logs = await ciferonAdminGet(store, `https://api.ciferon.com/api/ViewLogs/GetProductLogs?productId=${encodeURIComponent(row.productId)}`);
+      periods = onlineStock.dayPeriods(Array.isArray(logs?.Result) ? logs.Result : [], date);
+    } catch { /* no log: the 3-minute looks below */ }
+    if (!periods.length) periods = (seen?.items[row.productId]?.periods || []).map((p) => ({ from: p.from, to: p.to, by: null, platforms: [] }));
+    if (!periods.length && byId.get(row.productId)?.inStock === false) periods = [{ from: null, to: null, by: null, platforms: [] }];
+    if (!periods.length) continue;
+    out.push({ productId: row.productId, name: onlineStock.cleanItemName(row.name), category: row.category, periods,
+      explanation: prev?.items.find((x) => x.productId === row.productId)?.explanation || null });
+  }
+  return { storeId: store.id, storeName: store.name, date, at: new Date().toISOString(), items: out, ...(prev?.ownerToldAt ? { ownerToldAt: prev.ownerToldAt } : {}) };
+}
+
+const dayWord = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const outItemLine = (i: onlineStock.OutItem, date: string) => `${i.name} (${i.periods.map((p) => onlineStock.periodWords(p, date)).join('; ')})`;
+
+// The store incharge (else the operations managers): pick a reason for each item. Once at closing,
+// once more at 4 PM the next day if any are still waiting.
+async function askStockOutReasons(store: any, report: OutOfStockDay, reminder: boolean) {
+  const onceKey = `stock-out-day-asked:${store.id}:${report.date}:${reminder ? 'reminder' : 'first'}`;
+  if (await kv.get(onceKey)) return;
+  const waiting = report.items.filter((i) => !i.explanation);
+  if (!waiting.length) return;
+  const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+  let to = staff.filter((u: any) => u.designation === 'store_incharge' && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+  if (!to.length) to = staff.filter((u: any) => u.role === 'manager' && !['store_incharge', 'production_incharge'].includes(u.designation));
+  const n = waiting.length;
+  const title = reminder
+    ? `Still to explain: ${n} item${n > 1 ? 's' : ''} out of stock on ${dayWord(report.date)}`
+    : `Why ${n > 1 ? `were ${n} items` : 'was an item'} out of stock today?`;
+  const list = waiting.slice(0, 5).map((i) => outItemLine(i, report.date)).join(', ');
+  const message = `${store.name}: ${list}${n > 5 ? ` and ${n - 5} more` : ''}. Open Home and pick why for each - the owner reads them.`;
+  for (const u of to) await notifyUser(u.authUserId, 'stockout_explain', title, message, undefined, report.date).catch(() => undefined);
+  await kv.set(onceKey, { at: new Date().toISOString(), to: to.map((u: any) => u.id) });
+}
+
+// The owner: the day's out-of-stock items with the reasons, once all are in (or at 4 PM the next day
+// with what's missing).
+async function tellOwnerStockOuts(store: any, report: OutOfStockDay, late: boolean) {
+  const owners = (await staffForNotifications()).filter((u: any) => u.role === 'cluster_head' && u.authUserId && u.status !== 'inactive');
+  const lines = report.items.map((i) => `${outItemLine(i, report.date)}: ${i.explanation ? `${onlineStock.REASON_WORDS[i.explanation.reason]}${i.explanation.note ? ` - "${i.explanation.note}"` : ''}` : 'no reason yet'}`);
+  const waiting = report.items.filter((i) => !i.explanation).length;
+  const title = late
+    ? `Out of stock on ${dayWord(report.date)}: ${waiting} not explained yet (${store.name})`
+    : `Out of stock on ${dayWord(report.date)}: reasons in (${store.name})`;
+  for (const u of owners) await notifyUser(u.authUserId, 'stockout_explained', title, lines.slice(0, 6).join(' · '), undefined, report.date).catch(() => undefined);
+}
+
+// GET /stock-out-day/mine - the store incharge: their store's out-of-stock days (last 3) with items
+// still to explain; the owner and operations: every store's.
+app.get('/make-server-c2dd9b9d/stock-out-day/mine', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const actor = await stockOutActor(auth);
+    const stores = (await liveStores()).filter((s: any) => actor.isOversight || (actor.isStoreIncharge && actor.storeId === s.id));
+    const today = getTodayIST();
+    const dates = [today, addDaysToDateString(today, -1), addDaysToDateString(today, -2)];
+    const keys = stores.flatMap((s: any) => dates.map((d) => `stock-out-day:${s.id}:${d}`));
+    const reports = ((await kv.mget(keys)) as (OutOfStockDay | null)[]).filter((r): r is OutOfStockDay => !!r && r.items.some((i) => !i.explanation));
+    return c.json({ reports, reasons: onlineStock.EXPLAIN_REASONS.map((value) => ({ value, label: onlineStock.REASON_WORDS[value] })) });
+  } catch (error: any) {
+    console.error('Error reading out-of-stock days:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /stock-out-day/explain { storeId, date, productId, reason, note } - the store incharge (or the
+// owner / operations). "Kept off on purpose" also keeps it off the 4 PM check.
+app.post('/make-server-c2dd9b9d/stock-out-day/explain', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const actor = await stockOutActor(auth);
+    const { storeId, date, productId, reason, note } = await c.req.json();
+    if (!actor.isOversight && !(actor.isStoreIncharge && actor.storeId === storeId)) return c.json({ error: 'Only the store incharge explains these' }, 403);
+    if (!(onlineStock.EXPLAIN_REASONS as readonly string[]).includes(reason)) return c.json({ error: 'Pick a reason' }, 400);
+    const text = String(note || '').trim().slice(0, 300);
+    if (reason === 'other' && !text) return c.json({ error: 'Write why it was out of stock' }, 400);
+    const key = `stock-out-day:${storeId}:${date}`;
+    const report = await kv.get(key) as OutOfStockDay | null;
+    const item = report?.items.find((i) => i.productId === String(productId));
+    if (!report || !item) return c.json({ error: 'That item is not in the report' }, 404);
+    item.explanation = { reason, ...(text ? { note: text } : {}), by: actor.name, at: new Date().toISOString() };
+    if (reason === 'on_purpose') {
+      const keptKey = `online-stock:kept-off:${storeId}`;
+      const kept = ((await kv.get(keptKey)) || {}) as Record<string, any>;
+      kept[item.productId] = { at: new Date().toISOString(), by: actor.employeeId, from: 'stock-out-day' };
+      await kv.set(keptKey, kept);
+    }
+    // The owner hears once, when the last reason is in.
+    const tellOwner = report.items.every((i) => i.explanation) && !report.ownerToldAt;
+    if (tellOwner) report.ownerToldAt = new Date().toISOString();
+    await kv.set(key, report);
+    if (tellOwner) {
+      const store = (await liveStores()).find((s: any) => s.id === storeId) || { id: storeId, name: report.storeName };
+      await tellOwnerStockOuts(store, report, false).catch(() => undefined);
+    }
+    return c.json({ success: true, report });
+  } catch (error: any) {
+    console.error('Error saving an out-of-stock reason:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// RUSH HOURS AND THE STEAMER PLAN (owner, 1 Nov 2026) - rushInsights.ts
+// ============================================
+// Insights > Rush hours: when the orders come (weekday x 15 minutes), the rush windows, what goes out
+// in the rush, the next 7 days' rush, and how many steamer plates to keep ready when. Orders are to
+// the minute where it's known: Step D saves entryMin from 1 Nov 2026, and order-times:{store}:{date}
+// (POST /cron/order-times) has the minutes of earlier days by order id - kept apart so the stored
+// days themselves are never rewritten (see Step D's CONFIRMED RISK).
+
+// POST /cron/order-times?from=&to= - the minutes of each order of past days (up to 20 a call).
+app.post('/make-server-c2dd9b9d/cron/order-times', async (c) => {
+  const secret = Deno.env.get('CRON_SYNC_SECRET');
+  if (!secret || c.req.header('X-Cron-Secret') !== secret) return c.json({ error: 'Unauthorized' }, 401);
+  if (inPosQuietHours()) return c.json({ error: 'Ciferon is closing its day (11:50 PM - 6:10 AM); try after 6:10 AM' }, 423);
+  const from = c.req.query('from') || '', to = c.req.query('to') || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to || addDaysToDateString(from, 19) < to) return c.json({ error: 'from and to, up to 20 days' }, 400);
+  const results: any[] = [];
+  for (const store of await liveStores()) {
+    for (let d = from; d <= to; d = addDaysToDateString(d, 1)) {
+      try {
+        const bills = await fetchBilledOrders(store, d);
+        const minutes: Record<string, number> = {};
+        for (const b of bills) {
+          const min = getCiferonOrderEntryMinIST({ EntryDate: b.entryDate });
+          if (b.orderId !== null && b.orderId !== undefined && min !== null) minutes[String(b.orderId)] = min;
+        }
+        await kv.set(`order-times:${store.id}:${d}`, { date: d, at: new Date().toISOString(), minutes });
+        results.push({ store: store.name, date: d, orders: Object.keys(minutes).length });
+      } catch (error: any) {
+        results.push({ store: store.name, date: d, error: error?.message || String(error) });
+      }
+    }
+  }
+  return c.json({ success: true, results });
+});
+
+const RUSH_KEYS = ['steamMin', 'steamMinFull', 'fullAbove', 'holdMin', 'serviceLevel'] as const;
+async function rushSettings(storeId: string): Promise<rush.SteamerSettings> {
+  const saved = ((await kv.get(`rush-settings:${storeId}`)) || {}) as Partial<rush.SteamerSettings>;
+  return { ...rush.DEFAULT_STEAMER, ...Object.fromEntries(RUSH_KEYS.filter((k) => Number.isFinite(saved[k])).map((k) => [k, saved[k]])) };
+}
+async function rushViewer(auth: any, storeId: string) {
+  const actor = await stockOutActor(auth);
+  return actor.isOversight || actor.storeId === storeId;
+}
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+// The last `weeks` weeks of a store's bills as orders (to the minute where known), today left out.
+async function loadRushDays(store: any, today: string, weeks: number): Promise<{ days: rush.Day[]; dates: string[] }> {
+  const dates: string[] = [];
+  for (let i = 1; i <= weeks * 7; i++) dates.push(addDaysToDateString(today, -i));
+  const [records, times] = await Promise.all([
+    kv.mget(dates.map((d) => `order-item-detail:${store.id}:${d}`)),
+    kv.mget(dates.map((d) => `order-times:${store.id}:${d}`)),
+  ]) as [any[], any[]];
+  const days = records.map((r, i) => (r ? rush.ordersOfDay({ date: dates[i], orders: r.orders || [] }, times[i]?.minutes || {}) : null)).filter((d): d is rush.Day => !!d);
+  return { days, dates };
+}
+
+// "Steam now" to the store before the rush (owner, 1 Nov 2026): today's plan is worked out once
+// (steam-plan:{store}:{date}), then each push goes to the store incharge and the store crew at its
+// time. Runs with the live-orders cron (3 PM - 11:45 PM), so pushes before 3 PM are skipped.
+async function steamNudgeCheck(store: any, date: string) {
+  const key = `steam-plan:${store.id}:${date}`;
+  let rec = await kv.get(key) as { date: string; nudges: rush.SteamNudge[]; sent: string[] } | null;
+  if (!rec) {
+    const { days } = await loadRushDays(store, date, 12);
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const profiles = rush.weekdayProfiles(days);
+    const plan = rush.steamerPlan(profiles[weekday], rush.trendFactor(days, weekday), await rushSettings(store.id));
+    rec = { date, nudges: rush.steamNudges(plan), sent: [] };
+    await kv.set(key, rec);
+  }
+  const now = istMinutesNow();
+  const due = rec.nudges.filter((n) => {
+    const m = Number(n.at.slice(0, 2)) * 60 + Number(n.at.slice(3, 5));
+    return now >= m && now < m + 10 && !rec!.sent.includes(n.at);
+  });
+  if (!due.length) return;
+  const staff = (await staffForNotifications()).filter((u: any) => u.authUserId && u.status !== 'inactive');
+  const to = staff.filter((u: any) => ['store_incharge', 'store_ops'].includes(u.designation) && (u.storeId === store.id || (u.assignedStoreIds || []).includes(store.id)));
+  for (const n of due) {
+    for (const u of to) await notifyUser(u.authUserId, 'steam_now', n.title, `${store.name}: ${n.message}`, undefined, date).catch(() => undefined);
+    rec.sent.push(n.at);
+  }
+  await kv.set(key, rec);
+}
+
+// GET /insights/rush?storeId=&weeks=12&date= - the owner, operations, and the store's own incharge.
+app.get('/make-server-c2dd9b9d/insights/rush', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const stores = await liveStores();
+    const storeId = c.req.query('storeId') || stores[0]?.id;
+    const store = stores.find((s: any) => s.id === storeId) || (await kv.get(`store:${storeId}`));
+    if (!store) return c.json({ error: 'Store not found' }, 404);
+    if (!(await rushViewer(auth, store.id))) return c.json({ error: 'Not your store' }, 403);
+    const weeks = Math.min(26, Math.max(2, Number(c.req.query('weeks')) || 12));
+    const today = getTodayIST();
+    const { days, dates } = await loadRushDays(store, today, weeks);
+    const lives = await kv.mget([today, ...dates.slice(0, 13)].map((d) => `live-orders:${store.id}:${d}`)) as (liveOrders.LiveDay | null)[];
+    const allOrders = days.flatMap((d) => d.orders);
+    const profiles = rush.weekdayProfiles(days);
+    const mix = rush.rushMix(days, profiles);
+    const ahead = Array.from({ length: 7 }, (_, i) => addDaysToDateString(today, i));
+    const forecast = rush.forecastDays(days, profiles, ahead);
+    const planDate = ahead.includes(c.req.query('date') || '') ? c.req.query('date')! : today;
+    const planDay = forecast.find((f) => f.date === planDate)!;
+    const settings = await rushSettings(store.id);
+    const plan = rush.steamerPlan(profiles[planDay.weekday], planDay.factor, settings);
+    // Orders open at once, from the live looks: today's line, and the last two weeks by slot.
+    const openSum = new Array(rush.SLOTS).fill(0), openN = new Array(rush.SLOTS).fill(0);
+    for (const day of lives.slice(1)) for (const [m, n] of day?.timeline || []) { const i = rush.slotOf(m); if (i >= 0) { openSum[i] += n; openN[i]++; } }
+    const round = (xs: number[]) => xs.map(r2);
+    return c.json({
+      storeId: store.id, storeName: store.name, today, weeks,
+      days: days.filter((d) => d.orders.length >= 5).length,
+      orders: allOrders.length,
+      exactShare: allOrders.length ? r2(allOrders.filter((o) => o.exact).length / allOrders.length) : 0,
+      slots: Array.from({ length: rush.SLOTS }, (_, i) => rush.slotLabel(i)),
+      profiles: profiles.map((p) => ({
+        weekday: p.weekday, days: p.days, ordersPerDay: r2(p.ordersPerDay), rush: p.rush,
+        orders: round(p.orders), high: round(p.high),
+        steamer: Object.fromEntries(rush.FILLINGS.map((f) => [f, round(p.steamer[f])])),
+        channels: { counter: round(p.channels.counter), zomato: round(p.channels.zomato), swiggy: round(p.channels.swiggy) },
+      })),
+      mix,
+      forecast: forecast.map((f) => ({ ...f, factor: r2(f.factor), orders: round(f.orders) })),
+      plan: { date: planDate, weekday: planDay.weekday, settings: plan.settings, runs: plan.runs,
+        slots: plan.slots.map((s) => ({ ...s, orders: r2(s.orders), plates: Object.fromEntries(rush.FILLINGS.map((f) => [f, r2(s.plates[f])])) })) },
+      live: {
+        today: lives[0]?.timeline || [],
+        avgOpen: openSum.map((s, i) => (openN[i] ? r2(s / openN[i]) : null)),
+        daysWithLooks: lives.slice(1).filter((d) => d?.timeline?.length).length,
+      },
+      steamerStyles: rush.STEAMER_STYLES,
+    });
+  } catch (error: any) {
+    console.error('Error building the rush hours page:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /insights/rush/settings { storeId, steamMin, steamMinFull, fullAbove, holdMin, serviceLevel } - the owner and operations.
+app.post('/make-server-c2dd9b9d/insights/rush/settings', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  try {
+    const actor = await stockOutActor(auth);
+    if (!actor.isOversight) return c.json({ error: 'Only the owner or operations change these' }, 403);
+    const body = await c.req.json();
+    if (!body.storeId) return c.json({ error: 'storeId is needed' }, 400);
+    const clamp = (v: any, lo: number, hi: number) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : undefined);
+    const next = {
+      ...(await rushSettings(body.storeId)),
+      ...(clamp(body.steamMin, 3, 40) !== undefined ? { steamMin: clamp(body.steamMin, 3, 40) } : {}),
+      ...(clamp(body.steamMinFull, 3, 60) !== undefined ? { steamMinFull: clamp(body.steamMinFull, 3, 60) } : {}),
+      ...(clamp(body.fullAbove, 1, 30) !== undefined ? { fullAbove: Math.round(clamp(body.fullAbove, 1, 30)!) } : {}),
+      ...(clamp(body.holdMin, 5, 60) !== undefined ? { holdMin: clamp(body.holdMin, 5, 60) } : {}),
+      ...(clamp(body.serviceLevel, 0.5, 0.95) !== undefined ? { serviceLevel: clamp(body.serviceLevel, 0.5, 0.95) } : {}),
+    };
+    await kv.set(`rush-settings:${body.storeId}`, next);
+    return c.json({ success: true, settings: next });
+  } catch (error: any) {
+    console.error('Error saving the steamer settings:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /online-stock/keep-off { storeId, productId, keep } - the owner: an item off on purpose isn't
+// flagged again until it's back on (keep: false flags it again).
+app.post('/make-server-c2dd9b9d/online-stock/keep-off', async (c) => {
+  const auth = await verifyUser(c.req.header('Authorization'));
+  if ('error' in auth) return c.json({ error: auth.error }, auth.status);
+  if (auth.user.user_metadata?.role !== 'cluster_head') return c.json({ error: 'Only the owner decides this' }, 403);
+  try {
+    const { storeId, productId, keep } = await c.req.json();
+    if (!storeId || !productId) return c.json({ error: 'storeId and productId are needed' }, 400);
+    const keptKey = `online-stock:kept-off:${storeId}`;
+    const kept = ((await kv.get(keptKey)) || {}) as Record<string, any>;
+    if (keep === false) delete kept[String(productId)];
+    else kept[String(productId)] = { at: new Date().toISOString(), by: auth.user.id };
+    await kv.set(keptKey, kept);
+    // The latest check moves the item over, so the card shows it at once.
+    for (const d of [getTodayIST(), addDaysToDateString(getTodayIST(), -1)]) {
+      const key = `online-stock:${storeId}:${d}`;
+      const check = await kv.get(key) as any;
+      if (!check) continue;
+      const row = [...(check.sells || []), ...(check.kept || [])].find((r: any) => r.productId === String(productId));
+      if (row) {
+        check.sells = (check.sells || []).filter((r: any) => r.productId !== String(productId));
+        check.kept = (check.kept || []).filter((r: any) => r.productId !== String(productId));
+        (keep === false ? check.sells : check.kept).push(row);
+        await kv.set(key, check);
+      }
+      break;
+    }
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('Error keeping an item off online:', error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -15389,6 +16614,14 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
       // a cut-off list would remind them about days they did fill in.
       const timesheets = await getAllByPrefixWithRetry(`timesheet:${employee.employeeId}:`);
       const filledDates = new Set(timesheets.map((t: any) => t.date));
+      // A day with a check-in and check-out fills its own timesheet (punchTimesheet.ts) - the
+      // shift clock catches up here on days it missed (the first run after it started did all five).
+      for (const d of relevantDates.filter((d) => !filledDates.has(d))) {
+        const punch: any = await kv.get(`punch:${employee.employeeId}:${d}`).catch(() => null);
+        if (!punch?.in || !punch?.out) continue;
+        await syncTimesheet(punchDeps, punch);
+        if (await kv.get(`timesheet:${employee.employeeId}:${d}`)) filledDates.add(d);
+      }
 
       const leaves = await getAllByPrefixWithRetry(`leave:${employee.employeeId}:`);
       const leaveDates = new Set(
@@ -15397,7 +16630,9 @@ app.post('/make-server-c2dd9b9d/send-attendance-reminders', async (c) => {
 
       const missingDates = relevantDates.filter(d => !filledDates.has(d) && !leaveDates.has(d));
 
-      if (missingDates.length === 0) {
+      // Only when yesterday is missing: the same old days used to be asked about every morning for
+      // five days, and the reminder was opened 15% of the time (owner, 30 Oct 2026).
+      if (missingDates.length === 0 || !missingDates.includes(windowDates[0])) {
         skippedComplete++;
         continue;
       }
@@ -16071,6 +17306,10 @@ const STORE_OPENING_HOUR_IST = 15;
 // sync of any kind - nightly, Sync Now, past-day or bulk re-sync - runs in that window (owner,
 // 27 Oct 2026). The nightly cron fires at 10:30 PM and again at 11 PM for last-minute sales
 // (pg_cron pos-nightly-sync and pos-late-sync), both outside it.
+const POS_SYNC_LAST_START_KEY = 'pos-sync:last-start';
+// A pull down on the screen syncs too (owner, 31 Oct 2026); one within this long of the last sync
+// is skipped and the phone just reloads what that sync brought in.
+const PULL_SYNC_GAP_MS = 2 * 60 * 1000;
 const POS_QUIET_START_MIN_IST = 23 * 60 + 50;
 const POS_QUIET_END_MIN_IST = 6 * 60 + 10;
 function inPosQuietHours(): boolean {
@@ -16098,6 +17337,8 @@ async function runPosSync(targetDate?: string) {
   if (!isBackfill && getHourIST() < STORE_OPENING_HOUR_IST) {
     return { success: true, skipped: true, date: today, message: `Skipped - stores haven't opened yet (before ${STORE_OPENING_HOUR_IST}:00 IST)`, results };
   }
+  // When today's last sync started: a pull down on the phone skips a sync this recent (trigger route).
+  if (!isBackfill) await kv.set(POS_SYNC_LAST_START_KEY, { at: new Date().toISOString() }).catch(() => undefined);
 
   try {
     const allStores = await kv.getByPrefix('store:');
@@ -16648,6 +17889,8 @@ async function runPosSync(targetDate?: string) {
           // (TakeAway+HomeDelivery) vs tray (DineIn) usage per order.
           orderType: o.SaleOrderType || null,
           orderHourIST: getCiferonOrderHourIST(o),
+          // To the minute, for the rush-hours page (owner, 1 Nov 2026).
+          entryMin: getCiferonOrderEntryMinIST(o),
           items: classifyOrderItems((o.OrderItemWrapperList || []).map((i: any) => ({
             ProductId: i.ProductId, ProductName: i.ProductName, Quantity: i.Quantity, Rate: i.Rate, Total: i.Total
           }))),
@@ -16843,7 +18086,9 @@ app.post('/make-server-c2dd9b9d/pos-sync', async (c) => {
   }
 
   const result = await runPosSync();
-  return c.json(result, (result as any).status || 200);
+  // The day's orders are in: check burgers against buns bought (burgerCheck.ts). Never fails the sync.
+  const burgerAlerts = await sendBurgerAlerts().catch((e) => { console.log('Burger check failed:', e); return -1; });
+  return c.json({ ...(result as any), burgerAlerts }, (result as any).status || 200);
 });
 
 // Manual "Sync Now" button entrypoint - lets production head, operations manager, store
@@ -16862,6 +18107,14 @@ app.post('/make-server-c2dd9b9d/pos-sync/trigger', async (c) => {
   const isOperationsManager = role === 'manager' && !isStoreIncharge && !isProductionIncharge;
   if (role !== 'cluster_head' && !isOperationsManager && !isStoreIncharge && !isProductionIncharge) {
     return c.json({ error: 'Only production head, operations manager, store incharge, or cluster head can trigger a manual POS sync' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  if (body?.fromPull) {
+    const last = await kv.get(POS_SYNC_LAST_START_KEY).catch(() => null) as { at?: string } | null;
+    if (last?.at && Date.now() - Date.parse(last.at) < PULL_SYNC_GAP_MS) {
+      return c.json({ success: true, skipped: true, recent: true, lastAt: last.at, message: 'Synced moments ago' });
+    }
   }
 
   const result = await runPosSync();
@@ -18107,7 +19360,9 @@ registerWorkplaceRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, notifyU
 // Recipe capture sheets, standards and cost per piece (recipes.ts).
 registerRecipeRoutes(app, { kv: kvWithRetry, verifyUser, getTodayIST, getAllByPrefix: getAllByPrefixWithRetry, storage: supabase.storage });
 // Shift clock-in/out, team KPIs and variable pay (attendance.ts, kpi.ts).
-registerKpiRoutes(app, { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id, type, title, message, relatedId, relatedDate) => notifyUser(id, type, title, message, relatedId, relatedDate) });
+// The shift clock and KPIs; the attendance reminder uses the same deps to fill timesheets from punches.
+const punchDeps = { kv: kvWithRetry, verifyUser, getAllByPrefix: getAllByPrefixWithRetry, notifyUser: (id: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string) => notifyUser(id, type, title, message, relatedId, relatedDate), timesheetPending: notifyTimesheetApprovers };
+registerKpiRoutes(app, punchDeps);
 // Event stalls: their own P&L, stock, cash, staff and sales (events.ts).
 registerEventsRoutes(app, eventsDeps);
 // Expense checks: flags on new entries, and the routes to list and decide them (expenseReview.ts).
@@ -18117,6 +19372,13 @@ registerRepairRoutes(app, expenseReviewDeps);
 // Customer complaints: photos, Bunny's reading, explanations, decisions (complaints.ts).
 registerComplaintRoutes(app, { kv: kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST });
 registerPaperworkRoutes(app, { kv: kvWithRetry, rows: getAllByPrefixWithRetry, verifyUser, storage: supabase.storage });
+// Team chat: groups and one-to-ones, read and sent from the phones; the server keeps the groups and sends notifications (chat.ts).
+registerChatRoutes(app, {
+  kv: kvWithRetry, db: supabase, verifyUser, staff: staffForNotifications, rows: getAllByPrefixWithRetry, notifyUser,
+  drive: { configured: gdrive.driveConfigured, folder: gdrive.ensureDriveFolder, upload: gdrive.uploadDriveFile, download: gdrive.downloadDriveFile },
+  // Bunny in the chat: Ask Bunny's look-ups, with the same data access as the Insights routes below.
+  bunny: (o) => askBunnyInChat({ kv: { ...kvWithRetry, getAllByPrefix: getAllByPrefixWithRetry }, verifyUser, getTodayIST } as any, o),
+});
 registerSiteAuditRoutes(app, {
   kv: kvWithRetry, verifyUser, notifyUser, storage: supabase.storage, getTodayIST,
   // A sign-in for an independent auditor: role audit, designation site_auditor (trusted keys are

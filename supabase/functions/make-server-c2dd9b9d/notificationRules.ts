@@ -20,6 +20,7 @@ const URGENT = new Set([
   'stock_count_reminder', // the month-end momo count not entered yet (owner, 29 Oct 2026: urgent, up to 5 times)
   'compliance_overdue', // a licence, safety check or certificate past its due date (compliance.ts)
   'cctv_intruder', // a camera saw someone after working hours, nobody checked in there (cctv.ts)
+  'order_stuck', // an order open in Ciferon too long, to the store incharge (liveOrders.ts)
 ]);
 const ACTION = new Set([
   'expense_flag', 'production_flag', 'workplace_flag', 'workplace_missed', 'complaint_answered', 'complaint_read', 'expense_approval', 'expense_rejected', 'opening_late', 'opening_pick', 'audit_assigned', 'audit_report', 'supply_low', 'shopping_list', 'shopping_done', 'shift_checkin', 'delivery_incoming',
@@ -27,7 +28,16 @@ const ACTION = new Set([
   'compliance_due',
   'payslip_ready', 'performance_report', 'performance_due', // payslips and monthly performance notes (performance.ts)
   'cctv_ppe', // a camera saw someone without cap, gloves or apron (cctv.ts)
+  'cctv_ppe_still', // the same, 3 camera checks in a row (cctv.ts, roundupRules.ts)
   'asset_missing', 'equipment_check_due', // lost equipment, and the 3-monthly equipment check (assets.ts)
+  'burger_check', // burger buns bought and burgers sold don't add up (burgerCheck.ts)
+  'orders_unbilled', // the closing check: orders seen open that never became a bill, or a smaller one (liveOrders.ts)
+  'online_items_off', // items switched off on Zomato and Swiggy that still sell (onlineStock.ts)
+  'stockout_explain', // why each item was out of stock today, to the store incharge (onlineStock.ts)
+  'stockout_explained', // the day's out-of-stock items with the reasons, to the owner
+  'steam_now', // put momos in the steamer now: the rush is coming (rushInsights.ts)
+  'chat_direct', // a one-to-one chat message (chat.ts); group messages (chat_group) are updates, bundled
+  'chat_mention', // someone named you with @ in a group chat (chat.ts)
 ]);
 const REMINDER = new Set(['workplace_due', 'workplace_checked', 'opening_due', 'store_cover', 'password_expiring', 'paytm_recalibration_reminder']);
 // Each needs its own row: approve / reject buttons act on one record.
@@ -45,6 +55,51 @@ export function bundles(type: string): boolean {
   if (NEVER_BUNDLE.has(type) || cat === 'urgent') return false;
   return cat === 'update' || type === 'expense_flag' || type === 'production_flag' || type === 'workplace_flag' || type === 'stock_request_new';
 }
+
+// How loud each kind is (owner, 30 Oct 2026: "too many notifications, people have stopped reading
+// them" - 20 to 35 buzzes a day each for the owner and the incharges, 16-50% opened). A phone buzzes
+// when its owner has to do something or something is wrong; the rest goes in the inbox without a sound.
+//   off   - not sent at all: the app shows it where it happens (Money, the request card)
+//   quiet - in the inbox, already marked read, no buzz
+//   push  - buzzes (still subject to quiet hours, the digest and the daily cap)
+export type Loudness = 'off' | 'quiet' | 'push';
+const OFF = new Set(['inventory_logged', 'sales_logged']);
+const QUIET = new Set([
+  'timesheet_approved', 'leave_approved', 'production_approved', 'cash_topup_approved', 'production_cash_store_bill',
+  'rider_picked_up', 'rider_on_the_way', 'rider_delivered', 'rider_receipt', 'complaint_read', 'equipment_check_done', 'supply_sorted',
+  // a stock request's steps on the way: only "new" (to the kitchen) and "shipped" (to the store) buzz
+  'production_request_accepted', 'production_request_in-preparation', 'production_request_prepared',
+  'production_request_partially-delivered', 'production_request_delivered',
+]);
+export function loudness(type: string): Loudness {
+  if (OFF.has(type)) return 'off';
+  if (QUIET.has(type) && !URGENT.has(type)) return 'quiet';
+  return 'push';
+}
+// One row a day per person: the first buzzes, later ones add to it quietly ("×6 today"). The camera's
+// cap/gloves/apron alerts came 10-11 times a day each to three people and 8% were opened.
+const ONE_A_DAY = new Set(['cctv_ppe', 'workplace_flag', 'production_flag', 'expense_flag', 'supply_low', 'workplace_missed', 'pos_sync_stock_failed', 'store_cover']);
+export const oneADay = (type: string) => ONE_A_DAY.has(type);
+// One row per stock request: each step replaces the last (relatedId = the request), and the same step
+// again (a second part shipped) doesn't buzz again.
+export const oneRowPerRecord = (type: string) => type.startsWith('production_request_');
+// The owner's phone buzzes for what's urgent and what only the owner decides; everything else waits
+// for the 9 PM summary (while the evening digest is on, as it is by default).
+const OWNER_BUZZ = new Set([
+  'expense_approval', 'cash_topup_request', 'loan_requested', 'discrepancy_request', 'production_cash_discrepancy_request',
+  'leave_pending', 'stock_request_missed', 'complaint_answered', 'audit_report', 'test_notification',
+  'orders_unbilled',
+  'stockout_explained',
+  'chat_direct',
+  'chat_mention',
+]);
+export const ownerBuzzes = (type: string) => notificationCategory(type) === 'urgent' || OWNER_BUZZ.has(type);
+// Reminders that come back by themselves on a timetable aren't also sent to the owner as "Not seen
+// yet": 16 a day of those reached the owner, 12% opened.
+const NO_ESCALATE = new Set(['stock_request_reminder', 'delivery_confirmation_reminder', 'stock_count_reminder', 'shipped_delivery_check', 'escalation']);
+export const escalates = (type: string) => notificationCategory(type) === 'urgent' && !NO_ESCALATE.has(type);
+// Buzzes a person gets in a day, urgent apart; past it the rest wait for the 9 PM summary.
+export const DAILY_BUZZ_CAP = 12;
 
 // Quiet hours, as HH:MM in IST; the window may run past midnight (23:00-07:00).
 export function inQuietHours(prefs: { quietOn?: boolean; quietFrom?: string; quietTo?: string } | null, nowMs = Date.now()): boolean {
@@ -67,9 +122,15 @@ export const BENGALI_TITLE: Record<string, string> = {
   workplace_due: 'ছবি তোলার সময়', workplace_checked: 'ছবি দেখা হয়েছে',
   payslip_ready: 'বেতনের স্লিপ তৈরি', performance_report: 'কাজের মূল্যায়ন', performance_due: 'মূল্যায়ন লিখুন',
   cctv_ppe: 'টুপি / গ্লাভস / অ্যাপ্রন নেই', cctv_intruder: 'কাজের সময়ের বাইরে কেউ ঢুকেছে',
+  cctv_ppe_still: 'এখনও টুপি / অ্যাপ্রন নেই', ppe_reminder: 'টুপি, গ্লাভস, অ্যাপ্রন পরুন', bunny_roundup: 'বানির সারাংশ',
   asset_missing: 'যন্ত্রপাতি হারিয়েছে', equipment_check_due: 'যন্ত্রপাতি মিলিয়ে দেখুন', equipment_check_done: 'যন্ত্রপাতি মেলানো হয়েছে',
   opening_due: 'দোকান খোলার চেকলিস্ট', opening_late: 'চেকলিস্ট বাকি আছে',
   supply_low: 'জিনিস কম আছে', supply_sorted: 'জিনিসের খবর', shopping_list: 'কেনাকাটার তালিকা',
+  order_stuck: 'অর্ডার অনেকক্ষণ খোলা পড়ে আছে',
+  online_items_off: 'অনলাইনে আইটেম বন্ধ আছে',
+  stockout_explain: 'কেন স্টক শেষ ছিল লিখুন',
+  steam_now: 'এখন স্টিমারে মোমো দিন',
+  chat_direct: 'নতুন মেসেজ', chat_group: 'গ্রুপে মেসেজ', chat_mention: 'আপনাকে মেনশন করেছে',
 };
 
 export const DEFAULT_PREFS = { quietOn: true, quietFrom: '23:00', quietTo: '07:00', muted: {} as Partial<Record<NotificationCategory, boolean>>, digest: false };

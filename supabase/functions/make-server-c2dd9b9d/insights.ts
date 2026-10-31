@@ -12,6 +12,7 @@
 import Anthropic from 'npm:@anthropic-ai/sdk';
 import { addDaysISO as eventDay, STAFF_WINDOW_AFTER_DAYS, STAFF_WINDOW_BEFORE_DAYS } from './eventRules.ts';
 import { BIG_BUY_REASONS } from './bigBuyReasons.ts';
+import { buildOnlineCostIndex, onlineCostsForRange, type Aggregator } from './onlineCosts.ts';
 import {
   FORECAST_TYPES, forecastDays, learnEffects, prepareHistory, addDaysISO, weekdayOf, WEEKDAY_SHORT,
   backtest, summarizeAccuracy, tuneSettings, roundUpToBag,
@@ -287,7 +288,7 @@ async function recordUserUsage(kv: Kv, user: AiUser, usage: any) {
 const SYSTEM_PROMPT = `You are Bunny, the business analyst built into the Bunny Momos staff app.
 
 About the business:
-- Bunny Momos runs one store (Bunny Momos 1) in Birhata, Bardhaman, West Bengal, and a production house that makes momos fresh every day, steams and freezes them, and sends them to the store in bags (50 chicken, 20 of every other type).
+- Bunny Momos runs one store (Bunny Momos 1) in Birhata, Bardhaman, West Bengal, and a production house that makes momos fresh every day, steams and freezes them, and sends them to the store in bags of 50 (every type).
 - Seven momo types: chicken, chicken cheese, chicken kurkure (non-veg); veg, cheese corn, paneer, veg kurkure (veg). Chicken is about 80% of momo revenue.
 - The counter (dine-in and takeaway) is the main business. Zomato and Swiggy exist, but the owner deliberately keeps online small: never suggest growing online or spending more on the platforms.
 - Bengali festivals move demand a lot. On days when many people avoid non-veg (for example Lakshmi Puja) sales roughly halve while veg holds up; festival crowds can lift sales well above normal. The store is sometimes closed on festival days.
@@ -498,11 +499,14 @@ const ASK_TOOLS = [
   { name: 'get_store_requests', description: 'Stock requests from the store to the production house in a date range: status and pieces sent per type.', input_schema: dateRange },
   { name: 'get_production', description: 'Momos made per type per day at the production house in a date range.', input_schema: dateRange },
   { name: 'get_expenses', description: 'Costs by category in a date range, the way the profit figures count them (equipment and the scooter spread over 36 months, loan EMIs left out), plus cash actually spent, one-time purchases and loan repayments. No salaries. Also the big buys the team explained (a festival stock-up, buying ahead of a shop closing, a bulk buy, a price rise) with their reasons: use them to explain spikes in spending.', input_schema: dateRange },
+  // Owner, 1 Nov 2026: "bunny was not able to answer total commission by Zomato & Swiggy".
+  { name: 'get_online_costs', description: 'Zomato and Swiggy for a date range of up to 400 days: online sales, commission (without the 5% GST the platforms collect and pay for us), ads, commission as % of sales, per platform and in total - the same figures as the Analytics cards. Days the platforms have not settled yet are estimated at the last 60 days\' rate (estimatedDays). Also each settlement paid into the bank in the range: what customers paid, what the platform kept, ads and what reached the bank.', input_schema: dateRange },
 ];
 
 async function runTool(deps: Deps, storeId: string | null, name: string, input: any) {
   const today = deps.getTodayIST();
-  const clampFrom = (from: string, to: string) => (from < addDaysISO(to, -120) ? addDaysISO(to, -120) : from);
+  const maxDays = name === 'get_online_costs' ? 400 : 120;
+  const clampFrom = (from: string, to: string) => (from < addDaysISO(to, -maxDays) ? addDaysISO(to, -maxDays) : from);
   const from = input?.from ? clampFrom(String(input.from), String(input.to || today)) : addDaysISO(today, -14);
   const to = input?.to ? String(input.to) : today;
   const events = await loadEvents(deps.kv);
@@ -589,6 +593,40 @@ async function runTool(deps: Deps, storeId: string | null, name: string, input: 
           'cashSpentByCategory is money paid out in the range. One-time purchases (equipment, the scooter) are not a cost of the month they were paid - quote their monthlyCostInProfit instead.',
           'Loan repayments (vehicle EMI) are cash out but not a profit cost.',
           'Salaries are not included here.',
+        ],
+      };
+    }
+    case 'get_online_costs': {
+      const [settlements, sales, payouts] = await Promise.all([allRows(deps, 'aggregator-settlement:'), allRows(deps, 'online_sales:'), allRows(deps, 'online_payout:')]);
+      const mine = (x: any) => !storeId || x?.storeId === storeId;
+      const costs = onlineCostsForRange(buildOnlineCostIndex(settlements, storeId), sales.filter(mine), payouts.filter(mine), from, to, today);
+      const rs = (n: number) => Math.round(n || 0);
+      const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : null);
+      const platform = (agg: Aggregator) => {
+        const p = costs.byAggregator[agg];
+        return { onlineSales: rs(p.sales), commission: rs(p.commission), commissionPctOfSales: pct(p.commission, p.sales), ads: rs(p.ads), commissionAndAds: rs(p.commission + p.ads) };
+      };
+      const sold = costs.byAggregator.zomato.sales + costs.byAggregator.swiggy.sales;
+      const settlementsPaidInRange = settlements
+        .filter((s: any) => mine(s) && typeof s.settlementDate === 'string' && s.settlementDate >= from && s.settlementDate <= to)
+        .sort((a: any, b: any) => a.settlementDate.localeCompare(b.settlementDate))
+        .map((s: any) => ({
+          platform: s.aggregator, paidOn: s.settlementDate, ordersFrom: s.periodStart, ordersTo: s.periodEnd, orders: s.orderCount,
+          customersPaid: rs(s.grossSales), platformKept: rs((s.grossSales || 0) - (s.netPayout || 0)), ads: s.adSpend == null ? undefined : rs(s.adSpend), paidToBank: rs(s.netPayout),
+        }));
+      return {
+        from, to,
+        zomato: platform('zomato'),
+        swiggy: platform('swiggy'),
+        total: { onlineSales: rs(sold), commission: rs(costs.commission), commissionPctOfSales: pct(costs.commission, sold), ads: rs(costs.ads), commissionAndAds: rs(costs.commission + costs.ads) },
+        estimatedDays: costs.estimatedDays,
+        estimatedCommission: rs(costs.estimatedCommission),
+        gstPlatformsPaidForUs: rs(costs.gstExcluded),
+        settlementsPaidInRange: settlementsPaidInRange.slice(-60),
+        notes: [
+          'commission leaves out the 5% GST the platforms collect from customers and pay to the government for us - it is not our cost. platformKept on a settlement is everything taken before the bank payment, GST included.',
+          'Days with sales but no settlement yet are estimated at each platform\'s last 60 days\' rate: say so when estimatedDays is above 0.',
+          'Online sales are POS figures without GST, the same as revenue in Analytics.',
         ],
       };
     }
@@ -1347,33 +1385,74 @@ ${JSON.stringify({
         role: 'user',
         content: `(Today is ${WEEKDAY_SHORT[weekdayOf(today)]} ${today}. Answer in ${LANGUAGES[language]}.)\n\n${screenPart}Question: ${history[history.length - 1].content}`,
       };
-      const messages: any[] = history;
-      const used: string[] = [];
-      const reply = (raw: string) => {
-        const { answer, followUps } = splitFollowUps(raw);
-        return c.json({ answer: answer || 'No answer.', followUps, toolsUsed: used });
-      };
-      for (let turn = 0; turn < 6; turn++) {
-        const res = await callClaude(deps, { purpose: 'ask', effort: 'medium', maxTokens: 6000, tools: ASK_TOOLS, messages, user: aiUser(actor) });
-        if (res.stop_reason !== 'tool_use') return reply(textOf(res));
-        messages.push({ role: 'assistant', content: res.content });
-        const results = [];
-        for (const block of res.content.filter((b: any) => b.type === 'tool_use')) {
-          used.push(block.name);
-          let content: string;
-          try {
-            content = JSON.stringify(await runTool(deps, storeId, block.name, block.input)).slice(0, 60000);
-          } catch (toolErr: any) {
-            results.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${toolErr?.message || toolErr}`, is_error: true });
-            continue;
-          }
-          results.push({ type: 'tool_result', tool_use_id: block.id, content });
-        }
-        messages.push({ role: 'user', content: results });
-      }
-      return c.json({ answer: 'That needed more look-ups than allowed - try a narrower question.', followUps: [], toolsUsed: used });
+      const { raw, used } = await askLoop(deps, { messages: history, storeId, user: aiUser(actor) });
+      if (raw === null) return c.json({ answer: TOO_MANY_LOOKUPS, followUps: [], toolsUsed: used });
+      const { answer, followUps } = splitFollowUps(raw);
+      return c.json({ answer: answer || 'No answer.', followUps, toolsUsed: used });
     } catch (err) { return fail(c, err); }
   });
+}
+
+const TOO_MANY_LOOKUPS = 'That needed more look-ups than allowed - try a narrower question.';
+// Rupee figures, for answers that may not show them (Bunny in the team chat, below).
+const MONEY_TOOLS = new Set(['get_expenses', 'get_online_costs']);
+const MONEY_KEY = /revenue|amount|cost|price|profit|rupee|commission|payout|spend/i;
+function withoutMoney(value: any): any {
+  if (Array.isArray(value)) return value.map(withoutMoney);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k]) => !MONEY_KEY.test(k)).map(([k, v]) => [k, withoutMoney(v)]));
+  return value;
+}
+
+/** Ask Bunny's look-up loop: up to 6 turns of tools, then the answer (null when it ran out of turns).
+ *  With noMoney the expense and Zomato/Swiggy tools are gone and rupee fields are cut from the rest. */
+async function askLoop(deps: Deps, o: { messages: any[]; storeId: string | null; user: AiUser; noMoney?: boolean }): Promise<{ raw: string | null; used: string[] }> {
+  const tools = o.noMoney ? ASK_TOOLS.filter((t) => !MONEY_TOOLS.has(t.name)) : ASK_TOOLS;
+  const used: string[] = [];
+  for (let turn = 0; turn < 6; turn++) {
+    const res = await callClaude(deps, { purpose: 'ask', effort: 'medium', maxTokens: 6000, tools, messages: o.messages, user: o.user });
+    if (res.stop_reason !== 'tool_use') return { raw: textOf(res), used };
+    o.messages.push({ role: 'assistant', content: res.content });
+    const results = [];
+    for (const block of res.content.filter((b: any) => b.type === 'tool_use')) {
+      used.push(block.name);
+      let content: string;
+      try {
+        if (o.noMoney && MONEY_TOOLS.has(block.name)) throw new Error('Not available in this chat');
+        const out = await runTool(deps, o.storeId, block.name, block.input);
+        content = JSON.stringify(o.noMoney ? withoutMoney(out) : out).slice(0, 60000);
+      } catch (toolErr: any) {
+        results.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${toolErr?.message || toolErr}`, is_error: true });
+        continue;
+      }
+      results.push({ type: 'tool_result', tool_use_id: block.id, content });
+    }
+    o.messages.push({ role: 'user', content: results });
+  }
+  return { raw: null, used };
+}
+
+// ---------------- Bunny in the team chat (chat.ts) ----------------
+// Owner, 1 Nov 2026: "will bunny be available in chat" -> yes: everyone has a one-to-one chat with
+// Bunny, and "@Bunny" in a group asks it there. Same tools and per-person allowance as Ask Bunny.
+// Rupee figures only in a one-to-one with someone who already sees them in Ask Bunny (owner,
+// operations, incharges): a group answer is read by the whole group, and the crew never get them.
+const scriptLanguage = (text: string): keyof typeof LANGUAGES => (/[ঀ-৿]/.test(text) ? 'bn' : /[ऀ-ॿ]/.test(text) ? 'hi' : 'en');
+
+export async function askBunnyInChat(deps: Deps, o: {
+  userId: string; role: string; storeId: string | null; noMoney: boolean;
+  where: string; // 'a one-to-one chat with Rohan' or 'the "Bunny Momos 1" group chat'
+  messages: { role: 'user' | 'assistant'; content: string }[]; // oldest first, ending with the question
+}): Promise<string> {
+  const today = deps.getTodayIST();
+  const messages: any[] = o.messages.map((m) => ({ ...m }));
+  const last = messages[messages.length - 1];
+  const language = scriptLanguage(last.content);
+  last.content = `(Today is ${WEEKDAY_SHORT[weekdayOf(today)]} ${today}. Answer in ${LANGUAGES[language]}${language === 'en' ? ', or in Bengali or Hindi written in English letters if the question is written that way' : ''}.)\n\n`
+    + `You are replying in ${o.where} in the Bunny Momos team chat: one chat message under 120 words, plain sentences, no headings, tables or lists.`
+    + (o.noMoney ? ' Rupee figures (sales value, costs, profit, commission, prices, pay) are not for this chat: never give them. If asked, say the owner or an incharge can ask Bunny in their own one-to-one chat with Bunny.' : '')
+    + `\n\nQuestion: ${last.content}`;
+  const { raw } = await askLoop(deps, { messages, storeId: o.storeId, user: { id: o.userId, isOwner: o.role === 'cluster_head' }, noMoney: o.noMoney });
+  return raw === null ? TOO_MANY_LOOKUPS : (splitFollowUps(raw).answer || 'No answer.').slice(0, 1900);
 }
 
 // ---------------- Workplace photo hygiene score (workplace.ts) ----------------
@@ -1435,7 +1514,23 @@ const hygieneSchema = {
 // A camera still (cctv.ts): who is in view and, for each person, whether the kitchen PPE is on.
 // "unclear" whenever the item can't be seen (turned away, out of frame, too small) - only a clear
 // "no" raises an alert.
-const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people. Also, for each person: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet), what they are doing right now (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking), and whether a phone is in their hand or at their ear.';
+// What each activity looks like, shared by both camera prompts (owner, 30 Oct 2026: two men peeling
+// onions were read as folding and idle - folding only with momo wrappers or momos in view).
+// Folding needs the stuffing and the sheets on the table (owner, 31 Oct 2026: "folding should also have
+// the stuffing on table... it should also have those sheets"). Vijay folding on 30 Oct 14:01: seated at
+// the wooden table, a big bowl of stuffing, a stack of round dough sheets and rows of folded momos in
+// front of him. Not folding: the same table with stuffing but no sheets and a phone in his hand (30 Oct
+// 11:40), carrying a crate of folded momos (30 Oct 16:19), standing at it with a pot (31 Oct 11:43).
+const ACTIVITY_GUIDE = 'folding = shaping or pleating momos by hand - ALL of these on the table or tray right in front of them: a bowl of stuffing (the minced filling), a stack of the thin round white dough sheets (wrappers), and folded momos in rows; the hands busy wrapping. A table with stuffing but no sheets, or no folded momos, is not folding, nor is standing at the table with a pot, a knife or vegetables, or carrying a crate of momos; '
+  + 'machine = at a dough or sheeting machine, rolling or cutting dough; '
+  + 'prep = peeling, cutting or chopping vegetables (onion, cabbage, coriander, garlic) - whole vegetables, peels, a knife or a big bowl of vegetables in front of them, often sitting on a stool; '
+  + 'filling = mixing the chopped filling in a big bowl or tray by hand; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; '
+  + 'cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; '
+  + 'idle = standing or sitting with empty hands, not working (someone holding vegetables, a bowl or a tray is working); other = anything else, or walking. '
+  + 'When the hands are hidden, judge by what is in front of them: call it folding only when the stuffing, the dough sheets and folded momos can all be seen';
+const COLOURS = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'];
+const TROUSERS = { type: 'string', enum: [...COLOURS, 'unseen'] };
+const CAMERA_SYSTEM = 'You check still frames from a food-business CCTV camera (a momo kitchen in India). Count the people in the frame (staff in aprons, delivery riders, anyone - not people in posters, screens or reflections). For each person say whether they wear a head covering (cap, hairnet or bandana), gloves on both visible hands, and an apron. Answer "yes" or "no" only when it is clearly visible; otherwise "unclear". Infrared night images are grey: still count people. Also, for each person: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet), the main colour of their trousers (pants, jeans or lungi; "unseen" if the legs are hidden), what they are doing right now (' + ACTIVITY_GUIDE + '), and whether a phone is in their hand or at their ear.';
 const yesNo = { type: 'string', enum: ['yes', 'no', 'unclear'] };
 const cameraSchema = {
   type: 'object',
@@ -1447,11 +1542,12 @@ const cameraSchema = {
         type: 'object',
         properties: {
           where: { type: 'string', description: 'Where in the frame, a few words' }, cap: yesNo, gloves: yesNo, apron: yesNo,
-          top: { type: 'string', enum: ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'] },
-          activity: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] },
+          top: { type: 'string', enum: COLOURS },
+          bottom: TROUSERS,
+          activity: { type: 'string', enum: ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] },
           phone: { type: 'string', enum: ['in_hand', 'at_ear', 'none', 'unclear'] },
         },
-        required: ['where', 'cap', 'gloves', 'apron', 'top', 'activity', 'phone'],
+        required: ['where', 'cap', 'gloves', 'apron', 'top', 'bottom', 'activity', 'phone'],
         additionalProperties: false,
       },
     },
@@ -1462,11 +1558,11 @@ const cameraSchema = {
 };
 export type CameraLook = {
   peopleCount: number;
-  people: { where: string; cap: string; gloves: string; apron: string; top: string; activity: string; phone: string }[];
+  people: { where: string; cap: string; gloves: string; apron: string; top: string; bottom: string; activity: string; phone: string }[];
   note: string;
 };
 
-export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType: string; place: string }): Promise<CameraLook> {
+export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType: string; place: string; notes?: string }): Promise<CameraLook> {
   const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
   const res = await callClaude(deps, {
     purpose: 'camera',
@@ -1479,7 +1575,7 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
       role: 'user',
       content: [
         { type: 'image', source: { type: 'base64', media_type: frame.mediaType, data: frame.base64 } },
-        { type: 'text', text: `Camera: ${frame.place.slice(0, 80)}.` },
+        { type: 'text', text: `Camera: ${frame.place.slice(0, 80)}.${frame.notes ? ` About this kitchen: ${frame.notes.slice(0, 400)}` : ''}` },
       ],
     }],
   });
@@ -1489,7 +1585,7 @@ export async function aiLookAtCamera(kv: Kv, frame: { base64: string; mediaType:
   const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
   const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => ({
     where: String(p?.where || '').slice(0, 60), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
-    top: String(p?.top || 'other').slice(0, 20), activity: String(p?.activity || 'other').slice(0, 20), phone: String(p?.phone || 'unclear').slice(0, 20),
+    top: String(p?.top || 'other').slice(0, 20), bottom: String(p?.bottom || 'unseen').slice(0, 20), activity: String(p?.activity || 'other').slice(0, 20), phone: String(p?.phone || 'unclear').slice(0, 20),
   }));
   return { peopleCount: Math.max(people.length, Math.min(30, Math.round(parsed.peopleCount))), people, note: String(parsed.note || '').slice(0, 200) };
 }
@@ -1526,7 +1622,8 @@ export async function aiProductionCoach(kv: Kv, o: { stage: string; lang: string
 const BURST_SYSTEM = `You watch a short burst of CCTV frames from a momo kitchen in India: the same camera, frames in order, a fixed number of seconds apart.
 - List each distinct person seen in any frame once, following them from frame to frame by their clothes and where they are. Not people in posters, screens or reflections.
 - top: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet).
-- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (folding = shaping or folding momos by hand; machine = at a dough or sheeting machine, rolling or cutting dough; filling = mixing or preparing filling; cooking = steaming, frying or at the stove; packing = putting momos in bags, boxes or crates; cleaning = washing, wiping, sweeping; phone = looking at or talking on a phone; idle = standing or sitting without working; other = anything else, or walking; away = not in this frame).
+- bottom: the main colour of their trousers (pants, jeans or lungi); "unseen" if the legs are hidden in every frame. Two people in the same colour top are told apart by this.
+- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (${ACTIVITY_GUIDE}; away = not in this frame).
 - phoneFrames: the frame numbers (1 = first) where a phone is in their hand or at their ear.
 - cap (head covering: cap, hairnet or bandana), gloves (on both visible hands), apron: judged across the frames. "no" only when the item is clearly missing in most frames where the person is clearly visible; "yes" when clearly worn; otherwise "unclear".
 - bestFrame: the frame number where this person is seen most clearly.
@@ -1543,12 +1640,13 @@ const burstSchema = {
         properties: {
           where: { type: 'string', description: 'Where they mostly are in the frame, a few words' },
           top: cameraSchema.properties.people.items.properties.top,
+          bottom: TROUSERS,
           cap: yesNo, gloves: yesNo, apron: yesNo,
-          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
+          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
           phoneFrames: { type: 'array', items: { type: 'integer' } },
           bestFrame: { type: 'integer' },
         },
-        required: ['where', 'top', 'cap', 'gloves', 'apron', 'activities', 'phoneFrames', 'bestFrame'],
+        required: ['where', 'top', 'bottom', 'cap', 'gloves', 'apron', 'activities', 'phoneFrames', 'bestFrame'],
         additionalProperties: false,
       },
     },
@@ -1558,29 +1656,89 @@ const burstSchema = {
   required: ['peopleCount', 'people', 'evidenceFrame', 'note'],
   additionalProperties: false,
 };
+// The numbered burst (owner, 30 Oct 2026: two men in red were one person, and trouser colours in words
+// didn't hold): the camera PC finds the people and draws a numbered box round each (numbers hold
+// within the burst); Bunny gets reference photos of the people seen earlier today and says which of
+// them each box is - so a person's minutes stay theirs all day - and what each is doing.
+const NUMBERED_SYSTEM = `You watch a short burst of CCTV frames from a momo kitchen in India: the same camera, frames in order, a fixed number of seconds apart. Each person has been found and marked with a coloured box with a number in its corner; the same number is the same person all through this burst.
+- List each numbered box that holds a real person once, by its number (box). Leave out a box round an object - a sack, bag, bucket, water jar, coat or apron on a hook, anything without a human head and body - and people in posters, screens or reflections.
+- Someone clearly in the kitchen in these frames who never got a box (seated far back, cut off by the edge): list them too, with box 0.
+- known: which of today's known people this is (their reference photos come first, each with its number), judged by clothes, cap or hairnet, build and anything printed on the top; 0 if it is none of them (someone new today). Two boxes may be the same known person if the boxing lost them for a while. Don't guess: 0 is better than the wrong person.
+- top: the main colour of their top (shirt / t-shirt / kurta - not the apron or hairnet).
+- activities: one entry per frame, in order, exactly as many as there are frames: what they are doing in that frame, using the frames before and after to tell (${ACTIVITY_GUIDE}). If the box missed them in a frame where they are still clearly there, still say what they are doing; away = not in the frame at all.
+- phoneFrames: the frame numbers (1 = first) where a phone is in their hand or at their ear.
+- cap (head covering: cap, hairnet or bandana), gloves (on both visible hands), apron: judged across the frames. "no" only when the item is clearly missing in most frames where the person is clearly visible; "yes" when clearly worn; otherwise "unclear".
+- bestFrame: the frame number where this person is seen most clearly.
+- evidenceFrame: the frame number that best shows someone without a cap, gloves or apron; if nobody is missing anything, the clearest frame.
+- peopleCount: the most boxed people in any one frame.`;
+const numberedSchema = {
+  type: 'object',
+  properties: {
+    peopleCount: { type: 'integer' },
+    people: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          box: { type: 'integer', description: 'The number on their box; 0 if they never got one' },
+          known: { type: 'integer', description: "Today's known person this is, or 0 if new" },
+          where: { type: 'string', description: 'Where they mostly are in the frame, a few words' },
+          top: cameraSchema.properties.people.items.properties.top,
+          cap: yesNo, gloves: yesNo, apron: yesNo,
+          activities: { type: 'array', items: { type: 'string', enum: ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other', 'away'] } },
+          phoneFrames: { type: 'array', items: { type: 'integer' } },
+          bestFrame: { type: 'integer' },
+        },
+        required: ['box', 'known', 'where', 'top', 'cap', 'gloves', 'apron', 'activities', 'phoneFrames', 'bestFrame'],
+        additionalProperties: false,
+      },
+    },
+    evidenceFrame: { type: 'integer' },
+    note: { type: 'string', description: 'One short sentence on what the burst shows' },
+  },
+  required: ['peopleCount', 'people', 'evidenceFrame', 'note'],
+  additionalProperties: false,
+};
+
 export type BurstLook = {
   peopleCount: number;
-  people: { where: string; top: string; cap: string; gloves: string; apron: string; activities: string[]; phoneFrames: number[]; bestFrame: number }[];
+  people: { where: string; top: string; bottom: string; cap: string; gloves: string; apron: string; activities: string[]; phoneFrames: number[]; bestFrame: number; box?: number; known?: number }[];
   evidenceFrame: number;
   note: string;
 };
+export type BurstNumbered = {
+  boxes: number[][]; // per frame, the box numbers drawn on it
+  known: { id: number; images: string[] }[]; // today's people so far: reference photos (base64 JPEG)
+};
 
-export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string }): Promise<BurstLook> {
+export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: number; place: string; notes?: string; numbered?: BurstNumbered }): Promise<BurstLook> {
   const deps = { kv, verifyUser: async () => ({ error: 'unused', status: 401 }), getTodayIST: () => istDay(new Date().toISOString()) } as Deps;
   const n = burst.frames.length;
+  const num = burst.numbered;
   const content: any[] = [];
+  if (num?.known.length) {
+    content.push({ type: 'text', text: "Today's known people so far (reference photos):" });
+    for (const k of num.known) {
+      content.push({ type: 'text', text: `Known person ${k.id}` });
+      for (const data of k.images) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
+    }
+  }
   burst.frames.forEach((data, i) => {
-    content.push({ type: 'text', text: `Frame ${i + 1}` });
+    content.push({ type: 'text', text: num ? `Frame ${i + 1} (boxes: ${(num.boxes[i] || []).join(', ') || 'none'})` : `Frame ${i + 1}` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
   });
-  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}. ${n} frames, ${burst.gapSec} seconds apart: give each person exactly ${n} activities.` });
+  // Spread bursts (owner, 31 Oct 2026): frames minutes apart are judged one by one.
+  const spread = burst.gapSec >= 60
+    ? ` The frames are spread over the last ${Math.round((n * burst.gapSec) / 60)} minutes, about ${Math.round(burst.gapSec / 6) / 10} minutes apart: people may move or switch work in between, so judge each frame mainly by what it shows (their hands, what is on the table in front of them); the frames around it are only a hint.`
+    : '';
+  content.push({ type: 'text', text: `Camera: ${burst.place.slice(0, 80)}.${burst.notes ? ` About this kitchen: ${burst.notes.slice(0, 400)}` : ''} ${n} frames, ${burst.gapSec} seconds apart: give each ${num ? 'numbered box' : 'person'} exactly ${n} activities.${spread}${num && !num.known.length ? ' Nobody is known yet today: every box is known 0.' : ''}` });
   const res = await callClaude(deps, {
     purpose: 'camera',
-    system: BURST_SYSTEM,
+    system: num ? NUMBERED_SYSTEM : BURST_SYSTEM,
     effort: 'low',
     noThinking: true,
     maxTokens: 4000,
-    format: { type: 'json_schema', schema: burstSchema },
+    format: { type: 'json_schema', schema: num ? numberedSchema : burstSchema },
     messages: [{ role: 'user', content }],
   });
   let parsed: any = null;
@@ -1588,17 +1746,21 @@ export async function aiLookAtBurst(kv: Kv, burst: { frames: string[]; gapSec: n
   if (!parsed || typeof parsed.peopleCount !== 'number') throw new AiError('The camera check returned nothing.', 502);
   const one = (v: any) => (['yes', 'no', 'unclear'].includes(v) ? v : 'unclear');
   const frameNo = (v: any, fallback: number) => (Number.isInteger(v) && v >= 1 && v <= n ? v : fallback);
+  const boxNumbers = new Set((num?.boxes || []).flat());
+  const knownIds = new Set((num?.known || []).map((k) => k.id));
   const people = (Array.isArray(parsed.people) ? parsed.people : []).slice(0, 12).map((p: any) => {
     const acts = (Array.isArray(p?.activities) ? p.activities : []).slice(0, n).map((a: any) => String(a || 'away').slice(0, 20));
     while (acts.length < n) acts.push('away');
     const firstSeen = acts.findIndex((a: string) => a !== 'away') + 1 || 1;
     return {
-      where: String(p?.where || '').slice(0, 60), top: String(p?.top || 'other').slice(0, 20), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
+      where: String(p?.where || '').slice(0, 60), top: String(p?.top || 'other').slice(0, 20), bottom: String(p?.bottom || 'unseen').slice(0, 20), cap: one(p?.cap), gloves: one(p?.gloves), apron: one(p?.apron),
       activities: acts,
       phoneFrames: [...new Set((Array.isArray(p?.phoneFrames) ? p.phoneFrames : []).filter((f: any) => Number.isInteger(f) && f >= 1 && f <= n))] as number[],
       bestFrame: frameNo(p?.bestFrame, firstSeen),
+      ...(num ? { box: Number(p?.box), known: knownIds.has(Number(p?.known)) ? Number(p.known) : 0 } : {}),
     };
-  });
+  // A box that wasn't drawn, or listed twice: dropped (box 0 = someone the boxing never caught).
+  }).filter((p: any, i: number, all: any[]) => !num || p.box === 0 || (boxNumbers.has(p.box) && all.findIndex((q: any) => q.box === p.box) === i));
   return {
     peopleCount: Math.max(people.length ? 1 : 0, Math.min(30, Math.round(parsed.peopleCount))),
     people,

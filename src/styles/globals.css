@@ -407,10 +407,13 @@
     outline-color: var(--ring);
   }
 
+  /* overscroll-behavior: the app's own pull down to refresh (shell/PullToRefresh.tsx), not
+     Chrome reloading the whole website or the page bouncing on iPhones. */
   html {
     -webkit-text-size-adjust: 100%;
     -moz-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    overscroll-behavior-y: none;
   }
 
   body {

@@ -89,6 +89,8 @@ export const LEGACY_ALIASES: Record<string, Candidates> = {
   tour: () => ['tour'],
   shopping: () => ['shopping'],
   'photo-guide': () => ['photo-guide'],
+  // Team chat: a message's notification opens its room (highlight = the room id).
+  chat: () => ['chat'],
 };
 
 export function resolveLegacyTarget(target: LegacyTarget | null | undefined, nav: Pick<NavModel, 'destinations'>): Route {

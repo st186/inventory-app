@@ -230,7 +230,9 @@ export function buildPnl(opts: {
     .forEach((x) => addCost(x, 'inventory', x.totalCost || 0));
   const windowOverheads = (data.overheads || []).filter((x) => expenseCountsIn(x, start, end) && inScope(x));
   windowOverheads.filter((x) => x.category !== 'personal_expense').forEach((x) => addCost(x, 'overhead', x.amount || 0));
-  const windowFixed = (data.fixedCosts || []).filter((x) => inRange(x?.date, start, end) && inScope(x));
+  // Rent and electricity by the month they are for (owner, 1 Nov 2026: October's rent paid in November).
+  const windowFixed = (data.fixedCosts || []).filter((x) =>
+    ((x?.category === 'rent' || x?.category === 'electricity') && x?.forMonth ? monthOverlaps(x.forMonth, start, end) : inRange(x?.date, start, end)) && inScope(x));
   windowFixed.forEach((x) => addCost(x, 'fixedcost', x.amount || 0));
 
   // Equipment, the scooter and yearly subscriptions are spread over their life; bulk packaging

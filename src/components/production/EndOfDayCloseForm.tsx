@@ -11,6 +11,11 @@ import type { LedgerDayContext, LeftoverReport, ProductionLedgerPoolState } from
 import { toast } from '../ui/sonner';
 import { looksLikeGrams } from './ledgerKg';
 import { LeftoverReasons, LeftoverReportView, emptyLeftoverDraft, leftoverPayload, leftoverProblem, type LeftoverDraft } from './LeftoverReasons';
+import { ALL_ITEMS } from './kitchenDayMath';
+import { useItemLabel } from './KitchenDay';
+
+/** A sauce to count tonight: there this morning or made today. */
+export type SauceToCount = { id: string; label: string; unit: 'L' | 'kg' };
 
 type Props = {
   pools: Record<string, ProductionLedgerPoolState>;
@@ -31,14 +36,28 @@ type Props = {
   // What each item should have left from the morning weigh-in, what was made and the momos entered
   // (the guided day, kitchenDayMath.ts) - shown next to the count so a wrong one stands out.
   expectedLeft?: Record<string, number>;
-  onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport) => void | Promise<void>;
+  // The production day (owner, 31 Oct 2026): just what is left - no wastage boxes (morning + made -
+  // left is what was used, not waste; waste is logged on its own) - plus the sauces, and closing
+  // first saves the momos and sauces made (beforeSubmit; false stops the close).
+  simple?: boolean;
+  sauces?: SauceToCount[];
+  savedSauceLeft?: Record<string, number> | null;
+  beforeSubmit?: () => Promise<boolean>;
+  onSubmit: (closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport, sauceLeft?: Record<string, number>) => void | Promise<void>;
 };
 const LEFTOVER_REASON_MIN_KG = 0.5; // the server says the same (minKg)
+const clean = (raw: string) => raw.replace(/,/g, '.').replace(/[^\d.]/g, '');
 
 // The directly-reported leftover snapshot per pool - counted/weighed at day's end, not
 // computed from a yield formula (confirmed requirement).
-export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, closedBy, readOnly, expectedLeft = {}, onSubmit }: Props) {
+export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, submitting, dayContext, savedReport, closedBy, readOnly, expectedLeft = {}, simple = false, sauces = [], savedSauceLeft = null, beforeSubmit, onSubmit }: Props) {
   const { t, lang } = useT();
+  const itemLabel = useItemLabel();
+  const labelOf = (id: string) => { const it = simple ? ALL_ITEMS.find((x) => x.id === id) : null; return it ? itemLabel(it) : getPoolLabel(id); };
+  const [sauceInputs, setSauceInputs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setSauceInputs(Object.fromEntries(Object.entries(savedSauceLeft || {}).map(([id, v]) => [id, String(v)])));
+  }, [savedSauceLeft]);
   const [leftover, setLeftover] = useState<LeftoverDraft>(emptyLeftoverDraft);
   const [closingInputs, setClosingInputs] = useState<Record<string, string>>({});
   const [openingOverrideInputs, setOpeningOverrideInputs] = useState<Record<string, string>>({});
@@ -55,6 +74,9 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
     const p = pools[id];
     return !!p && (p.opening > 0.005 || p.prepared > 0.005 || typeof p.closingActual === 'number');
   });
+  // The production day lists them in the kitchen's order, as the morning count does.
+  const rank = (id: string) => { const i = ALL_ITEMS.findIndex((x) => x.id === id); return i < 0 ? 99 : i; };
+  if (simple) relevantPoolIds.sort((a, b) => rank(a) - rank(b));
 
   // Re-seed from saved values whenever the underlying pools change (e.g. switching date,
   // or a fresh close having just been saved) - matches every other date-scoped form in
@@ -71,7 +93,7 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
     setWastageInputs(seededWastage);
   }, [pools]);
 
-  const grams = [closingInputs, wastageInputs, openingOverrideInputs].some((inputs) => Object.values(inputs).some(looksLikeGrams));
+  const grams = [closingInputs, wastageInputs, openingOverrideInputs, sauceInputs].some((inputs) => Object.values(inputs).some(looksLikeGrams));
 
   // Stuffing or coating left at the close: more than a little needs a reason (owner, 28 Oct 2026).
   const leftoverKg = relevantPoolIds
@@ -79,13 +101,16 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
     .reduce((sum, id) => sum + Math.max(0, parseFloat(closingInputs[id] ?? '') || 0), 0);
   const needsReason = !closed && leftoverKg >= (dayContext?.minKg ?? LEFTOVER_REASON_MIN_KG);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (grams) return;
     // Every item needs its count (0 when none is left): a blank one carried into tomorrow as if
     // none of it was used (29 Oct: dough, veg and cheese corn stuffing left blank).
-    const uncounted = relevantPoolIds.filter((id) => (closingInputs[id] ?? '').trim() === '');
+    const uncounted = [
+      ...relevantPoolIds.filter((id) => (closingInputs[id] ?? '').trim() === '').map(labelOf),
+      ...sauces.filter((sc) => (sauceInputs[sc.id] ?? '').trim() === '').map((sc) => sc.label),
+    ];
     if (uncounted.length) {
-      toast.error(t('stock.prod.countEvery', { items: uncounted.map((id) => getPoolLabel(id)).join(', ') }));
+      toast.error(t('stock.prod.countEvery', { items: uncounted.join(', ') }));
       return;
     }
     const problem = needsReason ? leftoverProblem(leftover, t, dayContext || null) : null;
@@ -109,9 +134,11 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
     const wastageOverrides: Record<string, number> = {};
     for (const id of ALL_POOL_IDS) {
       const raw = wastageInputs[id];
-      if (raw !== undefined && raw !== '') wastageOverrides[id] = parseFloat(raw) || 0;
+      if (!simple && raw !== undefined && raw !== '') wastageOverrides[id] = parseFloat(raw) || 0;
     }
-    onSubmit(closingActuals, manualOpeningOverride, wastageOverrides, needsReason ? leftoverPayload(leftover, dayContext || null) : undefined);
+    const sauceLeft = Object.fromEntries(sauces.map((sc) => [sc.id, parseFloat(sauceInputs[sc.id] ?? '') || 0]));
+    if (beforeSubmit && !(await beforeSubmit())) return;
+    onSubmit(closingActuals, manualOpeningOverride, wastageOverrides, needsReason ? leftoverPayload(leftover, dayContext || null) : undefined, sauces.length ? sauceLeft : undefined);
   };
 
   if (readOnly && !closed) {
@@ -120,9 +147,41 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
 
   return (
     <section className="flex flex-col gap-3" lang={lang}>
-      {isFirstEverDay && !closed && <Callout tone="warning" icon={AlertTriangle} title={t('stock.prod.firstDay')} />}
+      {!simple && isFirstEverDay && !closed && <Callout tone="warning" icon={AlertTriangle} title={t('stock.prod.firstDay')} />}
 
-      {relevantPoolIds.length === 0 ? (
+      {simple ? (relevantPoolIds.length > 0 || sauces.length > 0) && (
+        <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
+          {relevantPoolIds.map((id) => {
+            const raw = closingInputs[id] ?? '';
+            const v = parseFloat(raw);
+            const exp = expectedLeft[id];
+            const off = typeof exp === 'number' && raw !== '' && !isNaN(v) && Math.abs(v - exp) > Math.max(0.5, exp * 0.15);
+            return (
+              <div key={id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div className="flex min-w-0 flex-col">
+                  <span className="text-body-md font-medium text-text">{labelOf(id)}</span>
+                  {typeof exp === 'number' && <span className={`num text-caption ${off ? 'font-semibold text-warning' : 'text-text-3'}`}>{t('kd.shouldBeAbout', { kg: exp.toFixed(2) })}</span>}
+                </div>
+                <span className="flex shrink-0 items-center gap-2">
+                  {!closed && !readOnly && <Button variant="ghost" size="sm" disabled={disabled} onClick={() => setClosingInputs((prev) => ({ ...prev, [id]: '0' }))}>{t('kd.none')}</Button>}
+                  <Input type="text" inputMode="decimal" className="num w-24 text-right" aria-label={`${labelOf(id)} (kg)`} value={raw} onChange={(e) => setClosingInputs((prev) => ({ ...prev, [id]: clean(e.target.value) }))} disabled={disabled || closed} placeholder={closed ? t('stock.prod.notCounted') : t('kd.countIt')} />
+                  <span className="w-6 text-body-sm text-text-2">kg</span>
+                </span>
+              </div>
+            );
+          })}
+          {sauces.map((sc) => (
+            <div key={sc.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <span className="text-body-md font-medium text-text">{sc.label}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                {!closed && !readOnly && <Button variant="ghost" size="sm" disabled={disabled} onClick={() => setSauceInputs((prev) => ({ ...prev, [sc.id]: '0' }))}>{t('kd.none')}</Button>}
+                <Input type="text" inputMode="decimal" className="num w-24 text-right" aria-label={`${sc.label} (${sc.unit})`} value={sauceInputs[sc.id] ?? ''} onChange={(e) => setSauceInputs((prev) => ({ ...prev, [sc.id]: clean(e.target.value) }))} disabled={disabled || closed} placeholder={closed ? t('stock.prod.notCounted') : t('kd.countIt')} />
+                <span className="w-6 text-body-sm text-text-2">{sc.unit}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : relevantPoolIds.length === 0 ? (
         <EmptyState compact title={t('stock.prod.nothingYet')} />
       ) : (
         <div className="overflow-hidden rounded-lg border border-border bg-surface [&>*+*]:border-t [&>*+*]:border-border">
@@ -177,9 +236,10 @@ export function EndOfDayCloseForm({ pools, isFirstEverDay, closed, disabled, sub
       {needsReason && <LeftoverReasons leftoverKg={leftoverKg} ctx={dayContext || null} value={leftover} onChange={setLeftover} disabled={disabled || submitting} />}
       {closed && savedReport?.reasons?.length ? <LeftoverReportView report={savedReport} /> : null}
 
-      {!closed && !readOnly && relevantPoolIds.length > 0 && (
-        <Button variant="secondary" className="self-start" leadingIcon={<Lock />} loading={submitting} disabled={disabled || grams} onClick={handleSubmit}>
-          {t('stock.prod.closeDay')}
+      {simple && !closed && !readOnly && <p className="text-caption text-text-3">{t('kd.closeSends')}</p>}
+      {!closed && !readOnly && (relevantPoolIds.length > 0 || (simple && sauces.length > 0)) && (
+        <Button variant={simple ? 'primary' : 'secondary'} className="self-start" leadingIcon={<Lock />} loading={submitting} disabled={disabled || grams} onClick={handleSubmit}>
+          {simple ? t('kd.closeDay') : t('stock.prod.closeDay')}
         </Button>
       )}
       {closed && <Callout tone="success" icon={CheckCircle2} title={t('stock.prod.dayClosed')}>{closedBy || undefined}</Callout>}

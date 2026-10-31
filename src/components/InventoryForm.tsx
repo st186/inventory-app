@@ -211,11 +211,12 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
     }
 
     // If adding a brand-new item name, check for a likely duplicate before proceeding —
-    // against both existing custom items and the category's built-in item list.
+    // against both existing custom items and every category's built-in item list (an item
+    // already under another category used to be addable again here: one item, one category).
     if (formData.customItem && formData.itemName) {
-      const builtInsAsItems: api.CustomItem[] = (categoryItems[formData.category] || []).map((name) => ({
-        id: '', category: formData.category, itemName: name,
-      }));
+      const builtInsAsItems: api.CustomItem[] = Object.entries(categoryItems).flatMap(([category, names]) => names.map((name) => ({
+        id: '', category, itemName: name,
+      })));
       const match = findSimilarItem(formData.itemName, [...builtInsAsItems, ...allCustomItems], (item) => item.itemName);
       if (match) {
         setDuplicateWarning(match);
@@ -374,16 +375,18 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
         title="Possible duplicate item"
         footer={
           <>
-            <Button
-              variant="secondary"
-              size="lg"
-              onClick={async () => {
-                setDuplicateWarning(null);
-                await proceedWithSubmit();
-              }}
-            >
-              Add anyway
-            </Button>
+            {!duplicateWarning.exact && (
+              <Button
+                variant="secondary"
+                size="lg"
+                onClick={async () => {
+                  setDuplicateWarning(null);
+                  await proceedWithSubmit();
+                }}
+              >
+                Add anyway
+              </Button>
+            )}
             <Button
               size="lg"
               className="flex-1"
@@ -402,7 +405,9 @@ export function InventoryForm({ selectedDate, editingItem, entityType, onSubmit,
           <Callout tone="warning" title={`"${formData.itemName}" looks ${duplicateWarning.exact ? 'identical to' : 'very similar to'} "${duplicateWarning.match.itemName}"`}>
             Under {categoryText(duplicateWarning.match.category)}.
           </Callout>
-          <p className="text-body-sm text-text-2">Use the existing item to keep its cost history in one place, or add this as a genuinely new item.</p>
+          <p className="text-body-sm text-text-2">{duplicateWarning.exact
+            ? 'It is already on the list. One item goes under one category, so use the existing item.'
+            : 'Use the existing item to keep its cost history in one place, or add this as a genuinely new item.'}</p>
         </div>
       </ResponsiveModal>
     );

@@ -1,7 +1,7 @@
 // Tests for cameraRules.ts. Run with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/cameraRules.test.ts
 import assert from 'node:assert/strict';
-import { BURST, burstInHours, cleanFaces, decide, minutesPerFrame, inHours, istClock, minutesUntilHours, minutesUntilHoursEnd, missingPpe, missingText, nextStillSeconds, onlyKnownStaff } from './cameraRules.ts';
+import { BURST, burstFor, burstInHours, burstTooSoon, cleanFaces, decide, minutesPerFrame, inHours, istClock, minutesUntilHours, minutesUntilHoursEnd, missingPpe, missingText, nextStillSeconds, onlyKnownStaff } from './cameraRules.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -64,14 +64,25 @@ test('the schedule: PPE cameras every N minutes; door and customer-area cameras 
   assert.equal(nextStillSeconds({ ...base, now: '12:00', hasChecks: true, sinceLastS: 0, active: false }), 3600);
 });
 
-test('bursts: minutes per frame and a burst that ran past closing', () => {
-  assert.equal(minutesPerFrame(30), 1.75); // (30 + 5) / 20
-  assert.equal(minutesPerFrame(30, BURST), 1.75);
+test('bursts: spread over the interval, minutes per frame and a burst that ran past closing', () => {
+  // 31 Oct 2026: 20 frames over 35 minutes = one every 105 s, each standing for 1.75 minutes as before.
+  assert.deepEqual(burstFor(35), { frames: 20, gapSec: 105 });
+  assert.deepEqual(burstFor(5), { frames: 20, gapSec: 15 }); // never closer than 15 s
+  assert.equal(minutesPerFrame(35, burstFor(35)), 1.75);
+  assert.equal(minutesPerFrame(35, { frames: 8, gapSec: 105 }), 1.75); // cut short at closing: still the gap
+  assert.equal(minutesPerFrame(35, BURST), 1.75); // a bunched burst from an older PC: its share of 35 minutes
+  // One burst straight after the other is fine; one that overlaps the last isn't.
+  assert.equal(burstTooSoon(35 * 60, burstFor(35)), false);
+  assert.equal(burstTooSoon(33 * 60, burstFor(35)), false); // a little early (clocks, upload time)
+  assert.equal(burstTooSoon(30 * 60, burstFor(35)), true);
+  assert.equal(burstTooSoon(10 * 60, burstFor(35)), true);
+  assert.equal(burstTooSoon(Infinity, burstFor(35)), false);
   const at = (hhmm: string) => Date.parse(`2026-10-30T${hhmm}:00+05:30`);
   assert.equal(burstInHours(at('12:00'), '07:00', '21:00'), true);
   assert.equal(burstInHours(at('21:04'), '07:00', '21:00'), true); // started 20:58
   assert.equal(burstInHours(at('21:10'), '07:00', '21:00'), false);
   assert.equal(burstInHours(at('06:58'), '07:00', '21:00'), false);
+  assert.equal(burstInHours(at('21:30'), '07:00', '21:00', burstFor(35)), true); // spread: started 20:54
 });
 
 console.log(`cameraRules: ${passed} tests passed`);

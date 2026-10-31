@@ -28,6 +28,7 @@
 // the calendar (store-calendar:{date}) just ahead, and comes with that reason picked. Explained
 // buys stay out of "usual", and an item with its own history is held to its own usual amount.
 import { askClaudeForJson } from './insights.ts';
+import { checkBill } from './billCheck.ts';
 import { BIG_BUY_REASONS } from './bigBuyReasons.ts';
 import { amountFix, amountIssue, itemKey, type ItemSpec } from './suppliesRules.ts';
 import {
@@ -46,6 +47,8 @@ export type ExpenseReviewDeps = {
   verifyUser: (authHeader: string | null) => Promise<any>;
   notifyUser: (authUserId: string, type: string, title: string, message: string, relatedId?: string, relatedDate?: string,
     quickAction?: { recordType: 'expense_approval'; recordId: string }) => Promise<unknown>;
+  /** Supabase Storage, to read bill photos (billCheck.ts); without it bills aren't read. */
+  storage?: any;
 };
 type Source = 'inventory' | 'overhead';
 type Flag = {
@@ -133,7 +136,7 @@ const VAGUE = /^(repair(ing)?( cost| work)?|labou?r( charge| cost)?( \(.*\))?|le
 const DETAIL_CATEGORIES = ['repair', 'labour_charge', 'renovation', 'vehicle_maintenance', 'asset_kitchen_equipment', 'asset_electrical', 'asset_furniture'];
 
 // Categories Bunny may choose from for an unfamiliar item (the app's own list, short labels).
-const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
+export const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
   inventory: {
     meat: 'Meat', dairy: 'Dairy', fresh_produce: 'Vegetables', spices_seasonings: 'Grocery and spices', staples: 'Flour, oil and staples',
     bread_buns: 'Bread and buns', beverages: 'Drinks', packaging: 'Packaging (boxes, bags, foil)', cleaning_supplies: 'Cleaning supplies',
@@ -150,7 +153,7 @@ const CATEGORY_CHOICES: Record<Source, Record<string, string>> = {
   },
 };
 
-const catLabel = (key: any) => CATEGORY_CHOICES.overhead[key] || CATEGORY_CHOICES.inventory[key] || String(key || 'other').replace(/_/g, ' ');
+export const catLabel = (key: any) => CATEGORY_CHOICES.overhead[key] || CATEGORY_CHOICES.inventory[key] || String(key || 'other').replace(/_/g, ' ');
 
 /** Check one newly saved purchase or expense and save any flags. Never throws. */
 // loggedByRole: the owner's own entries need nobody's OK.
@@ -348,6 +351,18 @@ export async function reviewExpense(deps: ExpenseReviewDeps, source: Source, key
     }
     const replace = await replaceCheck(deps, source, item);
     if (replace) flags.push(replace);
+
+    // The bill photo, read by Bunny and compared with the entry (billCheck.ts; owner, 1 Nov 2026:
+    // "lets validate the bills from now on for expenses"). The reading stays on the entry.
+    if (deps.storage && isBillPath(item.billPhotoPath) && !item.billCheck) {
+      const what = describeRepair(item) || name || catLabel(item.category);
+      const { reading, problems } = await checkBill(deps.kv, deps.storage, item.id, item.billPhotoPath, { amount, date: item.date, what, category: catLabel(item.category) });
+      if (reading) {
+        const latest = await deps.kv.get(key).catch(() => null);
+        if (latest) await deps.kv.set(key, { ...latest, billCheck: { at: new Date().toISOString(), ...reading } }).catch(() => undefined);
+      }
+      flags.push(...problems);
+    }
 
     if (flags.length === 0) return [];
     const now = new Date().toISOString();
@@ -582,9 +597,12 @@ export function registerExpenseReviewRoutes(app: any, deps: ExpenseReviewDeps) {
       if (!isBillPath(body?.path)) return c.json({ error: 'Take a photo of the bill first' }, 400);
       const entry = await deps.kv.get(flag.expenseKey);
       if (!entry) return c.json({ error: 'The entry was deleted' }, 404);
-      await deps.kv.set(flag.expenseKey, { ...entry, billPhotoPath: body.path });
+      const withBill = { ...entry, billPhotoPath: body.path, billCheck: undefined };
+      await deps.kv.set(flag.expenseKey, withBill);
       const next: Flag = { ...flag, status: 'fixed', decidedBy: v.name, decidedAt: new Date().toISOString() };
       await deps.kv.set(`expense-flag:${id}`, next);
+      // The bill is read and checked against the entry like a new one (billCheck.ts).
+      await reviewExpense(deps, flag.source, flag.expenseKey, withBill, v.name).catch(() => undefined);
       return c.json({ flag: next });
     } catch (error) {
       console.log('Error adding a bill photo:', error);

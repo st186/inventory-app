@@ -23,8 +23,15 @@ export function topSheet(): Element | null {
   return open[open.length - 1] || null;
 }
 
-type Where = { sheet?: boolean };
-const rootOf = (o: Where): ParentNode | null => (o.sheet ? topSheet() : document);
+/** The step of a page named `name` (a section with that aria-label, e.g. the production day's steps). */
+export function step(name: Words): Element | null {
+  const want = wants(name);
+  return Array.from(document.querySelectorAll('section[aria-label]')).find((el) => !el.closest('[data-coach]') && want.includes(norm(el.getAttribute('aria-label')))) || null;
+}
+
+// Where to look: the whole screen, the sheet on top, or one named step.
+type Where = { sheet?: boolean; within?: Words };
+const rootOf = (o: Where): ParentNode | null => (o.sheet ? topSheet() : o.within ? step(o.within) : document);
 
 /** A data-tour mark (the nav tabs, Home's cards). */
 export const tour = (id: string): Find => () => {
@@ -115,4 +122,11 @@ export const field = (label: Words, o: Where = {}): Find => () => {
 export const filled = (label: Words, o: Where = {}) => () => {
   const value = input(label, o)?.value.trim() || '';
   return !!value && !/^[₹\s]*0+(\.0+)?$/.test(value);
+};
+
+/** Every number box in a step has something in it (the production day's counts want them all). */
+export const allFilled = (within: Words) => () => {
+  const root = step(within);
+  const boxes = root ? Array.from(root.querySelectorAll('input[inputmode="decimal"]')).filter(visible) as HTMLInputElement[] : [];
+  return boxes.length > 0 && boxes.every((b) => b.value.trim() !== '');
 };

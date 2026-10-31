@@ -24,6 +24,7 @@ import {
   stockOutDuration,
 } from '../utils/stockOuts';
 import { StickyActions, StockPage, dayLabel, reasonLabel } from './stock/stockShared';
+import { useRefreshSignal } from './shell/refreshSignal';
 
 type Props = {
   accessToken: string;
@@ -119,6 +120,7 @@ export function StockOutLog({ accessToken, stores, defaultStoreId, canDelete }: 
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [accessToken, storeId]);
+  useRefreshSignal(load);
 
   const open = useMemo(() => entries.filter((e) => !e.endAt), [entries]);
   const recent = useMemo(() => entries.filter((e) => !!e.endAt), [entries]);

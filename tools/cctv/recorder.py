@@ -115,11 +115,17 @@ def save_still(cam, folder):
 
 
 def start_ffmpeg(plan, cam, day_folder):
-    """FFmpeg's own messages go to a file (a pipe nobody reads could fill up and freeze it)."""
+    """FFmpeg's own messages go to a file (a pipe nobody reads could fill up and freeze it).
+
+    Fragmented MP4 (owner, 31 Oct 2026): a plain MP4 is only playable once FFmpeg closes it, so when
+    the camera froze on 30 Oct at 12:52 and FFmpeg had to be stopped hard, 12:30-12:54 was lost. In
+    pieces written fragment by fragment, everything up to the cut still plays (checked: a file cut at
+    60% opens in OpenCV with its frames and seeks; kitchen-ai video.py reads them as before)."""
     os.makedirs(day_folder, exist_ok=True)
     args = [
         plan["ffmpeg"], "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", cam["still_url"],
         "-an", "-c:v", "copy", "-f", "segment", "-segment_time", str(plan.get("segment_s", 1800)), "-reset_timestamps", "1", "-strftime", "1",
+        "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
         os.path.join(day_folder, "%H-%M-%S.mp4"),
     ]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)

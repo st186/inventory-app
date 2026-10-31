@@ -36,7 +36,7 @@ export function RepairFields({ kind, place, value, onChange }: {
   const [technicians, setTechnicians] = useState<Technician[] | null>(null);
   const [otherMachine, setOtherMachine] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({ name: '', phone: '', trade: '' });
+  const [draft, setDraft] = useState({ name: '', phone: '' });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -67,10 +67,13 @@ export function RepairFields({ kind, place, value, onChange }: {
   const saveTech = async () => {
     setSaving(true);
     try {
-      const t = await addTechnician({ name: draft.name.trim(), phone: draft.phone.trim(), trade: draft.trade.trim() });
+      // What they do comes from this job (owner, 1 Nov 2026: "how many times do i have to enter what
+      // was done"): the job for labour, the machine for a repair.
+      const trade = (kind === 'repair' ? value.machine || value.fault : value.fault).trim().slice(0, 60);
+      const t = await addTechnician({ name: draft.name.trim(), phone: draft.phone.trim(), trade });
       setTechnicians((list) => [...(list || []).filter((x) => x.id !== t.id), t].sort((a, b) => a.name.localeCompare(b.name)));
       setAdding(false);
-      setDraft({ name: '', phone: '', trade: '' });
+      setDraft({ name: '', phone: '' });
       onChange({ ...value, technicianId: t.id, technicianName: t.name });
     } catch (e) {
       toast.error((e as Error).message || 'Could not save the technician');
@@ -115,7 +118,6 @@ export function RepairFields({ kind, place, value, onChange }: {
             <Field label="Name" required><Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={60} /></Field>
             <Field label="Phone" required><Input type="tel" inputMode="tel" className="num" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} maxLength={16} /></Field>
           </div>
-          <Field label="What they fix" optional><Input value={draft.trade} onChange={(e) => setDraft({ ...draft, trade: e.target.value })} placeholder="e.g. fridge and AC, electrician" maxLength={60} /></Field>
           <Button size="sm" className="self-start" leadingIcon={<Plus />} loading={saving} onClick={saveTech}>Save technician</Button>
         </div>
       )}
@@ -135,7 +137,7 @@ export function BillPhotoField({ value, onChange, required }: { value: string | 
     try { onChange(await compressPhoto(file)); } catch (err) { toast.error((err as Error).message || 'Could not read that photo'); } finally { setBusy(false); }
   };
   return (
-    <Field label="Bill photo" required={required} optional={!required} helper={required ? 'Repairs, labour and equipment above ₹500 need a photo of the bill.' : undefined}>
+    <Field label="Bill photo" required={required} optional={!required} helper={required ? 'Repairs, labour and equipment above ₹500 need a photo of the bill. Bunny reads it and checks it against the entry.' : 'Bunny reads the bill and checks the amount, date and items against the entry.'}>
       <div className="flex items-center gap-3">
         {value ? (
           <>

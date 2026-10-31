@@ -154,7 +154,7 @@ export const settlementAnalyticsReportingDate = (settlement: SettlementPeriodLik
  // and each view's content changed. 'datacapture' (Performance Tracker) is no longer a
  // top-level tab - it's now a collapsible section inside 'overview' (see the Analytics
  // page redesign).
- export type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends';
+ export type ActiveView = 'overview' | 'profit' | 'expense' | 'unit-economics' | 'sales' | 'cash-reconciliation' | 'production' | 'production-requests' | 'stock-request-analysis' | 'recalibration-reports' | 'trends' | 'rush';
  
  // Production date range selector
  export type DateRangeType = 'today' | 'yesterday' | 'thisWeek' | 'previousWeek' | 'thisMonth' | 'previousMonth' | 'thisYear' | 'previousYear' | 'custom';
@@ -314,7 +314,7 @@ export function useAnalyticsData({ context, selectedStoreId, highlightRequestId,
  logger.debugStore('Analytics effectiveStoreId:', effectiveStoreId);
  logger.debugStore('Analytics mode:', analyticsMode);
  const [activeView, setActiveView] = useState<ActiveView>(
- highlightRequestId || initialTab === 'production-requests' ? 'production-requests' : initialTab === 'trends' ? 'trends' : initialTab === 'cash-reconciliation' ? 'cash-reconciliation' : 'overview'
+ highlightRequestId || initialTab === 'production-requests' ? 'production-requests' : initialTab === 'trends' ? 'trends' : initialTab === 'rush' ? 'rush' : initialTab === 'cash-reconciliation' ? 'cash-reconciliation' : 'overview'
  );
  
  // Expense breakdown modal state
@@ -848,7 +848,13 @@ async function fetchRecalibrationAndCalculateOpeningBalance() {
  : isInWindow(item?.date, periodRange)
  ), [overheadData, timeFilter, periodRange]);
 
- const timeFilteredFixedCostsData = useMemo(() => filterByTimeRange(fixedCostsData), [fixedCostsData, periodRange]);
+ // Rent and electricity count in the month they are for (forMonth, asked since 28 Oct 2026): October's
+ // rent paid on 5 November is an October cost (owner, 1 Nov 2026). Other bills go by their date.
+ const timeFilteredFixedCostsData = useMemo(() => (fixedCostsData || []).filter((item: any) =>
+ (item?.category === 'rent' || item?.category === 'electricity') && item.forMonth
+ ? monthInPeriod(item.forMonth, timeFilter, periodRange)
+ : isInWindow(item?.date, periodRange)
+ ), [fixedCostsData, timeFilter, periodRange]);
 
  // Payouts with a forMonth set (backlogged/late salaries, e.g. paid on the 5th for the prior
  // month) are bucketed by forMonth instead of the payment date, mirroring expenseMonth above.

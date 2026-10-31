@@ -28,6 +28,7 @@ import {
   ASSETS_FROM_DATE, ASSET_CATEGORY_KEYS, ASSET_CONDITION_KEYS, assetCategoryLabel, checkNeedsPhoto, checkPeriodOf, checkable,
   nextCheckPeriod, planReconcile, type Asset, type AssetCondition, type AssetLocationKind,
 } from './assetRules.ts';
+import { askAboutNewNames, keptVerdicts } from './assetAi.ts';
 
 type Kv = {
   get: <T = any>(key: string) => Promise<T>;
@@ -179,7 +180,17 @@ export function registerAssetsRoutes(app: any, deps: Deps) {
       deps.getAllByPrefix('inventory:'), deps.getAllByPrefix('overhead:'), deps.getAllByPrefix('asset:'),
     ]);
     const now = new Date().toISOString();
-    const plan = planReconcile({ purchases, overheads, assets, fromDate, now, by: AUTO_BY });
+    // Bunny's word on names the keywords can't judge (assetAi.ts): kept answers, plus new names.
+    const verdicts = await keptVerdicts(deps.getAllByPrefix);
+    try {
+      await askAboutNewNames(deps.kv, [
+        ...purchases.map((row: any) => ({ row, prefix: 'inventory' as const })),
+        ...overheads.map((row: any) => ({ row, prefix: 'overhead' as const })),
+      ], verdicts, fromDate, trigger === 'list' ? 8 : undefined);
+    } catch (e: any) {
+      console.error('[assets] Bunny could not read the new names:', e?.message || e);
+    }
+    const plan = planReconcile({ purchases, overheads, assets, fromDate, now, by: AUTO_BY, verdicts });
     const planned = new Map<string, string>(assets.filter((a: any) => a?.id).map((a: any) => [a.id, a.updatedAt]));
     let added = 0, updated = 0, removed = 0;
 

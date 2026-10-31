@@ -107,7 +107,9 @@ export type ShiftToday = {
   window: { startAt: string; endAt: string; shiftStartAt: string; shiftEndAt: string };
   pins: { kind: 'store' | 'production'; id: string; name: string | null; lat: number; lng: number }[];
   radiusM: number;
-  consent: { accepted: boolean; at: string } | null;
+  consent: { accepted: boolean; at: string; version?: number } | null;
+  /** Consent version 2: the phone also sends at work / stepped out during the shift. */
+  presence?: boolean;
 };
 export type DetectedEvent = { kind: 'arrival' | 'exit'; detectedAt: number; lat: number; lng: number; accuracyM?: number; simulated?: boolean };
 
@@ -164,6 +166,10 @@ export const confirmDetected = (kind: 'arrival' | 'exit', opts: { employeeId?: s
 export const dismissDetected = (kind: 'arrival' | 'exit', opts: { employeeId?: string; date?: string } = {}): Promise<{ punch: PunchRecord | null }> =>
   send('POST', '/shift/dismiss', { kind, ...opts });
 export const saveShiftConsent = (accepted: boolean) => send('POST', '/shift/consent', { accepted });
+// At work / stepped out stretches between check-in and check-out (consent version 2, shiftTracker.ts).
+export type PresenceSpan = { from: number; to: number; state: 'in' | 'out'; farthestM?: number };
+export const sendPresence = (date: string, spans: PresenceSpan[]): Promise<{ ok?: boolean; ignored?: boolean }> =>
+  send('POST', '/shift/presence', { date, spans });
 export const getTeamPending = (): Promise<{ pending: TeamPending[] }> => send('GET', '/shift/team-pending');
 
 // Store cover (storeCover.ts): today's cover for the signed-in person, their store check-in, and

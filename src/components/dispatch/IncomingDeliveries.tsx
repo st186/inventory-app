@@ -14,6 +14,7 @@ import { MOMO_TYPES } from '../../constants/momoTypes';
 import { ReceiveDeliveryDialog, ReceiptSummary } from './ReceiveDeliveryDialog';
 import { DispatchSlipModal } from './DispatchSlip';
 import { StockPage, bagsText, dayLabel, momoName, timeLabel } from '../stock/stockShared';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 type Props = {
   accessToken: string;
@@ -53,6 +54,7 @@ export function IncomingDeliveries({ accessToken, storeId }: Props) {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [accessToken, storeId]);
+  useRefreshSignal(load);
 
   const onTheWay = useMemo(() => requests.filter((r) => r.status === 'shipped' || r.status === 'partially-shipped'), [requests]);
   const received = useMemo(

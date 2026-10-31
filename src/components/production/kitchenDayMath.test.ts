@@ -37,12 +37,21 @@ test('a count far from what should be left is flagged either way', () => {
   assert.equal(gapMatters(gone), true); // 6.96 should be left, 2 counted: waste not logged?
 });
 
-test('dough is planned and used by every steamed / fried momo, not kurkure', () => {
+test('dough is planned and used by every steamed / fried momo but cheese corn and kurkure', () => {
   const d = itemDay(item('dough'), { opening: 1, prepared: 10, closingActual: null }, { chicken: 650, veg: 120, cheeseCorn: 60, chickenKurkure: 100 }, { chicken: 377, chickenCheese: 240, veg: 200, cheeseCorn: 146, chickenKurkure: 120 }, perKg);
-  assert.equal(d.planned, 830);
-  assert.equal(d.makeKg, 9.5); // 10.12 kg needed, 1 kg there
-  assert.equal(d.used, 11.74); // 963 momos / 82
-  assert.equal(d.shouldLeft, 0);
+  assert.equal(d.planned, 770);
+  assert.equal(d.makeKg, 8.5); // 9.39 kg needed, 1 kg there
+  assert.equal(d.used, 9.96); // 817 momos / 82
+  assert.equal(d.shouldLeft, 1.04);
+});
+
+test('cheese corn has its own dough (owner, 31 Oct 2026)', () => {
+  const d = itemDay(item('dough:cheeseCorn'), { opening: 0, prepared: 2, closingActual: null }, { cheeseCorn: 160 }, { cheeseCorn: 160 }, { ...perKg, 'dough:cheeseCorn': 80 });
+  assert.equal(d.planned, 160);
+  assert.equal(d.perKg, 80);
+  assert.equal(d.used, 2);
+  assert.equal(d.frozen, false);
+  assert.ok(itemsForDay({}, { cheeseCorn: 100 }, {}).some((i) => i.id === 'dough:cheeseCorn'));
 });
 
 test('13 Oct cheese corn: last weighed weeks ago must be weighed; counted last night is fine', () => {

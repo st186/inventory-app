@@ -2,24 +2,26 @@
 // actually and whos talking on phone - total phone usage and other key metrics"). Work sampling:
 // every still (one every few minutes) says what each person in view is doing; each sighting stands
 // for the minutes since the last still. The camera sees no faces, so a person is a "slot" by the
-// colour of their top for the day, and someone at the place taps the real name once a day.
+// colour of their top for the day, and someone at the place taps the real name once a day. Two
+// people in the same top are told apart by their trousers (owner, 30 Oct 2026: Vijay and Rudra both
+// came in red): the slot is "red~blue"; trousers not seen goes to the one person known in that top.
 // Bursts (owner, 29 Oct 2026, "for better detection"): 20 frames 15 seconds apart, looked at
 // together so the AI follows each person through the 5 minutes, then 30 minutes without; each
 // frame a person is in stands for its share of the whole cycle (35 / 20 = 1.75 minutes).
 // Kept apart from cctv.ts so it can be tested with plain node:
 //   node supabase/functions/make-server-c2dd9b9d/activityRules.test.ts
 
-export const ACTIVITIES = ['folding', 'machine', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] as const;
+export const ACTIVITIES = ['folding', 'machine', 'prep', 'filling', 'cooking', 'packing', 'cleaning', 'phone', 'idle', 'other'] as const;
 export type Activity = typeof ACTIVITIES[number];
 export const TOPS = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'navy', 'purple', 'pink', 'white', 'grey', 'black', 'brown', 'beige', 'patterned', 'other'] as const;
 export type Top = typeof TOPS[number];
 
 export const ACTIVITY_LABEL: Record<Activity, string> = {
-  folding: 'Folding momos', machine: 'At the machine / dough', filling: 'Making filling', cooking: 'Steaming / frying',
+  folding: 'Folding momos', machine: 'At the machine / dough', prep: 'Cutting veg (prep)', filling: 'Making filling', cooking: 'Steaming / frying',
   packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other',
 };
 
-export type Sighting = { top: string; activity: string; phone: string; cap?: string; gloves?: string; apron?: string };
+export type Sighting = { top: string; bottom?: string; activity: string; phone: string; cap?: string; gloves?: string; apron?: string };
 export type Slot = {
   minutes: Partial<Record<Activity, number>>;
   phoneMinutes: number;
@@ -29,20 +31,43 @@ export type Slot = {
   first: string; // HH:MM first seen
   last: string;
   ppe: { judged: number; ok: number }; // sightings where every checked item could be seen; all on
+  at?: number[]; // when they were seen: minutes of the day, one per frame
 };
-export type ActivityDay = { date: string; cameraId: string; stills: number; bursts?: number; slots: Record<string, Slot> };
+export type ActivityDay = {
+  date: string; cameraId: string; stills: number; bursts?: number; slots: Record<string, Slot>;
+  frames?: number[]; // when the camera looked: minutes of the day, one per frame
+  mpf?: number; // minutes each frame stands for
+  folding?: [number, number][]; // [minute of the day, people folding] for each frame with anyone folding
+};
+
+// Not in the kitchen (owner, 30 Oct 2026): gone and not back within this many minutes. Shorter is just
+// out of view for a moment.
+export const AWAY_MIN = 15;
+const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const clockOf = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(Math.floor(min % 60)).padStart(2, '0')}`;
 
 const onPhone = (p: Sighting) => p.phone === 'in_hand' || p.phone === 'at_ear' || p.activity === 'phone';
 const topOf = (t: string): Top => ((TOPS as readonly string[]).includes(t) ? t as Top : 'other');
 const activityOf = (a: string): Activity => ((ACTIVITIES as readonly string[]).includes(a) ? a as Activity : 'other');
 
-/** Slot keys for the people in one look: two people in the same colour get "red", "red-2". */
-export function slotKeys(tops: string[]): string[] {
+/**
+ * Slot keys for the people in one look: top and trousers ("red~blue"). Trousers not seen: the one
+ * person already known today in that top, else the top alone. The same again in one look gets "-2".
+ * `known` = the day's slot keys before this look.
+ */
+export function slotKeys(people: { top: string; bottom?: string; key?: string }[], known: string[] = []): string[] {
   const used: Record<string, number> = {};
-  return tops.map((t) => {
-    const top = topOf(t);
-    used[top] = (used[top] || 0) + 1;
-    return used[top] === 1 ? top : `${top}-${used[top]}`;
+  return people.map((p) => {
+    if (p.key) return p.key; // a numbered burst: the day's person number ("p3"), from the camera PC's boxes
+    const top = topOf(p.top);
+    const bottom = p.bottom && p.bottom !== 'other' && (TOPS as readonly string[]).includes(p.bottom) ? p.bottom : '';
+    let base = bottom ? `${top}~${bottom}` : top;
+    if (!bottom) {
+      const same = known.filter((k) => !/-\d+$/.test(k) && k.split('~')[0] === top);
+      if (same.length === 1) base = same[0];
+    }
+    used[base] = (used[base] || 0) + 1;
+    return used[base] === 1 ? base : `${base}-${used[base]}`;
   });
 }
 const newSlot = (clock: string): Slot => ({ minutes: {}, phoneMinutes: 0, phoneTimes: 0, onPhone: false, samples: 0, first: clock, last: clock, ppe: { judged: 0, ok: 0 } });
@@ -61,8 +86,13 @@ export function addStill(day: ActivityDay | null, o: {
 }): ActivityDay {
   const d: ActivityDay = day && day.date === o.date ? day : { date: o.date, cameraId: o.cameraId, stills: 0, slots: {} };
   d.stills += 1;
+  const t = toMin(o.clock);
+  d.frames = [...(d.frames || []), t];
+  d.mpf = o.everyMin;
+  const folders = o.people.filter((p) => activityOf(p.activity) === 'folding').length;
+  if (folders) d.folding = [...(d.folding || []), [t, folders]];
   const seen = new Set<string>();
-  const keys = slotKeys(o.people.map((p) => p.top));
+  const keys = slotKeys(o.people, Object.keys(d.slots));
   for (const [i, p] of o.people.entries()) {
     const key = keys[i];
     seen.add(key);
@@ -77,6 +107,7 @@ export function addStill(day: ActivityDay | null, o: {
     s.onPhone = phone;
     s.samples += 1;
     s.last = o.clock;
+    s.at = [...(s.at || []), t];
     judgePpe(s, p, o.checks);
     d.slots[key] = s;
   }
@@ -86,7 +117,7 @@ export function addStill(day: ActivityDay | null, o: {
 }
 
 /** One person followed through a burst: what they were doing in each frame ("away" = not in view). */
-export type BurstPerson = { top: string; activities: string[]; phoneFrames: number[]; cap?: string; gloves?: string; apron?: string };
+export type BurstPerson = { top: string; bottom?: string; key?: string; activities: string[]; phoneFrames: number[]; cap?: string; gloves?: string; apron?: string };
 
 /**
  * Adds a burst to the day: every frame a person is in counts `minutesPerFrame` of what they were
@@ -94,18 +125,29 @@ export type BurstPerson = { top: string; activities: string[]; phoneFrames: numb
  * PPE is judged once per burst (the AI looks across all the frames).
  */
 export function addBurst(day: ActivityDay | null, o: {
-  date: string; cameraId: string; from: string; to: string; frames: number; minutesPerFrame: number; people: BurstPerson[]; checks: string[];
+  date: string; cameraId: string; from: string; to: string; frames: number; minutesPerFrame: number; people: BurstPerson[]; checks: string[]; gapSec?: number;
 }): ActivityDay {
   const d: ActivityDay = day && day.date === o.date ? day : { date: o.date, cameraId: o.cameraId, stills: 0, slots: {} };
   d.stills += o.frames;
   d.bursts = (d.bursts || 0) + 1;
-  const keys = slotKeys(o.people.map((p) => p.top));
+  const times = Array.from({ length: o.frames }, (_, f) => toMin(o.from) + (f * (o.gapSec || 15)) / 60);
+  d.frames = [...(d.frames || []), ...times];
+  d.mpf = o.minutesPerFrame;
+  times.forEach((t, f) => {
+    const folders = o.people.filter((p) => activityOf(p.activities[f] || 'away') === 'folding' && p.activities[f] !== 'away').length;
+    if (folders) d.folding = [...(d.folding || []), [t, folders]];
+  });
+  const keys = slotKeys(o.people, Object.keys(d.slots));
   for (const s of Object.values(d.slots)) s.onPhone = false;
   for (const [i, p] of o.people.entries()) {
     const frames = p.activities.slice(0, o.frames);
     if (!frames.some((a) => a !== 'away')) continue;
     const key = keys[i];
-    const s: Slot = d.slots[key] || newSlot(o.from);
+    // First and last seen: the frames they were in (a spread burst covers 35 minutes, 31 Oct 2026).
+    const inView = frames.map((a, f) => (a === 'away' ? -1 : f)).filter((f) => f >= 0);
+    const seenFrom = clockOf(times[inView[0]]);
+    const seenTo = clockOf(times[inView[inView.length - 1]]);
+    const s: Slot = d.slots[key] || newSlot(seenFrom);
     const phoneAt = new Set(p.phoneFrames);
     let onPhoneNow = false;
     frames.forEach((a, f) => {
@@ -119,31 +161,181 @@ export function addBurst(day: ActivityDay | null, o: {
       }
       onPhoneNow = phone;
       s.samples += 1;
+      s.at = [...(s.at || []), times[f]];
     });
-    if (o.from < s.first) s.first = o.from;
-    if (o.to > s.last) s.last = o.to;
+    if (seenFrom < s.first) s.first = seenFrom;
+    if (seenTo > s.last) s.last = seenTo;
     judgePpe(s, p, o.checks);
     d.slots[key] = s;
   }
   return d;
 }
 
+/**
+ * Minutes a person was out of the kitchen: between their first and last sighting, every absence that
+ * lasted AWAY_MIN or more; each frame the camera took while they were gone counts what a frame stands
+ * for. Before they first come in and after they leave for the day isn't counted, nor a time the
+ * whole kitchen was empty (`empty`, see emptyFrames).
+ */
+export function notInKitchen(d: ActivityDay, s: Slot, awayMin = AWAY_MIN, empty: Set<string> = new Set()): number {
+  return awaySpells(d, s, awayMin, empty).reduce((t, x) => t + x.minutes, 0);
+}
+
+const frameKey = (t: number) => t.toFixed(3);
+
+/** What the person's phone said for a time (attendance presence, presenceRules.ts), in minutes:
+ *  at work, stepped out (and at most how far), and with no location (no app running, no consent). */
+export type PhoneNote = { atWorkMin: number; outMin: number; farthestM: number | null; noneMin: number };
+/** Each time out of the kitchen (owner, 30 Oct 2026: "along with timestamp"): last seen, back, and
+ *  the minutes it counts (the frames missed in between); `phone` when their phone sends presence. */
+export type AwaySpell = { date: string; from: string; to: string; minutes: number; phone?: PhoneNote };
+/** A named person's day outside the camera, in minutes of the day: their check-in and check-out
+ *  (owner, 31 Oct 2026: Aniket checked out at 13:55, so later is nobody's "not in kitchen" of his)
+ *  and what their phone said (presence). */
+export type PhoneSpan = { from: number; to: number; state: 'in' | 'out'; farthestM?: number };
+export type PersonDay = { shift?: { from?: number; to?: number }; phone?: PhoneSpan[] };
+
+/** The phone's word for one stretch of the day (minutes of the day). */
+export function phoneDuring(spans: PhoneSpan[], from: number, to: number): PhoneNote {
+  let atWork = 0, out = 0;
+  let farthest: number | null = null;
+  for (const s of spans) {
+    const overlap = Math.min(to, s.to) - Math.max(from, s.from);
+    if (overlap <= 0) continue;
+    if (s.state === 'in') atWork += overlap;
+    else {
+      out += overlap;
+      if (s.farthestM) farthest = Math.max(farthest ?? 0, s.farthestM);
+    }
+  }
+  return { atWorkMin: Math.round(atWork), outMin: Math.round(out), farthestM: farthest, noneMin: Math.max(0, Math.round(to - from - atWork - out)) };
+}
+
+/** The frames outside a person's check-in to check-out (none when they didn't check in). */
+export function offShiftFrames(d: ActivityDay, shift?: PersonDay['shift']): Set<string> {
+  if (!shift || (shift.from === undefined && shift.to === undefined)) return new Set();
+  return new Set((d.frames || []).filter((t) => (shift.from !== undefined && t < shift.from) || (shift.to !== undefined && t > shift.to)).map(frameKey));
+}
+
+/**
+ * The whole kitchen empty (owner, 31 Oct 2026: lunch was counting as Rudra's "not in kitchen" though
+ * Vijay and Aniket were out too): runs of frames with nobody in view, between the first and last
+ * person seen that day, that add up to AWAY_MIN or more (a frame or two with everyone bent out of
+ * view isn't a break). `frames` = those frames, `spells` = each run from its first empty frame to
+ * the next frame with someone in it. `notPeople` = slots that are objects ("Not a person"). Days
+ * from before sightings had times give nothing.
+ */
+export function kitchenEmpty(d: ActivityDay, notPeople: Set<string> = new Set(), awayMin = AWAY_MIN): { frames: Set<string>; spells: AwaySpell[] } {
+  const out = { frames: new Set<string>(), spells: [] as AwaySpell[] };
+  const slots = Object.entries(d.slots).filter(([slot]) => !notPeople.has(slot)).map(([, s]) => s);
+  if (!slots.some((s) => s.at?.length)) return out;
+  const seen = new Set(slots.flatMap((s) => (s.at || []).map(frameKey)));
+  let anyoneYet = false;
+  let run: number[] = [];
+  for (const t of [...(d.frames || [])].sort((a, b) => a - b)) {
+    if (!seen.has(frameKey(t))) { if (anyoneYet) run.push(t); continue; }
+    if (run.length * (d.mpf || 0) >= awayMin) {
+      for (const f of run) out.frames.add(frameKey(f));
+      out.spells.push({ date: d.date, from: clockOf(run[0]), to: clockOf(t), minutes: run.length * (d.mpf || 0) });
+    }
+    anyoneYet = true;
+    run = [];
+  }
+  return out;
+}
+
+/** A break with the whole kitchen empty (`empty`, kitchenEmpty's frames) in the middle of an absence
+ *  is everyone's break: it splits the absence, the part after it starts when someone is back, and
+ *  each part counts only when it lasted AWAY_MIN or more (out a few minutes before the others went
+ *  for lunch isn't). Frames before their check-in or after their check-out (`person.shift`) are
+ *  left out the same way; `person.phone` adds what the phone said to each time. */
+export function awaySpells(d: ActivityDay, s: Slot, awayMin = AWAY_MIN, empty: Set<string> = new Set(), person?: PersonDay): AwaySpell[] {
+  const at = [...(s.at || [])].sort((a, b) => a - b);
+  const frames = [...(d.frames || [])].sort((a, b) => a - b);
+  const off = offShiftFrames(d, person?.shift);
+  if (off.size) empty = new Set([...empty, ...off]);
+  const out: AwaySpell[] = [];
+  const add = (from: number | null, to: number, missed: number) => {
+    if (from === null || !missed) return;
+    // Within their check-in to check-out: gone before checking out ends at the check-out.
+    from = Math.max(from, person?.shift?.from ?? from);
+    to = Math.min(to, person?.shift?.to ?? to);
+    if (to - from < awayMin) return;
+    out.push({ date: d.date, from: clockOf(from), to: clockOf(to), minutes: missed * (d.mpf || 0), ...(person?.phone ? { phone: phoneDuring(person.phone, from, to) } : {}) });
+  };
+  for (let i = 1; i < at.length; i++) {
+    if (at[i] - at[i - 1] < awayMin) continue;
+    let from: number | null = at[i - 1];
+    let missed = 0;
+    for (const t of frames) {
+      if (t <= at[i - 1] + 1e-6 || t >= at[i] - 1e-6) continue;
+      if (empty.has(frameKey(t))) {
+        add(from, t, missed);
+        from = null;
+        missed = 0;
+        continue;
+      }
+      if (from === null) from = t;
+      missed += 1;
+    }
+    add(from ?? at[i], at[i], missed);
+  }
+  return out;
+}
+
+/** When folding started and ended that day, and the most people folding at once (from the frames). */
+export function foldingSpan(d: ActivityDay): { from: string; to: string; mostPeople: number } | null {
+  const f = d.folding || [];
+  if (!f.length) return null;
+  const times = f.map(([t]) => t);
+  return { from: clockOf(Math.min(...times)), to: clockOf(Math.max(...times)), mostPeople: Math.max(...f.map(([, n]) => n)) };
+}
+
 export type PersonRow = {
-  slot: string; name: string | null; minutes: Partial<Record<Activity, number>>; seenMinutes: number;
+  slot: string; name: string | null; minutes: Partial<Record<Activity, number>>; seenMinutes: number; notInKitchenMinutes: number; away: AwaySpell[];
   foldingMinutes: number; phoneMinutes: number; phoneTimes: number; idleMinutes: number; ppePercent: number | null; first: string; last: string;
 };
 
-/** Per person (named where someone tapped the name) and the kitchen as a whole, for one or more days. */
-export function summarise(days: ActivityDay[], names: Record<string, Record<string, string>>, piecesMade: number) {
+/** Two slots of one person (two numbers or colours given the same name) as one. */
+export function mergeSlots(a: Slot, b: Slot): Slot {
+  const minutes = { ...a.minutes };
+  for (const [k, m] of Object.entries(b.minutes)) minutes[k as Activity] = (minutes[k as Activity] || 0) + (m || 0);
+  return {
+    minutes, phoneMinutes: a.phoneMinutes + b.phoneMinutes, phoneTimes: a.phoneTimes + b.phoneTimes, onPhone: a.onPhone || b.onPhone, samples: a.samples + b.samples,
+    first: a.first < b.first ? a.first : b.first, last: a.last > b.last ? a.last : b.last, ppe: { judged: a.ppe.judged + b.ppe.judged, ok: a.ppe.ok + b.ppe.ok },
+    at: [...(a.at || []), ...(b.at || [])].sort((x, y) => x - y),
+  };
+}
+
+/** Per person (named where someone tapped the name) and the kitchen as a whole, for one or more days.
+ *  `outside`: per day, per name, what isn't on camera - check-in/out and phone presence (cctv.ts). */
+export function summarise(days: ActivityDay[], names: Record<string, Record<string, string>>, piecesMade: number, outside: Record<string, Record<string, PersonDay>> = {}) {
   const rows = new Map<string, PersonRow>();
+  const emptyTimes: AwaySpell[] = [];
   for (const d of days) {
+    const notPeople = new Set(Object.keys(d.slots).filter((slot) => names[d.date]?.[slot] === 'Not a person'));
+    const { frames: empty, spells } = kitchenEmpty(d, notPeople);
+    emptyTimes.push(...spells);
+    // The day's slots of one named person together first, so time under one number isn't counted
+    // as away from the other.
+    const merged = new Map<string, [string, Slot]>();
     for (const [slot, s] of Object.entries(d.slots)) {
+      const name = names[d.date]?.[slot];
+      if (name === 'Not a person') continue; // an object the camera boxed (cameraPeople.ts NOT_A_PERSON)
+      const k = name ? `name:${name}` : `slot:${slot}`;
+      const had = merged.get(k);
+      merged.set(k, had ? [had[0], mergeSlots(had[1], s)] : [slot, s]);
+    }
+    for (const [slot, s] of merged.values()) {
       const name = names[d.date]?.[slot] || null;
       // A named person adds up across days; an unnamed colour stays that day's colour.
       const key = name ? `name:${name}` : `${d.date}:${slot}`;
-      const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
+      const r = rows.get(key) || { slot, name, minutes: {}, seenMinutes: 0, notInKitchenMinutes: 0, away: [], foldingMinutes: 0, phoneMinutes: 0, phoneTimes: 0, idleMinutes: 0, ppePercent: null, first: s.first, last: s.last, _judged: 0, _ok: 0 } as PersonRow & { _judged: number; _ok: number };
       for (const [a, m] of Object.entries(s.minutes)) r.minutes[a as Activity] = (r.minutes[a as Activity] || 0) + (m || 0);
       r.seenMinutes += Object.values(s.minutes).reduce((x, y) => x + (y || 0), 0);
+      const spells = awaySpells(d, s, AWAY_MIN, empty, name ? outside[d.date]?.[name] : undefined);
+      r.notInKitchenMinutes += spells.reduce((t, x) => t + x.minutes, 0);
+      r.away.push(...spells);
       r.phoneMinutes += s.phoneMinutes;
       r.phoneTimes += s.phoneTimes;
       (r as any)._judged += s.ppe.judged;
@@ -163,6 +355,8 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       ...rest,
       minutes,
       seenMinutes: Math.round(r.seenMinutes),
+      notInKitchenMinutes: Math.round(r.notInKitchenMinutes),
+      away: (r.away as AwaySpell[]).map((x) => ({ ...x, minutes: Math.round(x.minutes) })).sort((a, b) => (a.date + a.from).localeCompare(b.date + b.from)),
       phoneMinutes: Math.round(r.phoneMinutes),
       foldingMinutes: minutes.folding || 0,
       idleMinutes: minutes.idle || 0,
@@ -178,6 +372,10 @@ export function summarise(days: ActivityDay[], names: Record<string, Record<stri
       piecesMade,
       // Pieces made for each hour of folding seen on camera (the whole house's production).
       piecesPerFoldingHour: foldingMinutes >= 30 ? Math.round(piecesMade / (foldingMinutes / 60)) : null,
+      // When folding started and ended, and the most people at it at once (one day; null over several).
+      folding: days.length === 1 ? foldingSpan(days[0]) : null,
+      // The whole kitchen empty (lunch): nobody's "not in kitchen" (owner, 31 Oct 2026).
+      empty: emptyTimes.map((x) => ({ ...x, minutes: Math.round(x.minutes) })),
       stills: days.reduce((s, d) => s + d.stills, 0),
       bursts: days.reduce((s, d) => s + (d.bursts || 0), 0),
     },

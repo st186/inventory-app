@@ -1,7 +1,8 @@
 // My timesheet (Me → Attendance and leave): the week as a list of days; tap a day to enter time
 // in / time out and send it for approval. "Send week" sends every changed day at once and "Copy
 // last week" fills empty days from last week. Same rules as before: today or earlier only, no time
-// later than now, at least 4 hours, and a sent day is locked until it's approved or rejected.
+// later than now, at least 4 hours, and a sent day is locked until it's approved or rejected. A day
+// with a shift check-in and check-out fills itself (server punchTimesheet.ts, owner 31 Oct 2026).
 import * as React from 'react';
 import { ChevronLeft, ChevronRight, Copy, Send } from 'lucide-react';
 import { Button } from './ui/button';
@@ -220,7 +221,7 @@ export function EmployeeTimesheet({ user, att }: EmployeeTimesheetProps) {
             : future
               ? t('team.ts.upcoming')
               : entry.startTime && entry.endTime
-                ? `${entry.startTime}–${entry.endTime} · ${t('team.att.hours', { h: entry.totalHours.toFixed(1).replace(/\.0$/, '') })}${entry.status === 'rejected' && entry.rejectionReason ? ` · ${entry.rejectionReason}` : ''}`
+                ? `${entry.startTime}–${entry.endTime} · ${t('team.att.hours', { h: entry.totalHours.toFixed(1).replace(/\.0$/, '') })}${entry.source === 'punch' ? ` · ${t('team.ts.fromPunch')}` : ''}${entry.status === 'rejected' && entry.rejectionReason ? ` · ${entry.rejectionReason}` : ''}`
                 : entry.startTime || entry.endTime
                   ? `${entry.startTime || '–'}–${entry.endTime || '–'}`
                   : t('team.att.notLogged');
@@ -305,6 +306,7 @@ function DaySheet({
       }
     >
       <div className="flex flex-col gap-4">
+        {entry.source === 'punch' && <Callout tone="info" title={t('team.ts.fromPunch')}>{t('team.ts.fromPunchBody')}</Callout>}
         {isApproved && <Callout tone="success" title={t('status.approved')}>{t('team.ts.approvedBody')}</Callout>}
         {!isApproved && isLocked && <Callout tone="info" title={t('team.ts.waiting')}>{t('team.ts.lockedBody')}</Callout>}
         {entry.status === 'rejected' && <Callout tone="danger" title={t('status.rejected')}>{entry.rejectionReason ? t('team.ts.reason', { reason: entry.rejectionReason }) : t('team.ts.rejectedBody')}</Callout>}

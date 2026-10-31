@@ -22,6 +22,7 @@ import { EventMoneyTab } from './EventMoneyTab';
 import { EventAssetsTab } from './EventAssetsTab';
 import { EventStaffTab } from './EventStaffTab';
 import { EventFormSheet } from './EventFormSheet';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 export type EventTab = 'overview' | 'sales' | 'stock' | 'money' | 'assets' | 'staff';
 
@@ -39,6 +40,7 @@ export function EventDetail({ eventId, onBack, initialTab }: { eventId: string; 
   const { t, lang } = useT();
   const api = useEventsApi();
   const data = useLoad(() => api.get(eventId), [eventId]);
+  useRefreshSignal(data.reload);
   const bundle = data.data;
   const waiting = useWaiting(eventId);
   // Staff land on Sales (their day close); managers on the P&L.

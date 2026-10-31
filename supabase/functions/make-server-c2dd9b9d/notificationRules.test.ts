@@ -2,7 +2,7 @@
 //   node supabase/functions/make-server-c2dd9b9d/notificationRules.test.ts
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { bundles, inQuietHours, notificationCategory } from './notificationRules.ts';
+import { bundles, escalates, inQuietHours, loudness, notificationCategory, oneADay, oneRowPerRecord, ownerBuzzes } from './notificationRules.ts';
 
 let passed = 0;
 const test = (name: string, fn: () => void) => { try { fn(); passed++; } catch (err) { console.error(`FAIL ${name}`); throw err; } };
@@ -31,6 +31,29 @@ test('bundling', () => {
   assert.equal(bundles('expense_flag'), true);
   assert.equal(bundles('leave_pending'), false); // needs its own approve / reject
   assert.equal(bundles('repair_alert'), false); // urgent never folds away
+});
+
+test('how loud (owner, 30 Oct 2026: too many notifications)', () => {
+  assert.equal(loudness('inventory_logged'), 'off');          // Money shows it
+  assert.equal(loudness('timesheet_approved'), 'quiet');
+  assert.equal(loudness('production_request_prepared'), 'quiet');
+  assert.equal(loudness('production_request_shipped'), 'push'); // the store has to receive it
+  assert.equal(loudness('production_request_new'), 'push');     // the kitchen has to make it
+  assert.equal(loudness('rider_arrived'), 'push');              // hand the order over
+  assert.equal(loudness('repair_alert'), 'push');
+  assert.equal(oneADay('cctv_ppe'), true);
+  assert.equal(oneADay('store_cover'), true);                  // came twice a day
+  assert.equal(oneADay('repair_alert'), false);
+  assert.equal(oneRowPerRecord('production_request_partially-shipped'), true);
+  assert.equal(oneRowPerRecord('delivery_variance'), false);
+  assert.equal(ownerBuzzes('workplace_alarm'), true);           // urgent
+  assert.equal(ownerBuzzes('expense_approval'), true);          // only the owner decides
+  assert.equal(ownerBuzzes('cctv_ppe'), false);                 // the 9 PM summary
+  assert.equal(ownerBuzzes('workplace_flag'), false);
+  assert.equal(escalates('workplace_alarm'), true);
+  assert.equal(escalates('shipped_delivery_check'), false);     // asks again by itself
+  assert.equal(escalates('stock_request_reminder'), false);
+  assert.equal(escalates('expense_flag'), false);               // not urgent
 });
 
 test('quiet hours, also across midnight', () => {

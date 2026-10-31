@@ -727,6 +727,7 @@ export interface ProductionLedgerEntry {
   closedAt?: string;
   manualOpeningOverride?: Record<string, number>;
   leftoverReport?: LeftoverReport;
+  sauceLeft?: Record<string, number>; // sauce:key -> counted at the close (L, soup premix kg)
   createdBy: string;
   createdByName: string;
   createdAt: string;
@@ -843,10 +844,10 @@ export async function deleteProductionWastageNote(accessToken: string, id: strin
   await fetchWithAuth(`${API_BASE}/production-wastage-notes/${id}`, accessToken, { method: 'DELETE' });
 }
 
-export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport): Promise<ProductionLedgerEntry> {
+export async function closeProductionLedgerDay(accessToken: string, productionHouseId: string, date: string, closingActuals: Record<string, number>, manualOpeningOverride?: Record<string, number>, wastageOverrides?: Record<string, number>, leftoverReport?: LeftoverReport, sauceLeft?: Record<string, number>): Promise<ProductionLedgerEntry> {
   const data = await fetchWithAuth(`${API_BASE}/production-ledger/${encodeURIComponent(productionHouseId)}/${encodeURIComponent(date)}/close`, accessToken, {
     method: 'PUT',
-    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}), ...(leftoverReport ? { leftoverReport } : {}) }),
+    body: JSON.stringify({ closingActuals, ...(manualOpeningOverride ? { manualOpeningOverride } : {}), ...(wastageOverrides ? { wastageOverrides } : {}), ...(leftoverReport ? { leftoverReport } : {}), ...(sauceLeft ? { sauceLeft } : {}) }),
   });
   return data.entry;
 }
@@ -890,6 +891,125 @@ export interface RepairAlert {
   reportedBy: string; reportedAt: string; fixedBy?: string; fixedAt?: string; fixNote?: string; repairCost?: number | null;
 }
 
+// Live orders from Ciferon (server liveOrders.ts): what is open in each store now, and the closing
+// check of orders that never became a bill (owner, 31 Oct 2026).
+export interface LiveItem { name: string; qty: number; total: number }
+export interface LiveOrderNow { key: string; type: string; serial: string | null; table: string | null; placedAt: string | null; ageMin: number; total: number; items: LiveItem[]; stuck: boolean; old: boolean }
+export interface LiveCheckFinding { kind: 'not_billed' | 'billed_less' | 'open_at_close'; key: string; type: string; serial: string | null; table: string | null; placedAt: string | null; firstSeen: string; lastSeen: string; total: number; billed?: number; items: LiveItem[] }
+export interface LiveStoreNow {
+  storeId: string; storeName: string;
+  open: number; openTotal: number; stuck: number; orders: LiveOrderNow[]; lastPoll: string | null; error: string | null;
+  check: null | { date: string; at: string; seen: number; matched: number; findings: LiveCheckFinding[];
+    summary: { notBilled: number; notBilledTotal: number; billedLess: number; lessBy: number; openAtClose: number; openTotal: number } };
+  /** Items switched off on Zomato and Swiggy that the store still sells (server onlineStock.ts, 4 PM). */
+  offOnline: null | { date: string; at: string; sells: OffOnlineItem[]; kept: number; idle: number; off: number };
+  /** The latest day's out-of-stock report with the store incharge's reasons (11:45 PM). */
+  outOfStock: OutOfStockDay | null;
+}
+// The day's out-of-stock report (server onlineStock.ts, stock-out-day): each item switched off on
+// Zomato and Swiggy during the day, from when to when, and why (the store incharge says).
+export interface OffPeriod { from: string | null; to: string | null; by: string | null; platforms: string[] }
+export interface OutItem {
+  productId: string; name: string; category: string; periods: OffPeriod[];
+  explanation?: { reason: string; note?: string; by: string; at: string } | null;
+}
+export interface OutOfStockDay { storeId: string; storeName: string; date: string; at: string; items: OutItem[]; ownerToldAt?: string }
+
+// Insights > Rush hours (server rushInsights.ts): when orders come, the rush, what sells in it, the
+// next 7 days and the steamer plan (owner, 1 Nov 2026).
+export type RushFilling = 'chicken' | 'chicken_cheese' | 'veg' | 'paneer' | 'corn_cheese';
+export interface RushWindow { from: string; to: string; ordersPerHour: number }
+export interface RushProfile {
+  weekday: number; days: number; ordersPerDay: number; rush: RushWindow[]; orders: number[]; high: number[];
+  steamer: Record<RushFilling, number[]>; channels: { counter: number[]; zomato: number[]; swiggy: number[] };
+}
+export interface RushMixSide { orders: number; pieces: number; byFilling: Record<RushFilling, number>; byStyle: Record<string, number>; steamerPieces: number }
+export interface SteamerRun { filling: RushFilling; from: string; to: string; keep: number; usual: number; peakLow: number; peakFrom: string; peakTo: string; firstBatchAt: string; batches: number }
+export interface SteamerSettings { steamMin: number; steamMinFull: number; fullAbove: number; holdMin: number; serviceLevel: number }
+export interface RushInsights {
+  storeId: string; storeName: string; today: string; weeks: number; days: number; orders: number; exactShare: number;
+  slots: string[];
+  profiles: RushProfile[];
+  mix: { rush: RushMixSide; other: RushMixSide; top: { name: string; qty: number }[] };
+  forecast: { date: string; weekday: number; factor: number; orders: number[]; totalOrders: number; rush: RushWindow[] }[];
+  plan: { date: string; weekday: number; settings: SteamerSettings; runs: SteamerRun[];
+    slots: { slot: string; orders: number; plates: Record<RushFilling, number>; keep: Record<RushFilling, number>; startAt: string }[] };
+  live: { today: [number, number][]; avgOpen: (number | null)[]; daysWithLooks: number };
+  steamerStyles: string[];
+}
+
+export async function getRushInsights(storeId: string | null, date?: string, accessToken?: string): Promise<RushInsights> {
+  const q = new URLSearchParams({ ...(storeId ? { storeId } : {}), ...(date ? { date } : {}) });
+  return fetchWithAuth(`${API_BASE}/insights/rush?${q.toString()}`, await tokenOr(accessToken));
+}
+
+export async function saveSteamerSettings(storeId: string, settings: Partial<SteamerSettings>, accessToken?: string): Promise<{ settings: SteamerSettings }> {
+  return fetchWithAuth(`${API_BASE}/insights/rush/settings`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ storeId, ...settings }) });
+}
+
+// Team chat (server chat.ts): the groups kept in step with the staff list, who you can message,
+// and opening a one-to-one room. Messages themselves go straight to the database (chat/chatApi.ts).
+export async function chatSync(accessToken?: string): Promise<{ success: boolean; skipped?: boolean }> {
+  return fetchWithAuth(`${API_BASE}/chat/sync`, await tokenOr(accessToken), { method: 'POST' });
+}
+export async function chatPeople(accessToken?: string): Promise<{ people: { userId: string; name: string; role: string }[] }> {
+  return fetchWithAuth(`${API_BASE}/chat/people`, await tokenOr(accessToken));
+}
+/** A chat photo or voice note moved to Google Drive after 30 days (server chat.ts). */
+export async function chatArchivedMedia(messageId: string, accessToken?: string): Promise<{ dataUrl: string }> {
+  return fetchWithAuth(`${API_BASE}/chat/media/${encodeURIComponent(messageId)}`, await tokenOr(accessToken));
+}
+export async function chatDirect(userId: string, accessToken?: string): Promise<{ roomId: string; name: string }> {
+  return fetchWithAuth(`${API_BASE}/chat/direct`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ userId }) });
+}
+// Groups people make (owner, 1 Nov 2026): new, rename, add or take out people, leave, delete.
+export type ChatGroupInfo = {
+  id: string; name: string; automatic: boolean; madeBy: string | null;
+  canRename: boolean; canChangePeople: boolean; canDelete: boolean; canLeave: boolean;
+  members: { userId: string; name: string; role: string; madeIt: boolean; me: boolean }[];
+};
+const chatGroupUrl = (roomId: string) => `${API_BASE}/chat/groups/${encodeURIComponent(roomId)}`;
+export async function chatCreateGroup(name: string, memberIds: string[], accessToken?: string): Promise<{ roomId: string; name: string }> {
+  return fetchWithAuth(`${API_BASE}/chat/groups`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ name, memberIds }) });
+}
+export async function chatGroupInfo(roomId: string, accessToken?: string): Promise<ChatGroupInfo> {
+  return fetchWithAuth(chatGroupUrl(roomId), await tokenOr(accessToken));
+}
+export async function chatRenameGroup(roomId: string, name: string, accessToken?: string): Promise<{ name: string }> {
+  return fetchWithAuth(chatGroupUrl(roomId), await tokenOr(accessToken), { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+export async function chatGroupMembers(roomId: string, change: { add?: string[]; remove?: string[] }, accessToken?: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(`${chatGroupUrl(roomId)}/members`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify(change) });
+}
+export async function chatLeaveGroup(roomId: string, accessToken?: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(`${chatGroupUrl(roomId)}/leave`, await tokenOr(accessToken), { method: 'POST' });
+}
+export async function chatDeleteGroup(roomId: string, accessToken?: string): Promise<{ success: boolean }> {
+  return fetchWithAuth(chatGroupUrl(roomId), await tokenOr(accessToken), { method: 'DELETE' });
+}
+
+export async function getStockOutDaysToExplain(accessToken?: string): Promise<{ reports: OutOfStockDay[]; reasons: { value: string; label: string }[] }> {
+  return fetchWithAuth(`${API_BASE}/stock-out-day/mine`, await tokenOr(accessToken));
+}
+
+export async function explainStockOut(body: { storeId: string; date: string; productId: string; reason: string; note?: string }, accessToken?: string): Promise<{ report: OutOfStockDay }> {
+  return fetchWithAuth(`${API_BASE}/stock-out-day/explain`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify(body) });
+}
+export interface OffOnlineItem {
+  productId: string; name: string; category: string; lastOnline: string | null; lastCounter: string | null;
+  offSince?: string | null; offBy?: string | null; platforms?: string[];
+}
+export interface LiveOrdersNow { date: string; open: boolean; stores: LiveStoreNow[] }
+
+export async function getLiveOrdersNow(fresh = false, accessToken?: string): Promise<LiveOrdersNow> {
+  return fetchWithAuth(`${API_BASE}/live-orders/now${fresh ? '?fresh=1' : ''}`, await tokenOr(accessToken));
+}
+
+/** The owner: an item off online on purpose isn't flagged again until it's back on. */
+export async function keepItemOffOnline(storeId: string, productId: string, keep = true, accessToken?: string): Promise<void> {
+  await fetchWithAuth(`${API_BASE}/online-stock/keep-off`, await tokenOr(accessToken), { method: 'POST', body: JSON.stringify({ storeId, productId, keep }) });
+}
+
 export async function getRepairAlerts(accessToken?: string, status: 'open' | 'all' = 'open'): Promise<RepairAlert[]> {
   const data = await fetchWithAuth(`${API_BASE}/repair-alerts?status=${status}`, await tokenOr(accessToken));
   return data.alerts || [];
@@ -900,10 +1020,12 @@ export async function markRepairFixed(id: string, note?: string, repairCost?: nu
 }
 
 // Manually triggers today's Ciferon POS sync early, instead of waiting for the 10:30 PM
-// cron job. Operations-manager/cluster-head only (enforced server-side).
-export async function triggerPosSync(accessToken: string): Promise<any> {
+// cron job. Operations-manager/cluster-head only (enforced server-side). `fromPull`: a pull down
+// on the screen - the server skips it when a sync started in the last 2 minutes.
+export async function triggerPosSync(accessToken: string, opts: { fromPull?: boolean } = {}): Promise<any> {
   return fetchWithAuth(`${API_BASE}/pos-sync/trigger`, accessToken, {
     method: 'POST',
+    ...(opts.fromPull ? { body: JSON.stringify({ fromPull: true }) } : {}),
   });
 }
 
@@ -1938,6 +2060,25 @@ export interface UtilitiesConsumption {
   traysUsed: number;
   unattributedOrders: number;
   beverageConsumption: Record<string, number>;
+  burgers?: BurgerCheck;
+}
+
+// Burger buns bought against burgers sold (server burgerCheck.ts, owner 30 Oct 2026).
+export type BurgerAnomaly = { kind: 'sold-more' | 'bought-more' | 'odd-entry' | 'none-sold'; days: number; bought: number; sold: number; date?: string; text: string };
+export interface BurgerCheck {
+  since: string; to: string;
+  bunsPerUnit: number | null; // buns in one logged "Burger" (a packet); null until the owner says
+  entries: number; bought: number;
+  sold: { standalone: number; mania: number; combo: number; total: number };
+  left: number; // fresh buns in stock now (oldest used first)
+  stale?: number; // buns that went past their shelf life unsold
+  short?: number; // burgers sold with no bun bought for them
+  weeks: { from: string; to: string; bought: number; sold: number }[];
+  anomalies: BurgerAnomaly[];
+}
+
+export async function setBurgerBunsPerUnit(accessToken: string, bunsPerUnit: number): Promise<{ settings: { bunsPerUnit: number } }> {
+  return await fetchWithAuth(`${API_BASE}/burger-settings`, accessToken, { method: 'PUT', body: JSON.stringify({ bunsPerUnit }) });
 }
 
 export async function getUtilitiesConsumption(accessToken: string, storeId?: string | null, startDate?: string, endDate?: string): Promise<UtilitiesConsumption> {
@@ -2844,6 +2985,36 @@ export async function addCustomItem(
     body: JSON.stringify({ category, itemName, entryType, entityType }),
   });
   return data.customItem;
+}
+
+// One item, one name (server itemNameReview.ts, owner 31 Oct 2026): what a typed name means - a
+// known item, or Bunny's reading of a new word ("jhul jhara" -> Cobweb brush (jhul jhara)).
+export type ItemNameIdea = { sameAs?: string; cleanName?: string | null; type?: 'inventory' | 'overhead' | 'fixedcost' | null; category?: string | null; byBunny?: boolean };
+export async function suggestItemName(typed: string): Promise<ItemNameIdea> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) return {};
+  return (await fetchWithAuth(`${API_BASE}/item-names/suggest`, session.access_token, { method: 'POST', body: JSON.stringify({ typed }) })) || {};
+}
+
+// The owner's list of new names to check, and the decision on one.
+export type WaitingItemName = {
+  key: string; name: string; type: 'inventory' | 'overhead'; category: string; entityType: string | null;
+  cleanName: string | null; maybeSameAs: string | null; firstAt: string; lastAt: string;
+  entries: { key: string; date: string | null; amount: number; place: string; by: string }[];
+};
+export async function getItemNames(): Promise<{ open: WaitingItemName[]; known: { name: string; type: string; category: string | null }[] }> {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) return { open: [], known: [] };
+  const data = await fetchWithAuth(`${API_BASE}/item-names`, session.access_token);
+  return { open: data?.open || [], known: data?.known || [] };
+}
+export async function decideItemName(key: string, action: 'new' | 'same' | 'keep', name?: string, category?: string) {
+  const supabase = createBrowserSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+  return fetchWithAuth(`${API_BASE}/item-names/${encodeURIComponent(key)}`, session.access_token, { method: 'POST', body: JSON.stringify({ action, name, category }) });
 }
 
 export async function updateCustomItem(id: string, updates: Partial<Omit<CustomItem, 'id'>>): Promise<CustomItem> {

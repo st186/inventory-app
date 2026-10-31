@@ -6,7 +6,7 @@
 // opens its screen (the same resolver as a push tap). The gear opens the settings: quiet hours,
 // which kinds buzz, the evening digest, and a test notification. Rules: utils/notificationRules.ts.
 import { useEffect, useMemo, useState } from 'react';
-import { BellOff, CheckCheck, CheckCircle2, Settings2, X } from 'lucide-react';
+import { BellOff, BellRing, CheckCheck, CheckCircle2, Settings2, ThumbsDown, X } from 'lucide-react';
 import { ListGroup, ListRow, IconWell } from '../ui/list-row';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
@@ -26,6 +26,7 @@ import { BENGALI_TITLE, notificationCategory, type NotificationCategory } from '
 import { formatNotificationTime, groupByDay, notificationLook, useNotifications } from '../Notifications';
 import { getNavigationTarget, type NotificationNavigationTarget } from '../../utils/notificationNavigation';
 import { useShell } from './ShellContext';
+import { markAlert, remindCrew } from '../cameras/camerasApi';
 
 type Filter = 'all' | NotificationCategory;
 const FILTERS: { key: Filter; label: I18nKey }[] = [
@@ -38,6 +39,9 @@ const FILTERS: { key: Filter; label: I18nKey }[] = [
 const categoryOf = (n: api.Notification): NotificationCategory => n.category || notificationCategory(n.type);
 // Approve / reject right in the inbox for these.
 const INLINE = new Set(['leave_pending', 'timesheet_pending']);
+// A camera's cap / apron alert: remind the crew on shift, or say the camera got it wrong (owner,
+// 31 Oct 2026). The alert is the row's relatedId (the latest one when several were added to it).
+const CAMERA = new Set(['cctv_ppe', 'cctv_ppe_still']);
 
 export function InboxPage({ onOpenTarget }: { onOpenTarget: (target: NotificationNavigationTarget) => void }) {
   const { t, lang } = useT();
@@ -61,6 +65,24 @@ export function InboxPage({ onOpenTarget }: { onOpenTarget: (target: Notificatio
     feed.markRead(n.id);
     const target = getNavigationTarget({ type: n.type, relatedId: n.relatedId });
     if (target) onOpenTarget(target);
+  };
+
+  const cameraAct = async (n: api.Notification, what: 'remind' | 'wrong') => {
+    if (!n.relatedId) return;
+    setActing(`${n.id}:${what}`);
+    try {
+      if (what === 'remind') {
+        const r = await remindCrew(n.relatedId);
+        toast.success(r.already ? t('inbox.remindedAlready') : r.sent ? t('inbox.reminded', { n: r.sent }) : t('inbox.nobodyOnShift'));
+      } else {
+        await markAlert(n.relatedId, 'false');
+        toast.success(t('inbox.cameraMarked'));
+      }
+    } catch (e: any) {
+      toast.error(e?.message || t('inbox.markFailed'));
+    } finally {
+      setActing(null);
+    }
   };
 
   const decide = async (n: api.Notification, approve: boolean) => {
@@ -96,6 +118,7 @@ export function InboxPage({ onOpenTarget }: { onOpenTarget: (target: Notificatio
     const bn = lang === 'bn' && BENGALI_TITLE[n.type] ? ` · ${BENGALI_TITLE[n.type]}` : '';
     const extra = (n.count || 1) > 1 ? (n.items || []).slice(0, 3) : [];
     const inline = !done && INLINE.has(n.type) && !!n.relatedId && !!user.employeeId;
+    const camera = CAMERA.has(n.type) && !!n.relatedId;
     // The row is itself a button, so approve / reject sit just below it, lined up with the text.
     return (
       <div key={n.id}>
@@ -124,6 +147,12 @@ export function InboxPage({ onOpenTarget }: { onOpenTarget: (target: Notificatio
           chevron={!!getNavigationTarget({ type: n.type, relatedId: n.relatedId })}
           onClick={() => open(n)}
         />
+        {camera && (
+          <div className="flex flex-wrap gap-2 pr-4 pb-3 pl-16">
+            <Button size="sm" variant="secondary" leadingIcon={<BellRing />} loading={acting === `${n.id}:remind`} disabled={!!acting} onClick={() => cameraAct(n, 'remind')}>{t('inbox.remindCrew')}</Button>
+            <Button size="sm" variant="ghost" leadingIcon={<ThumbsDown />} loading={acting === `${n.id}:wrong`} disabled={!!acting} onClick={() => cameraAct(n, 'wrong')}>{t('inbox.cameraWrong')}</Button>
+          </div>
+        )}
         {inline && (
           <div className="flex flex-wrap gap-2 pr-4 pb-3 pl-16">
             <Button size="sm" leadingIcon={<CheckCheck />} loading={acting === `${n.id}:true`} disabled={!!acting} onClick={() => decide(n, true)}>{t('inbox.approve')}</Button>

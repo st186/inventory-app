@@ -22,7 +22,9 @@ import { NativeSelect } from '../ui/select';
 import { SegmentedControl } from '../ui/segmented-control';
 import { StatusChip } from '../ui/status-chip';
 import * as api from './camerasApi';
-import { KitchenActivity, WhoIsWho } from './KitchenActivity';
+import { KitchenActivity, WhoIsEditor, WhoIsWho } from './KitchenActivity';
+import { getTodayIST } from '../../utils/timezone';
+import { useRefreshSignal } from '../shell/refreshSignal';
 
 const ITEMS: api.PpeItem[] = ['cap', 'gloves', 'apron'];
 const when = (iso: string, lang: string) =>
@@ -35,12 +37,18 @@ export function CamerasScreen() {
   const [error, setError] = useState(false);
   const [edit, setEdit] = useState<api.Camera | 'new' | null>(null);
   const [key, setKey] = useState<string | null>(null);
-  const [tab, setTab] = useState<'alerts' | 'activity'>('alerts');
+  const [tab, setTab] = useState<'alerts' | 'activity' | 'who'>('alerts');
+  const [who, setWho] = useState<api.WhoIs | null>(null);
+  const loadWho = useCallback(() => { api.getWhoIs(getTodayIST()).then(setWho).catch(() => setWho(null)); }, []);
   const load = useCallback(() => {
     setError(false);
     Promise.all([api.getCameras(), api.getAlerts()]).then(([c, a]) => { setCams(c); setAlerts(a); }).catch(() => setError(true));
-  }, []);
+    loadWho();
+  }, [loadWho]);
   useEffect(() => { load(); }, [load]);
+  useRefreshSignal(load);
+  // The Who is who tab for whoever may name people (the whois answer lists only their cameras).
+  const canName = !!who?.cameras.length;
 
   const mark = async (a: api.Alert, m: 'correct' | 'false' | 'staff') => {
     try {
@@ -56,12 +64,16 @@ export function CamerasScreen() {
 
   return (
     <Page>
-      <WhoIsWho />
-      {cams.canManage && (
-        <SegmentedControl aria-label={t('cam.cameras')} value={tab} onValueChange={setTab}
-          options={[{ value: 'alerts', label: t('cam.alerts') }, { value: 'activity', label: 'Kitchen activity' }]} />
+      {tab !== 'who' && <WhoIsWho data={who} onSaved={loadWho} onEdit={() => setTab('who')} />}
+      {(cams.canManage || canName) && (
+        <SegmentedControl aria-label={t('cam.cameras')} value={tab} onValueChange={(v) => { setTab(v); if (v !== 'who') loadWho(); }}
+          options={[
+            { value: 'alerts' as const, label: t('cam.alerts') },
+            ...(cams.canManage ? [{ value: 'activity' as const, label: 'Activity' }] : []),
+            { value: 'who' as const, label: t('cam.whoTab') },
+          ]} />
       )}
-      {tab === 'activity' && cams.canManage ? <KitchenActivity /> : (<>
+      {tab === 'who' ? <WhoIsEditor /> : tab === 'activity' && cams.canManage ? <KitchenActivity /> : (<>
       <ListGroup
         title={t('cam.cameras')}
         action={cams.canManage ? <Button size="sm" variant="secondary" leadingIcon={<Plus />} onClick={() => setEdit('new')}>{t('cam.add')}</Button> : undefined}
@@ -188,8 +200,8 @@ function CameraSheet({ camera, onClose, onSaved }: { camera: api.Camera | null; 
           <Field label="Working hours from"><Input type="time" value={d.from} onChange={(e) => setD({ ...d, from: e.target.value })} /></Field>
           <Field label="to"><Input type="time" value={d.to} onChange={(e) => setD({ ...d, to: e.target.value })} /></Field>
         </div>
-        <Field label={camera?.activity ? 'Wait between bursts (minutes)' : 'Check every (minutes)'}
-          helper={camera?.activity ? 'Kitchen activity camera: each check is a burst of 20 frames, 15 seconds apart (5 minutes), then it waits this long.' : undefined}>
+        <Field label={camera?.activity ? 'Spread 20 pictures over (minutes)' : 'Check every (minutes)'}
+          helper={camera?.activity ? 'Kitchen activity camera: 20 pictures spread evenly over this many minutes (35 = one every 105 seconds), sent together, then the next 20. Fewer minutes costs more.' : undefined}>
           <Input type="number" inputMode="numeric" min={5} max={240} value={String(d.everyMin)} onChange={(e) => setD({ ...d, everyMin: Number(e.target.value) || 30 })} />
         </Field>
         <label className="flex min-h-11 items-start gap-3 text-body-md text-text">

@@ -13,6 +13,7 @@ import { createRoot } from 'react-dom/client';
 import { Suspense, lazy, useMemo, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { buildInsightsMock } from './insightsMock';
+import { rushMock } from './rushMock';
 import { projectId } from '../utils/supabase/info';
 import { Toaster } from '../components/ui/sonner';
 import { ConfirmProvider } from '../components/ui/confirm';
@@ -91,6 +92,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       return json({ days });
     }
     case '/production-ledger': return json({ entries: mock.productionLedger(q.get('from') || today, q.get('to') || today) });
+    // Rush hours and the steamer plan (RushTab.tsx, owner 1 Nov 2026).
+    case '/insights/rush': return json(rushMock(today, q.get('date') || undefined));
+    case '/insights/rush/settings': return json({ success: true, settings: JSON.parse(String(init?.body || '{}')) });
     case '/insights/overview': {
       // Trends: the last 90 days of the chosen store (or all) from the made-up sales.
       const storeId = q.get('storeId');

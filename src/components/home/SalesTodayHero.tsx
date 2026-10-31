@@ -3,7 +3,7 @@
 // it shows yesterday instead, against what was expected for yesterday.
 import { StatSplit, StatTile, DeltaChip } from '../ui/stat-tile';
 import { StatusChip } from '../ui/status-chip';
-import { Money, formatCompactINR } from '../ui/money';
+import { Money, formatCompactINR, formatINR } from '../ui/money';
 import { useT } from '../../utils/i18n';
 import type { InsightsOverview } from '../../utils/api';
 import type { DaySales } from './homeFigures';
@@ -12,7 +12,7 @@ import { posSyncTimeOf, useDateWords } from './HomeParts';
 const STORE_OPENS_MIN = 15 * 60; // stores open at 3 PM IST (SalesView STORE_OPENING_HOUR_IST)
 const STORE_CLOSES_MIN = 22 * 60 + 30;
 
-export function SalesTodayHero({ today, nowMinutes, sales, yesterdaySales, overview, forecastApplies, loading, onOpen }: {
+export function SalesTodayHero({ today, nowMinutes, sales, yesterdaySales, overview, forecastApplies, unbilled, loading, onOpen }: {
   today: string;
   nowMinutes: number;
   sales: DaySales;
@@ -21,6 +21,9 @@ export function SalesTodayHero({ today, nowMinutes, sales, yesterdaySales, overv
   overview: InsightsOverview | null;
   /** The forecast is for the same store(s) as the sales. */
   forecastApplies: boolean;
+  /** What the orders open in Ciferon come to, not billed yet (owner, 1 Nov 2026: "add unrealised
+   *  profit small under that total sales"; server liveOrders.ts). */
+  unbilled?: number;
   loading?: boolean;
   onOpen?: () => void;
 }) {
@@ -51,6 +54,10 @@ export function SalesTodayHero({ today, nowMinutes, sales, yesterdaySales, overv
       caption = t('home.noSalesYet');
     }
     if (sales.syncedAt) caption = caption ? <>{caption}<br />{t('home.posSynced', { time: posSyncTimeOf(sales.syncedAt) })}</> : t('home.posSynced', { time: posSyncTimeOf(sales.syncedAt) });
+    if (unbilled && unbilled > 0) {
+      const open = <span className="num font-medium">{t('home.openOrders', { amount: formatINR(Math.round(unbilled)) })}</span>;
+      caption = caption ? <>{open}<br />{caption}</> : open;
+    }
   }
 
   return (

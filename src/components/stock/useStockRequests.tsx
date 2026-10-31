@@ -1,7 +1,7 @@
 // State, loading and actions of the stock requests screen: the store incharge's request, the
 // production queue (accept, pack, ship) and the oversight views. The screen and its sections read
 // everything from what this returns.
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type * as React from 'react';
 import { InventoryContextType } from '../../App';
 import * as api from '../../utils/api';
@@ -10,8 +10,12 @@ import { confirm } from '../ui/confirm';
 import { getSupabaseClient } from '../../utils/supabase/client';
 import { getAssignedProductionHouseIds, getAssignedStoreIds, getDefaultStoreId } from '../../utils/entityAccess';
 import { bagSize, roundUpToBags, isPhase1Live } from '../../utils/batches';
-import { addDays, getTodayIST } from '../../utils/timezone';
-import { suggestRequest, type ForecastDay, type MomoKey } from '../../utils/forecast';
+import { addDays, getNowIST, getTodayIST } from '../../utils/timezone';
+import type { ForecastDay } from '../../utils/forecast';
+import type { PlanRow } from '../../utils/requestPlan';
+import { PLAN_KEYS, loadStorePlanData, planForStore } from '../../utils/requestPlanLoad';
+import { planSupplies, type SupplyPick } from './supplyPlan';
+import { listAlerts } from '../supplies/suppliesApi';
 import { t } from '../../utils/i18n';
 import { getAppLanguage } from '../../utils/appLanguage';
 import { DispatchDraft, emptyDispatchDraft, buildDispatchInfo } from '../dispatch/ShipDialogBags';
@@ -25,6 +29,8 @@ import { dayLabel, requestStatusWord } from './stockShared';
 export interface StockRequestsProps {
   context: InventoryContextType;
   highlightRequestId?: string | null;
+  /** A month-end count reminder was tapped (route tab=count): open the count once loaded. */
+  openCount?: boolean;
   selectedStoreId?: string | null;
   onNavigateToManageItems?: () => void;
 }
@@ -74,9 +80,21 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   // Form state for new request - DYNAMIC for all finished products
   const [momoQuantities, setMomoQuantities] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
-  // Tomorrow: each day's request is sent the night before, by midnight (owner, 29 Oct 2026).
-  const getDefaultRequestDate = () => addDays(getTodayIST(), 1);
-  const [requestDate, setRequestDate] = useState(getDefaultRequestDate());
+  // Tomorrow: each day's request is sent the night before, by midnight (owner, 29 Oct 2026). A day
+  // that began with no request takes it until noon, as Home shows it late: on 30 Oct Rohan sent
+  // that day's request at 3:10 AM and the screen had put it down for the next day.
+  const getDefaultRequestDate = (list: api.ProductionRequest[] = requests) => {
+    const today = getTodayIST();
+    const morning = Number(getNowIST().slice(11, 13)) < 12;
+    const sent = list.some((r) => r.storeId === context.user?.storeId && r.requestDate === today);
+    return morning && !sent ? today : addDays(today, 1);
+  };
+  const [requestDate, setRequestDateState] = useState(() => getDefaultRequestDate([]));
+  const dateTouched = useRef(false);
+  const setRequestDate = (date: string) => { dateTouched.current = true; setRequestDateState(date); };
+  useEffect(() => {
+    if (!loading && !dateTouched.current) setRequestDateState(getDefaultRequestDate(requests));
+  }, [loading, requests]);
   const [lastReminderDate, setLastReminderDate] = useState<string | null>(null);
 
   // Kitchen Utilities state (item -> {quantity, unit})
@@ -118,6 +136,8 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
   
   // Store recalibration modal state
   const [showStoreRecalibration, setShowStoreRecalibration] = useState(false);
+  // The production house's month-end count (owner, 31 Oct 2026: from the stock jobs, like the store's).
+  const [showHouseRecalibration, setShowHouseRecalibration] = useState(false);
   
   // Each store in scope: its last stock count that wasn't rejected and the wastage logged since
   // (stock/countMath.ts). null while loading.
@@ -319,39 +339,66 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     return stock;
   }, [isStoreIncharge, selectedConcreteStoreId, defaultStoreId, myStoreRequests, finishedProducts, context.salesData]);
 
-  // "Suggest from the forecast": the request date's expected sales + 15%, less what is likely
-  // left from the last delivery (sent minus sold that day), in whole bags (utils/forecast.ts).
-  const [suggestion, setSuggestion] = useState<{ day: ForecastDay; rows: ReturnType<typeof suggestRequest>; carryFrom: string | null } | null>(null);
+  // Bunny's fill (owner, 30 Oct 2026). Momos: what the store still has (the last deliveries, oldest
+  // first, less sales and wastage, nothing past 4 days) against the forecast, in bags of 50
+  // (utils/requestPlan.ts). Sauces, kitchen supplies and boxes: how often each is asked for, and
+  // the running-low flags (supplyPlan.ts). Supplies are added to what's picked, never taken off.
+  const [suggestion, setSuggestion] = useState<{ day: ForecastDay; rows: PlanRow[]; supplies: SupplyPick[] } | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const handleSuggest = async () => {
     const sid = selectedConcreteStoreId || defaultStoreId;
-    if (!context.user?.accessToken || !sid) return;
+    const token = context.user?.accessToken;
+    if (!token || !sid) return;
     setSuggesting(true);
     try {
-      const ov = await api.getInsightsOverview(context.user.accessToken, sid);
-      const day = ov.forecast.find((f) => f.date === requestDate);
+      const [store] = await loadStorePlanData(token, [sid], { items: context.inventoryItems });
+      const day = store.overview.forecast.find((f) => f.date === requestDate);
       if (!day) {
         toast.error(t('stock.req.forecastRange'));
         return;
       }
-      const lastSent = myStoreRequests.find((r) => r.requestDate < requestDate && r.shippedQuantities && ['shipped', 'partially-shipped', 'delivered', 'partially-delivered'].includes(r.status));
-      const carry: Partial<Record<MomoKey, number>> = {};
-      if (lastSent) {
-        const soldDay = ov.history.find((d) => d.date === lastSent.requestDate)?.pieces || ov.forecast.find((f) => f.date === lastSent.requestDate)?.pieces || null;
-        for (const key of Object.keys(lastSent.shippedQuantities || {})) {
-          const sent = Number((lastSent.shippedQuantities as any)[key]) || 0;
-          const sold = soldDay ? Number((soldDay as any)[key]) || 0 : sent;
-          carry[key as MomoKey] = Math.max(0, sent - sold);
-        }
-      }
-      const rows = suggestRequest(day, carry);
+      const [plan] = planForStore(store, requestDate, requestDate, false);
+      const rows = PLAN_KEYS.map((k) => plan.rows[k]).filter(Boolean);
+      const revenue: Record<string, number> = {};
+      for (const f of store.overview.forecast) revenue[f.date] = f.revenue;
+      for (const h of store.overview.history) if (h.revenue) revenue[h.date] = h.revenue;
+      const alerts = await listAlerts()
+        .then((r) => r.alerts
+          .filter((a) => a.placeKind === 'store' && a.placeId === sid && (a.status === 'open' || a.status === 'listed'))
+          .map((a) => ({ item: a.item, level: a.level, qty: a.qty, unit: a.unit, by: a.raisedBy[a.raisedBy.length - 1]?.name })))
+        .catch(() => []);
+      const supplies = planSupplies({
+        requestDate, requests: myStoreRequests, revenue, alerts,
+        catalog: { sauces: sauceItems, kitchen: kitchenUtilityItems, utilities: utilityItems },
+      });
       const known = new Set(finishedProducts.map((p) => p.camelKey));
       setMomoQuantities((prev) => {
         const next = { ...prev };
         for (const r of rows) if (known.has(r.key)) next[r.key] = r.pieces;
         return next;
       });
-      setSuggestion({ day, rows, carryFrom: lastSent?.requestDate || null });
+      const of = (section: SupplyPick['section']) => supplies.filter((p) => p.section === section);
+      if (of('sauce').length) {
+        setSauces((prev) => ({ ...prev, ...Object.fromEntries(of('sauce').map((p) => [p.name, true])) }));
+        setShowSauces(true);
+      }
+      if (of('kitchen').length) {
+        setKitchenUtilities((prev) => {
+          const next = { ...prev };
+          for (const p of of('kitchen')) if (!next[p.name]) next[p.name] = { quantity: p.quantity, unit: p.unit || '' };
+          return next;
+        });
+        setShowKitchenUtilities(true);
+      }
+      if (of('utility').length) {
+        setUtilities((prev) => {
+          const next = { ...prev };
+          for (const p of of('utility')) if (!next[p.name]) next[p.name] = p.quantity;
+          return next;
+        });
+        setShowUtilitiesSection(true);
+      }
+      setSuggestion({ day, rows, supplies });
       toast.success(t('stock.req.filledToast'));
     } catch (e: any) {
       toast.error(e?.message || t('stock.req.forecastFailed'));
@@ -716,7 +763,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
 
     const totalQuantity = Object.values(momoQuantities).reduce((sum, qty) => sum + qty, 0);
 
-    // Requests go out in whole bags - 50 chicken, 20 of every other type (from Phase 1 go-live).
+    // Requests go out in whole bags of 50 (from Phase 1 go-live).
     const notWholeBags = isPhase1Live(requestDate)
       ? Object.entries(momoQuantities).filter(([key, qty]) => qty > 0 && qty % bagSize(key) !== 0)
       : [];
@@ -796,7 +843,7 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
       setSauces({});
       setUtilities({});
       setNotes('');
-      setRequestDate(getDefaultRequestDate());
+      dateTouched.current = false; // the reload below moves the screen on to the next day due
 
       // Reload requests
       await loadRequests();
@@ -1112,6 +1159,8 @@ export function useStockRequests({ context, highlightRequestId, selectedStoreId,
     setExpandedDates,
     showStoreRecalibration,
     setShowStoreRecalibration,
+    showHouseRecalibration,
+    setShowHouseRecalibration,
     storeBases,
     showThresholdSettings,
     setShowThresholdSettings,

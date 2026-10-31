@@ -90,6 +90,16 @@ export function ProductionRequests(props: ProductionRequestsProps) {
   const { loading, loadError, isStoreIncharge, isProductionHead, isOperationsHead, isClusterHead, canViewMomoTypeReport, highlightRequestId, requests, setSelectedRecentRequest, loadRequests } = vm;
   const isManager = isOperationsHead || isClusterHead;
 
+  // The month-end count reminder (route tab=count, owner 31 Oct 2026: "pressing on notification
+  // will the page open ... where he can input the count") opens the count straight away.
+  const countOpened = React.useRef(false);
+  React.useEffect(() => {
+    if (!props.openCount || loading || countOpened.current) return;
+    countOpened.current = true;
+    if (isStoreIncharge) vm.setShowStoreRecalibration(true);
+    else if (isProductionHead && vm.myHouseIds.length > 0) vm.setShowHouseRecalibration(true);
+  }, [props.openCount, loading, isStoreIncharge, isProductionHead, vm]);
+
   // A notification link (highlight=<request id>) opens that request's sheet once it has loaded.
   const opened = React.useRef<string | null>(null);
   React.useEffect(() => {

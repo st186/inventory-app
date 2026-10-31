@@ -35,7 +35,7 @@ const people = [
 
 // Cameras (server cctv.ts): one kitchen camera, two alerts (photo: the app logo stands in).
 const cameras = [
-  { id: 'cam-kitchen1', name: 'Kitchen camera', placeKind: 'production', placeId: 'PH-1', place: 'Main Production House', checks: ['cap', 'gloves', 'apron'], from: '07:00', to: '21:00', everyMin: 30, active: true, afterHours: true, activity: true, keyHint: 'ab12', online: true, lastSeenAt: '2026-10-29T13:05:25Z', week: { checks: 8, alerts: 2, falseAlarms: 0, unmarked: 2 }, lastCheck: null },
+  { id: 'cam-kitchen1', name: 'Kitchen camera', placeKind: 'production', placeId: 'PH-1', place: 'Main Production House', checks: ['cap', 'gloves', 'apron'], from: '07:00', to: '21:00', everyMin: 35, active: true, afterHours: true, activity: true, keyHint: 'ab12', online: true, lastSeenAt: '2026-10-29T13:05:25Z', week: { checks: 8, alerts: 2, falseAlarms: 0, unmarked: 2 }, lastCheck: null },
   { id: 'cam-store-door', name: 'Entrance door', placeKind: 'store', placeId: 'S-1', place: 'Bunny Momos 1', checks: [], from: '09:00', to: '23:30', everyMin: 30, active: false, afterHours: false, keyHint: 'cd34', online: false, week: { checks: 0, alerts: 0, falseAlarms: 0, unmarked: 0 }, lastCheck: null },
 ];
 const alerts = [
@@ -50,34 +50,96 @@ const person = (slot: string, name: string | null, minutes: Record<string, numbe
 };
 const activity = {
   from: '2026-10-30', to: '2026-10-30',
-  labels: { folding: 'Folding momos', machine: 'At the machine / dough', filling: 'Making filling', cooking: 'Steaming / frying', packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other' },
+  labels: { folding: 'Folding momos', machine: 'At the machine / dough', prep: 'Cutting veg (prep)', filling: 'Making filling', cooking: 'Steaming / frying', packing: 'Packing', cleaning: 'Cleaning', phone: 'On the phone', idle: 'Standing idle', other: 'Other' },
   cameras: [{
-    camera: { id: 'cam-kitchen1', name: 'Kitchen camera', everyMin: 30, burst: { frames: 20, gapSec: 15 }, place: 'Main Production House' },
+    camera: { id: 'cam-kitchen1', name: 'Kitchen camera', everyMin: 35, burst: { frames: 20, gapSec: 105 }, place: 'Main Production House' },
     people: [
-      person('teal', 'Vijay Das', { folding: 95, machine: 120, cooking: 40, cleaning: 15, phone: 20, idle: 25 }, 30, 4, 82, '09:10', '16:40'),
-      person('red', null, { folding: 210, packing: 45, idle: 15, phone: 10 }, 10, 2, 95, '10:05', '16:30'),
+      { ...person('teal', 'Vijay Das', { folding: 95, machine: 120, cooking: 40, cleaning: 15, phone: 20, idle: 25 }, 30, 4, 82, '09:10', '16:40'), notInKitchenMinutes: 35, away: [{ date: '2026-10-30', from: '13:24', to: '14:29', minutes: 35, phone: { atWorkMin: 10, outMin: 40, farthestM: 350, noneMin: 15 } }] },
+      person('p3', null, { folding: 210, packing: 45, idle: 15, phone: 10 }, 10, 2, 95, '10:05', '16:30'),
     ],
-    kitchen: { foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 240, bursts: 12 },
-    perDay: [],
+    kitchen: { foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 240, bursts: 12, folding: { from: '10:35', to: '16:20', mostPeople: 3 } },
+    perDay: [{ date: '2026-10-30', foldingHours: 5.1, phoneMinutes: 40, idleMinutes: 40, piecesMade: 3120, piecesPerFoldingHour: 612, stills: 240, bursts: 12, folding: { from: '10:35', to: '16:20', mostPeople: 3 }, empty: [{ date: '2026-10-30', from: '14:02', to: '15:44', minutes: 91 }] }],
   }],
 };
-const whois = {
-  date: '2026-10-30', staff: ['Aniket Prasad', 'Nabendu', 'Rider 1', 'Rohan Rajbanshi', 'Rudra Mahato', 'Saniya Parvin', 'Vijay Das'],
-  cameras: [{ cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', date: '2026-10-30', slots: [
-    { slot: 'teal', name: 'Vijay Das', first: '09:10', last: '16:40', photoUrl: '/bunny-logo.png' },
-    { slot: 'red', name: null, first: '10:05', last: '16:30', photoUrl: '/bunny-logo.png' },
-  ] }],
-};
+// 31 Oct 2026 as it was: Rudra on two numbers, Aniket once with a later photo to confirm, one new person.
+const whoNames: Record<string, string> = { p1: 'Rudra Mahato', p2: 'Rudra Mahato', p4: 'Aniket Prasad', p5: 'Someone else' };
+const whoConfirms: Record<string, { photo?: string; at?: string; name?: string }> = { p4: { photo: '/bunny-logo.png', at: '11:45' } };
+const whoSeen = [['p1', '08:50', '10:35'], ['p2', '08:50', '11:10'], ['p4', '09:25', '11:45'], ['p5', '10:00', '11:10'], ['p6', '11:45', '12:20']];
+const isStaff = (n?: string) => !!n && n !== 'Someone else' && n !== 'Not a person';
+function whois() {
+  const slots = whoSeen.map(([slot, first, last]) => ({ slot, name: whoNames[slot] || null, first, last, photoUrl: '/bunny-logo.png' }));
+  const tags: Record<string, number> = {};
+  for (const s of slots) if (isStaff(s.name ?? undefined)) tags[s.name!] = (tags[s.name!] || 0) + 1 + (whoConfirms[s.slot]?.name === s.name ? 1 : 0);
+  const open = slots.filter((s) => !s.name).map((s) => s.slot);
+  const ask = slots.filter((s) => isStaff(s.name ?? undefined) && tags[s.name!] < 2 && whoConfirms[s.slot]?.photo && !whoConfirms[s.slot].name).map((s) => s.slot);
+  const short = Object.keys(tags).filter((n) => tags[n] < 2);
+  return {
+    date: '2026-10-31', staff: ['Aniket Prasad', 'Nabendu', 'Rider 1', 'Rohan Rajbanshi', 'Rudra Mahato', 'Saniya Parvin', 'Vijay Das'],
+    cameras: [{
+      cameraId: 'cam-kitchen1', cameraName: 'Kitchen camera', date: '2026-10-31', tags, open, ask, short, complete: !open.length && !short.length,
+      slots: slots.map((s) => ({ ...s, ...(whoConfirms[s.slot]?.photo ? { confirmUrl: whoConfirms[s.slot].photo, confirmAt: whoConfirms[s.slot].at, confirmed: whoConfirms[s.slot].name === s.name } : {}) })),
+    }],
+  };
+}
+function setWho(b: { slot: string; name: string; confirm?: string }) {
+  if (b.confirm === 'yes') whoConfirms[b.slot] = { ...whoConfirms[b.slot], name: whoNames[b.slot] };
+  else {
+    if (b.name) whoNames[b.slot] = b.name; else delete whoNames[b.slot];
+    if (b.confirm === 'no') whoConfirms[b.slot] = {};
+  }
+  return { names: whoNames };
+}
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+// The owner's "Right now" card (server liveOrders.ts): an evening with 3 open orders, one waiting
+// long, and last night's closing check.
+function liveNow() {
+  const ago = (min: number) => new Date(Date.now() - min * 60000).toISOString();
+  const orders = [
+    { key: 'sn:ZT-1907', type: 'HomeDelivery', serial: 'ZT-1907', table: null, placedAt: ago(31), ageMin: 31, total: 412, stuck: true, old: false,
+      items: [{ name: 'Chicken Steamed Momos', qty: 2, total: 240 }, { name: 'Peri Peri Momos', qty: 1, total: 132 }, { name: 'Coke', qty: 1, total: 40 }] },
+    { key: 'sn:58', type: 'DineIn', serial: '58', table: 'T3', placedAt: ago(18), ageMin: 18, total: 300, stuck: false, old: false,
+      items: [{ name: 'Veg Momos', qty: 3, total: 300 }] },
+    { key: 'sn:59', type: 'TakeAway', serial: '59', table: null, placedAt: ago(4), ageMin: 4, total: 180, stuck: false, old: false,
+      items: [{ name: 'Chicken Kurkure Momos', qty: 1, total: 180 }] },
+  ];
+  const findings = [
+    { kind: 'not_billed', key: 'sn:41', type: 'DineIn', serial: '41', table: 'T2', placedAt: '2026-10-31T14:40:00Z', firstSeen: '2026-10-31T14:42:00Z', lastSeen: '2026-10-31T15:21:00Z', total: 360,
+      items: [{ name: 'Chicken Momos', qty: 2, total: 240 }, { name: 'Lemon Soda', qty: 2, total: 120 }] },
+    { kind: 'billed_less', key: 'sn:47', type: 'TakeAway', serial: '47', table: null, placedAt: '2026-10-31T15:10:00Z', firstSeen: '2026-10-31T15:12:00Z', lastSeen: '2026-10-31T15:18:00Z', total: 250, billed: 150,
+      items: [{ name: 'Paneer Momos', qty: 2, total: 250 }] },
+  ];
+  return {
+    date: new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10), open: true,
+    stores: [{ storeId: 'STORE-1', storeName: 'Bunny Momos 1', open: 3, openTotal: 892, stuck: 1, orders, lastPoll: ago(1), error: null,
+      check: { date: '2026-10-31', at: '2026-10-31T18:15:00Z', seen: 56, matched: 55, findings,
+        summary: { notBilled: 1, notBilledTotal: 360, billedLess: 1, lessBy: 100, openAtClose: 0, openTotal: 0 } },
+      offOnline: { date: '2026-11-01', at: '2026-11-01T10:30:00Z', kept: 0, idle: 16, off: 40, sells: [
+        { productId: '960994', name: 'Chicken Chilli Momos [6 Pieces]', category: 'Chilli Momos - O', lastOnline: '2026-10-31', lastCounter: '2026-10-27',
+          offSince: '2026-10-31T13:32:40Z', offBy: 'Subham Tewari', platforms: ['Zomato', 'Swiggy'] },
+        { productId: '2', name: 'Chicken Momo Burger', category: 'Momo Burgers -O', lastOnline: '2026-10-11', lastCounter: '2026-10-31', offSince: null, offBy: null },
+      ] },
+      outOfStock: { storeId: 'STORE-1', storeName: 'Bunny Momos 1', date: '2026-10-31', at: '2026-10-31T18:15:00Z', items: [
+        { productId: '960994', name: 'Chicken Chilli Momos [6 Pieces]', category: 'Chilli Momos - O',
+          periods: [{ from: '2026-10-31T13:32:10Z', to: null, by: 'Subham Tewari', platforms: ['Swiggy', 'Zomato'] }],
+          explanation: { reason: 'ingredient', note: 'Chilli sauce finished, new batch tomorrow', by: 'Rohan', at: '2026-10-31T18:40:00Z' } },
+        { productId: '960990', name: 'Chicken Cheese Momos', category: 'Steamed Momos - O',
+          periods: [{ from: '2026-10-31T12:40:00Z', to: '2026-10-31T14:05:00Z', by: 'Subham Tewari', platforms: ['Swiggy', 'Zomato'] }], explanation: null },
+      ] } }],
+  };
+}
 
 export function installPerfPreviewMock() {
   const real = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.includes('/cctv/activity')) return json(activity);
-    if (url.includes('/cctv/whois') && init?.method === 'POST') return json({ names: {} });
-    if (url.includes('/cctv/whois')) return json(whois);
+    if (url.includes('/live-orders/now')) return json(liveNow());
+    if (url.includes('/stock-out-day/explain')) return json({ success: true });
+    if (url.includes('/stock-out-day/mine')) return json({ reasons: [], reports: [liveNow().stores[0].outOfStock] });
+    if (url.includes('/cctv/whois') && init?.method === 'POST') return json(setWho(JSON.parse(String(init.body || '{}'))));
+    if (url.includes('/cctv/whois')) return json(whois());
     if (url.includes('/cctv/cameras') && !init?.method) return json({ cameras, canManage: true });
     if (url.includes('/cctv/alerts') && /\/mark$/.test(url)) return json({ alert: {} });
     if (url.includes('/cctv/alerts')) return json({ alerts });

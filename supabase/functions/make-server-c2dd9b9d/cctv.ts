@@ -18,17 +18,35 @@
 //                                           by what they were doing, phone use, PPE share (120 days)
 //   cctv-activity-photos:{cameraId}:{date}  one still per person of the day, to put names to the
 //                                           colours they wore (7 days)
-//   cctv-names:{cameraId}:{date}            colour of the day -> name, tapped by the owner, the
-//                                           operations manager or the place's incharge
+//   cctv-names:{cameraId}:{date}            colour (or day number "p3") of the day -> name, tapped by
+//                                           the owner, the operations manager or the place's incharge
+//   cctv-people:{cameraId}:{date}           the day's numbered people and their reference crops
+//                                           (cameraPeople.ts; 7 days)
+//   cctv-confirm:{cameraId}:{date}          a later photo of someone named once, to confirm (their
+//                                           second tag; cameraPeople.ts tagState; 7 days)
 // Kitchen activity (owner, 29 Oct 2026): with `activity` on, every scheduled look also counts what
 // each person is doing; only the owner sees the numbers. Such a camera looks in bursts ("for better
-// detection"): the PC takes 20 frames 15 seconds apart and sends them together, the AI follows each
-// person through them (one call for the lot), then the camera waits `everyMin` (30) minutes.
+// detection"): the PC takes 20 frames and sends them together, the AI follows each person through
+// them (one call for the lot). Since 31 Oct the frames are spread over the camera's `everyMin` (35:
+// one every 105 s) and the next burst starts straight away (cameraRules burstFor); before, they were
+// 15 s apart and the camera waited `everyMin` after each.
+// Numbered people (owner, 30 Oct 2026): a PC with tools/kitchen-ai draws a numbered box round each
+// person and sends the boxes too; Bunny then says which of the day's people each box is, from their
+// reference crops, so everyone keeps one number ("p3") all day and Who is who shows their box.
+// Who hears about PPE (owner, 31 Oct 2026, roundupRules.ts): the place's incharge - the day's first
+// problem buzzes, later ones add to that row; after 2 bad checks in a row the crew on shift get a
+// Bengali reminder (at most hourly; the incharge can also tap Remind); after 3, the incharge and the
+// operations managers get one firmer alert. The owner and operations read it in Bunny's roundup
+// (1 PM, 9 PM) instead of each alert. After-hours alerts still go to everyone at once.
+//   ppe-day:{cameraId}:{date}   the day's run of bad checks, first problem, reminders sent
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { P, actorOf, type Actor, type KpiDeps } from './attendance.ts';
 import { AiError, aiLookAtBurst, aiLookAtCamera, type BurstLook } from './insights.ts';
-import { BURST, PPE_ITEMS, burstInHours, cleanFaces, decide, inHours, istClock, minutesPerFrame, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
-import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay } from './activityRules.ts';
+import { PPE_ITEMS, burstFor, burstInHours, burstTooSoon, cleanFaces, decide, inHours, istClock, minutesPerFrame, minutesUntilHoursEnd, missingText, nextStillSeconds, onlyKnownStaff, type PpeItem } from './cameraRules.ts';
+import { ACTIVITY_LABEL, addBurst, addStill, slotKeys, summarise, type ActivityDay, type BurstPerson, type PersonDay } from './activityRules.ts';
+import type { PresenceDay } from './presenceRules.ts';
+import { NOT_A_PERSON, addRef, addSpot, assign, cleanNumbered, dropBoxes, mergeSamePerson, objectBoxes, slotOf, spotOf, steadyFolding, tagState, toShow, trustBoxes, wantsConfirm, type Confirm, type DayPeople, type IgnoreSpot, type NumberedBody } from './cameraPeople.ts';
+import { emptyPpeDay, ppeStep, type PpeDay } from './roundupRules.ts';
 
 const BUCKET = 'cctv-photos'; // private; evidence photos of alerts only, kept KEEP_DAYS
 const KEEP_DAYS = 30;
@@ -42,6 +60,12 @@ const ACTIVITY_PHOTO_DAYS = 7;
 const istDate = (ms: number) => new Date(ms + 330 * 60000).toISOString().slice(0, 10);
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+const bytesOf = (b64: string) => Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+const b64Of = (bytes: Uint8Array) => {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
 // Pieces folded by hand (kurkure is made from these, so it isn't counted again).
 const FOLDED = ['chickenMomos', 'chickenCheeseMomos', 'vegMomos', 'cheeseCornMomos', 'paneerMomos'];
 
@@ -54,6 +78,9 @@ type Camera = {
   // each burst); PPE alerts then at most every ppeGapMin.
   activity?: boolean;
   ppeGapMin?: number;
+  // What Bunny should know about this kitchen when it reads the frames (owner, 30 Oct 2026: momos
+  // are folded at the folding table), set by the owner.
+  notes?: string;
   createdAt: string; createdBy: string; lastSeenAt?: string; lastScheduledAt?: string; lastMotionLookAt?: string;
   lastAlert?: { ppe?: string; intruder?: string };
 };
@@ -124,6 +151,46 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       || (e.designation === designation && [e.storeId, e.productionHouseId, ...(e.assignedStoreIds || []), ...(e.assignedProductionHouseIds || [])].map(String).includes(cam.placeId))
     ));
   }
+  const inchargeDesignation = (cam: Camera) => (cam.placeKind === 'store' ? 'store_incharge' : 'production_incharge');
+  // The place's incharge (or, with none, the operations managers) and the operations managers.
+  async function inchargesOf(cam: Camera) {
+    const all = await recipients(cam);
+    const inc = all.filter((e: any) => e.designation === inchargeDesignation(cam));
+    return inc.length ? inc : all.filter((e: any) => e.role === 'manager' && !['store_incharge', 'production_incharge'].includes(e.designation));
+  }
+  async function opsOf(cam: Camera) {
+    return (await recipients(cam)).filter((e: any) => e.role === 'manager' && !['store_incharge', 'production_incharge'].includes(e.designation));
+  }
+  // The crew checked in at the place now: not the incharge, a manager or the owner.
+  async function crewOnShift(cam: Camera): Promise<any[]> {
+    const all = await deps.getAllByPrefix('unified-employee:');
+    const here = all.filter((e: any) => e?.employeeId && e.authUserId && !['inactive', 'archived'].includes(e.status) && e.role !== 'cluster_head' && e.role !== 'manager'
+      && e.designation !== inchargeDesignation(cam)
+      && [e.storeId, e.productionHouseId, ...(e.assignedStoreIds || []), ...(e.assignedProductionHouseIds || [])].map(String).includes(cam.placeId));
+    const today = istDate(Date.now());
+    const yesterday = addDays(today, -1);
+    const out: any[] = [];
+    for (const e of here) {
+      const recs = await Promise.all([today, yesterday].map((d) => deps.kv.get<any>(`punch:${e.employeeId}:${d}`)));
+      if (recs.some((x) => x?.in && !x?.out)) out.push(e);
+    }
+    return out;
+  }
+  const ITEM_BN: Record<string, string> = { cap: 'টুপি', gloves: 'গ্লাভস', apron: 'অ্যাপ্রন' };
+  // A Bengali reminder to the crew on shift: what the camera saw missing, and when.
+  async function remindCrew(cam: Camera, missing: Partial<Record<PpeItem, number>>, atIso: string): Promise<number> {
+    const crew = await crewOnShift(cam);
+    const items = (PPE_ITEMS.filter((i) => (missing[i] || 0) > 0) as string[]);
+    const list = items.length ? items : cam.checks;
+    const at = istClock(Date.parse(atIso));
+    for (const e of crew) {
+      await deps.notifyUser?.(e.authUserId, 'ppe_reminder', `${list.map((i) => ITEM_BN[i] || i).join(', ')} পরে নিন`,
+        `ক্যামেরায় দেখা গেছে কেউ কেউ ${list.map((i) => ITEM_BN[i] || i).join(', ')} ছাড়া কাজ করছেন (${at})। এখনই পরে নিন। · The camera saw people without ${list.join(', ')} at ${at}. Please put them on now.`,
+        undefined, atIso.slice(0, 10)).catch(() => undefined);
+    }
+    return crew.length;
+  }
+
   // Who is checked in at the camera's place right now (shift clock: in and not yet out, today or a
   // shift that started yesterday).
   async function onShift(cam: Camera): Promise<string[]> {
@@ -172,34 +239,103 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     }
     if (!before) cleanupActivity(cam.id, date).catch(() => undefined); // once a day
   }
-  // A burst into the day's activity; each new person's photo is the frame they're clearest in.
-  async function recordBurst(cam: Camera, nowMs: number, look: BurstLook, images: string[]) {
+  // A burst into the day's activity; each new person's photo is the frame they're clearest in (a
+  // numbered burst: the PC's photo of the frame with only their box drawn).
+  async function recordBurst(cam: Camera, nowMs: number, look: BurstLook, images: string[], gapSec: number, startMs: number, boxPhotos?: Record<number, string>) {
     const date = istDate(nowMs);
     const key = `cctv-activity:${cam.id}:${date}`;
     const before = await deps.kv.get<ActivityDay>(key);
-    const startMs = nowMs - images.length * BURST.gapSec * 1000;
+    const people = mergeSamePerson(look.people as (BurstLook['people'][number] & BurstPerson)[]);
     const day = addBurst(before, {
       date, cameraId: cam.id, from: istClock(startMs), to: istClock(nowMs), frames: images.length,
-      minutesPerFrame: minutesPerFrame(cam.everyMin, { frames: images.length, gapSec: BURST.gapSec }), people: look.people, checks: cam.checks,
+      minutesPerFrame: minutesPerFrame(cam.everyMin, { frames: images.length, gapSec }), people, checks: cam.checks, gapSec,
     });
     await deps.kv.set(key, day);
     const pKey = `cctv-activity-photos:${cam.id}:${date}`;
     const photos: Record<string, string> = (await deps.kv.get<Record<string, string>>(pKey)) || {};
-    const keys = slotKeys(look.people.map((p) => p.top));
-    const byFrame = new Map<number, string[]>();
+    const keys = slotKeys(people, Object.keys(before?.slots || {})); // as addBurst keyed them
+    const byPhoto = new Map<string, string[]>(); // 'f3' (a frame) or 'b2' (a box photo) -> slots
     keys.forEach((slot, i) => {
       if (!day.slots[slot] || photos[slot]) return;
-      const f = look.people[i].bestFrame;
-      byFrame.set(f, [...(byFrame.get(f) || []), slot]);
+      const box = people[i].box;
+      const k = box && boxPhotos?.[box] ? `b${box}` : `f${people[i].bestFrame}`;
+      byPhoto.set(k, [...(byPhoto.get(k) || []), slot]);
     });
-    for (const [f, slots] of byFrame) {
+    for (const [k, slots] of byPhoto) {
       const path = `activity/${cam.id}/${date}/${newId(6)}.jpg`;
-      const bytes = Uint8Array.from(atob(images[f - 1]), (ch) => ch.charCodeAt(0));
+      const bytes = bytesOf(k[0] === 'b' ? boxPhotos![Number(k.slice(1))] : images[Number(k.slice(1)) - 1]);
       const { error } = await ensureBucket().then(() => storage().from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false })).catch((e: any) => ({ error: e }));
       if (!error) for (const s of slots) photos[s] = path;
     }
-    if (byFrame.size) await deps.kv.set(pKey, photos);
+    if (byPhoto.size) await deps.kv.set(pKey, photos);
+    // Someone named once and seen again an hour or more later: this burst's photo of them, to confirm
+    // it is still them - their second tag (owner, 31 Oct 2026).
+    if (boxPhotos) {
+      const cKey = `cctv-confirm:${cam.id}:${date}`;
+      const [names, confirms] = await Promise.all([
+        deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`), deps.kv.get<Record<string, Confirm>>(cKey),
+      ]).then(([n, c]) => [n || {}, c || {}] as const);
+      const { tags } = tagState(whoSlots(day, names), confirms);
+      const clock = istClock(nowMs);
+      let added = false;
+      for (let i = 0; i < people.length; i++) {
+        const slot = keys[i];
+        const b64 = people[i].box ? boxPhotos[people[i].box!] : undefined;
+        if (!b64 || !day.slots[slot] || !wantsConfirm(slot, names[slot], tags, confirms[slot], day.slots[slot].first, clock)) continue;
+        const path = `activity/${cam.id}/${date}/${newId(6)}.jpg`;
+        const { error } = await storage().from(BUCKET).upload(path, bytesOf(b64), { contentType: 'image/jpeg', upsert: false }).catch((e: any) => ({ error: e }));
+        if (!error) { confirms[slot] = { photo: path, at: clock }; added = true; }
+      }
+      if (added) await deps.kv.set(cKey, confirms);
+    }
     if (!before) cleanupActivity(cam.id, date).catch(() => undefined); // once a day
+  }
+  // The day's people to put names to: seen in at least two frames (once is likely someone passing).
+  const whoSlots = (day: ActivityDay, names: Record<string, string>) =>
+    Object.entries(day.slots).filter(([, s]) => s.samples >= 2).map(([slot]) => ({ slot, name: names[slot] || null }));
+  // The reference crops of the day's people that go to Bunny with a numbered burst.
+  async function referenceCrops(day: DayPeople | null, names: Record<string, string>) {
+    const out: { id: number; images: string[] }[] = [];
+    for (const s of toShow(day, names)) {
+      const images: string[] = [];
+      for (const path of s.paths) {
+        const { data } = await storage().from(BUCKET).download(path).catch(() => ({ data: null }));
+        if (data) images.push(b64Of(new Uint8Array(await data.arrayBuffer())));
+      }
+      if (images.length) out.push({ id: s.id, images });
+    }
+    return out;
+  }
+  // Bunny's answer into day numbers ("p3" slots), keeping new reference crops.
+  async function numberPeople(cam: Camera, nowMs: number, before: DayPeople | null, look: BurstLook, numbered: NumberedBody) {
+    const date = istDate(nowMs);
+    const clock = istClock(nowMs);
+    const { day, ids, keep } = assign(before, date, clock, look.people, numbered.crops);
+    look.people.forEach((p, i) => { if (ids[i]) { (p as any).key = slotOf(ids[i]); (p as any).id = ids[i]; } });
+    // Where each number's box was in its first burst - the Who is who photo - kept for "Not a person"
+    // (owner, 31 Oct 2026). A later match by Bunny never moves it: one wrong match at 13:25 on 31 Oct
+    // made Vijay's folding seat the sack's spot.
+    for (const p of look.people as any[]) {
+      const spot = p.box ? spotOf(numbered, p.box) : null;
+      const person = spot && day.people.find((x) => x.id === p.id);
+      if (person && !person.spot) person.spot = spot!;
+    }
+    // A number named "Not a person" still in Bunny's answer leaves the burst (no new spot from it).
+    const names = (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`)) || {};
+    const objects = new Set((look.people as any[]).filter((p) => p.id && names[slotOf(p.id)] === NOT_A_PERSON).map((p) => p.id as number));
+    if (objects.size) {
+      const kept = look.people.filter((p: any) => !objects.has(p.id));
+      look.peopleCount = Math.max(kept.length ? 1 : 0, look.peopleCount - (look.people.length - kept.length));
+      look.people.splice(0, look.people.length, ...kept);
+    }
+    const gone: string[] = [];
+    for (const k of keep) {
+      const path = `activity/${cam.id}/${date}/ref-${newId(6)}.jpg`;
+      const { error } = await ensureBucket().then(() => storage().from(BUCKET).upload(path, bytesOf(numbered.crops[k.box]), { contentType: 'image/jpeg', upsert: false })).catch((e: any) => ({ error: e }));
+      if (!error) gone.push(...addRef(day, k.id, path, clock));
+    }
+    if (gone.length) await storage().from(BUCKET).remove(gone).catch(() => undefined);
+    await deps.kv.set(`cctv-people:${cam.id}:${date}`, day);
   }
   async function cleanupActivity(cameraId: string, today: string) {
     const photoCut = addDays(today, -ACTIVITY_PHOTO_DAYS);
@@ -211,6 +347,20 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       if (date && date < photoCut) {
         await storage().from(BUCKET).remove([...new Set(paths)]).catch(() => undefined);
         await deps.kv.del(`cctv-activity-photos:${cameraId}:${date}`);
+      }
+    }
+    for (const d of await deps.getAllByPrefix(`cctv-people:${cameraId}:`) as DayPeople[]) {
+      if (!d?.date || d.date >= photoCut) continue;
+      const paths = (d.people || []).flatMap((p) => p.refs.map((r) => r.path));
+      if (paths.length) await storage().from(BUCKET).remove(paths).catch(() => undefined);
+      await deps.kv.del(`cctv-people:${cameraId}:${d.date}`);
+    }
+    for (const row of await deps.getAllByPrefix(`cctv-confirm:${cameraId}:`) as Record<string, Confirm>[]) {
+      const paths = Object.values(row || {}).map((c) => c?.photo).filter((p): p is string => !!p);
+      const date = paths[0]?.split('/')[2];
+      if (date && date < photoCut) {
+        await storage().from(BUCKET).remove(paths).catch(() => undefined);
+        await deps.kv.del(`cctv-confirm:${cameraId}:${date}`);
       }
     }
     for (const d of await deps.getAllByPrefix(`cctv-activity:${cameraId}:`)) {
@@ -246,11 +396,13 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       active: cam.active, from: cam.from, to: cam.to, everyMin: cam.everyMin, working,
       // Outside working hours: watch for movement, or (watch false) wait for working hours.
       watch: cam.afterHours !== false,
-      // Kitchen activity: the scheduled look is a burst of frames (an older camera PC ignores this
-      // and sends one still, which still counts).
-      burst: cam.activity ? BURST : null,
+      // Kitchen activity: the scheduled look is a burst of frames spread over everyMin, one burst
+      // after the other (an older camera PC ignores this and sends one still, which still counts).
+      burst: cam.activity ? burstFor(cam.everyMin) : null,
       // Seconds until the next scheduled look (working hours) or until watching for movement matters.
-      nextStillInSec: nextStillSeconds({ now, from: cam.from, to: cam.to, active: cam.active, everyMin: cam.everyMin, hasChecks: cam.checks.length > 0 || !!cam.activity, sinceLastS: sinceLast }),
+      nextStillInSec: nextStillSeconds({ now, from: cam.from, to: cam.to, active: cam.active, everyMin: cam.activity ? 0 : cam.everyMin, hasChecks: cam.checks.length > 0 || !!cam.activity, sinceLastS: sinceLast }),
+      // Seconds of working hours left, so a burst stops taking frames at closing.
+      endsInSec: minutesUntilHoursEnd(now, cam.from, cam.to) * 60,
     };
   };
 
@@ -263,7 +415,8 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
   });
 
   // POST /cctv/frame {kind: 'scheduled' | 'motion', image: base64 JPEG}
-  //   or, a kitchen-activity camera's burst: {kind: 'scheduled', images: [base64 JPEG, ...]}
+  //   or, a kitchen-activity camera's burst: {kind: 'scheduled', images: [base64 JPEG, ...]}, with
+  //   the boxes drawn on them when the PC numbers people: people: {frames: [[{n, box}]], crops, photos}
   app.post(`${P}/cctv/frame`, async (c: any) => {
     const cam = await deviceCamera(c);
     if (!cam) return c.json({ error: 'Unknown camera or wrong key' }, 401);
@@ -287,8 +440,16 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       // A burst that started before closing still counts.
       if (!cam.active) { await deps.kv.set(`cctv-camera:${cam.id}`, cam); return c.json({ skipped: 'paused', ...p }); }
       const looks = cam.checks.length > 0 || !!cam.activity;
-      const inTime = isBurst ? burstInHours(nowMs, cam.from, cam.to, { frames: images.length, gapSec: BURST.gapSec }) : p.working;
-      if (kind === 'scheduled' && (!inTime || !looks || (p.working && p.nextStillInSec > 60))) {
+      // The PC says how far apart it took the frames (an older one doesn't: the camera's setting).
+      const gapSec = Number.isInteger(body.gapSec) && body.gapSec >= 5 && body.gapSec <= 600 ? body.gapSec : burstFor(cam.everyMin).gapSec;
+      const shape = { frames: images.length, gapSec };
+      // ...and when it took the first (sent with it; else counted back from now).
+      const firstMs = typeof body.firstAt === 'string' ? Date.parse(body.firstAt) : NaN;
+      const startMs = firstMs <= nowMs && nowMs - firstMs <= (images.length * gapSec + 600) * 1000 ? firstMs : nowMs - images.length * gapSec * 1000;
+      const inTime = isBurst ? burstInHours(nowMs, cam.from, cam.to, shape) : p.working;
+      const sinceLast = cam.lastScheduledAt ? (nowMs - Date.parse(cam.lastScheduledAt)) / 1000 : Infinity;
+      const tooSoon = isBurst ? burstTooSoon(sinceLast, shape) : p.working && p.nextStillInSec > 60;
+      if (kind === 'scheduled' && (!inTime || !looks || tooSoon)) {
         await deps.kv.set(`cctv-camera:${cam.id}`, cam);
         return c.json({ skipped: !inTime ? 'outside working hours' : !looks ? 'nothing to check in working hours' : 'too soon', ...p });
       }
@@ -303,8 +464,24 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       await deps.kv.set(`cctv-camera:${cam.id}`, cam);
 
       const place = await placeName(cam);
-      const burst = isBurst ? await aiLookAtBurst(deps.kv as any, { frames: images, gapSec: BURST.gapSec, place: `${cam.name}, ${place}` }) : null;
-      const look = burst || await aiLookAtCamera(deps.kv as any, { base64: image, mediaType: 'image/jpeg', place: `${cam.name}, ${place}` });
+      let numbered = isBurst && cam.activity ? cleanNumbered(body.people, images.length) : null;
+      // Objects boxed as people before (Who is who: Not a person) are left out (cameraPeople.ts).
+      if (numbered) numbered = dropBoxes(numbered, objectBoxes(numbered, (await deps.kv.get<IgnoreSpot[]>(`cctv-ignore:${cam.id}`)) || []));
+      const dayPeople = numbered ? await deps.kv.get<DayPeople>(`cctv-people:${cam.id}:${istDate(nowMs)}`) : null;
+      const dayNames = numbered ? (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${istDate(nowMs)}`)) || {} : {};
+      const burst = isBurst ? await aiLookAtBurst(deps.kv as any, {
+        frames: images, gapSec, place: `${cam.name}, ${place}`, notes: cam.notes,
+        numbered: numbered ? { boxes: numbered.frames.map((f) => f.map((b) => b.n)), known: await referenceCrops(dayPeople, dayNames) } : undefined,
+      }) : null;
+      // Where the PC drew someone's box is trusted over Bunny's frame-by-frame guess (cameraPeople.ts).
+      if (burst && numbered) burst.people = trustBoxes(burst.people, numbered, gapSec);
+      // ...and folding counts only as steady work, not a few frames here and there (cameraPeople.ts).
+      if (burst) burst.people = steadyFolding(burst.people, gapSec);
+      if (burst && numbered) {
+        await numberPeople(cam, nowMs, dayPeople, burst, numbered)
+          .catch((e) => console.error('[cctv] people not numbered:', String(e?.message || e).slice(0, 120)));
+      }
+      const look = burst || await aiLookAtCamera(deps.kv as any, { base64: image, mediaType: 'image/jpeg', place: `${cam.name}, ${place}`, notes: cam.notes });
       // The photo kept with an alert: the burst frame that best shows it.
       const evidence = burst ? images[burst.evidenceFrame - 1] : image;
       const lastAlertAt = kind === 'motion' ? cam.lastAlert?.intruder : cam.lastAlert?.ppe;
@@ -313,9 +490,20 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       // Someone checked in here after hours is staff working late; so is a recognised colleague.
       if (d.alert === 'intruder' && (staff.length || onlyKnownStaff(faces, look.peopleCount))) d.alert = null;
       const seen = faces?.names || [];
-      await deps.kv.set(`cctv-check:${cam.id}:${now}`, { at: now, kind, peopleCount: look.peopleCount, missing: d.missing, alert: d.alert, note: look.note, onShift: staff, seen, unknownFaces: faces?.unknown || 0, ...(burst ? { frames: images.length } : {}) });
+      // Who was missing what, by the day's numbers (Who is who names them in the roundup).
+      const missingBy = kind === 'scheduled'
+        ? ((look as any).people || []).map((p: any) => ({ id: typeof p.id === 'number' ? p.id : null, items: cam.checks.filter((i) => p?.[i] === 'no') })).filter((m: any) => m.items.length)
+        : [];
+      await deps.kv.set(`cctv-check:${cam.id}:${now}`, { at: now, kind, peopleCount: look.peopleCount, missing: d.missing, ...(missingBy.length ? { missingBy } : {}), alert: d.alert, note: look.note, onShift: staff, seen, unknownFaces: faces?.unknown || 0, ...(burst ? { frames: images.length } : {}) });
+      // The day's run of bad PPE checks (roundupRules.ts): who is told, and whether the crew are reminded.
+      let ppe: ReturnType<typeof ppeStep> | null = null;
+      if (kind === 'scheduled' && cam.checks.length) {
+        const dayKey = `ppe-day:${cam.id}:${istDate(nowMs)}`;
+        ppe = ppeStep((await deps.kv.get<PpeDay>(dayKey)) || emptyPpeDay(), { at: now, peopleCount: look.peopleCount, missing: d.missing }, nowMs);
+        await deps.kv.set(dayKey, ppe.day);
+      }
       if (kind === 'scheduled' && cam.activity) {
-        await (burst ? recordBurst(cam, nowMs, burst, images) : recordActivity(cam, nowMs, (look as any).people, image))
+        await (burst ? recordBurst(cam, nowMs, burst, images, gapSec, startMs, numbered?.photos) : recordActivity(cam, nowMs, (look as any).people, image))
           .catch((e) => console.error('[cctv] activity not counted:', String(e?.message || e).slice(0, 120)));
       }
 
@@ -336,12 +524,28 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         const message = d.alert === 'intruder'
           ? `${look.peopleCount} ${look.peopleCount === 1 ? 'person' : 'people'} seen by ${cam.name} at ${at} (working hours ${cam.from}-${cam.to})${faces?.unknown ? `, ${faces.unknown} face${faces.unknown === 1 ? '' : 's'} not recognised` : ''}${seen.length ? `; recognised: ${seen.join(', ')}` : ''}. Open Cameras to see the photo. · কাজের সময়ের বাইরে কেউ ঢুকেছে`
           : `${missingText(d.missing)} at ${at} (${cam.name}).${seen.length ? ` Seen: ${seen.join(', ')}.` : ''}${staff.length ? ` On shift: ${staff.join(', ')}.` : ''} Open Cameras to see the photo. · টুপি / গ্লাভস / অ্যাপ্রন নেই`;
-        for (const r of await recipients(cam)) {
+        // After hours: everyone at once. PPE: the place's incharge (the day's first buzzes, the rest add to that row).
+        for (const r of d.alert === 'intruder' ? await recipients(cam) : await inchargesOf(cam)) {
           await deps.notifyUser?.(r.authUserId, d.alert === 'intruder' ? 'cctv_intruder' : 'cctv_ppe', title, message, id, now.slice(0, 10)).catch(() => undefined);
         }
         cleanup(cam.id).catch(() => undefined);
       }
-      return c.json({ ok: true, peopleCount: look.peopleCount, missing: d.missing, alert: alert?.kind || null, ...plan((await deps.kv.get<Camera>(`cctv-camera:${cam.id}`)) || cam) });
+      if (ppe?.tell === 'still') {
+        const runFrom = istClock(Date.parse(ppe.day.badAt[ppe.day.badAt.length - ppe.day.streak] || now));
+        const to = new Map<string, any>();
+        for (const e of [...await inchargesOf(cam), ...await opsOf(cam)]) to.set(e.authUserId, e);
+        for (const authUserId of to.keys()) {
+          await deps.notifyUser?.(authUserId, 'cctv_ppe_still', `Still no ${missingText(d.missing).replace(/^\d+ (people|person) without /, '').split(',')[0]} at ${place}`,
+            `${ppe.day.streak} camera checks in a row since ${runFrom}: ${missingText(d.missing)} at the last one.${ppe.day.reminders.length ? ` The crew were reminded at ${ppe.day.reminders.map((x) => istClock(Date.parse(x))).join(', ')}.` : ''} Check it in person.`,
+            alert?.id, now.slice(0, 10)).catch(() => undefined);
+        }
+      }
+      if (ppe?.remindCrew) await remindCrew(cam, d.missing, now).catch(() => 0);
+      // A burst's per-frame reading goes back to the camera PC, which keeps it with the frames as
+      // first labels for the kitchen model it trains (tools/kitchen-ai; owner, 30 Oct 2026).
+      // Numbered: each box's day number too (the same person all day, for the model to learn who is who).
+      const labels = burst ? { people: burst.people.map((p: any) => ({ where: p.where, top: p.top, bottom: p.bottom, activities: p.activities, phoneFrames: p.phoneFrames, ...(numbered ? { box: p.box, id: p.id ?? null } : {}) })) } : undefined;
+      return c.json({ ok: true, peopleCount: look.peopleCount, missing: d.missing, alert: alert?.kind || null, ...(labels ? { look: labels } : {}), ...plan((await deps.kv.get<Camera>(`cctv-camera:${cam.id}`)) || cam) });
     } catch (err) { return fail(c, err); }
   });
 
@@ -472,7 +676,56 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
     } catch (err) { return fail(c, err); }
   });
 
+  // POST /cctv/alerts/:id/remind - the incharge (or operations, or the owner) reminds the crew on
+  // shift at the alert's place, in Bengali. At most once in 10 minutes a place.
+  app.post(`${P}/cctv/alerts/:id/remind`, async (c: any) => {
+    const r = await actorOf(deps, c);
+    if (r.error) return r.error;
+    try {
+      const a = await deps.kv.get<Alert>(`cctv-alert:${c.req.param('id')}`);
+      if (!a) return c.json({ error: 'Alert not found' }, 404);
+      const cam = await deps.kv.get<Camera>(`cctv-camera:${a.cameraId}`);
+      if (!cam || !seesPlace(r.actor!, cam)) return c.json({ error: 'Not allowed' }, 403);
+      const nowMs = Date.now();
+      const dayKey = `ppe-day:${cam.id}:${istDate(nowMs)}`;
+      const day = (await deps.kv.get<PpeDay>(dayKey)) || emptyPpeDay();
+      const last = day.reminders[day.reminders.length - 1];
+      if (last && nowMs - Date.parse(last) < 10 * 60000) return c.json({ sent: 0, already: last });
+      const sent = await remindCrew(cam, a.missing || {}, new Date(nowMs).toISOString());
+      const at = new Date(nowMs).toISOString();
+      await deps.kv.set(dayKey, { ...day, lastReminderAt: at, reminders: [...day.reminders, at] });
+      return c.json({ sent });
+    } catch (err) { return fail(c, err); }
+  });
+
   // ---- Kitchen activity ----
+
+  // What the camera can't see of each named person (activityRules PersonDay), in minutes of the
+  // day: their check-in and check-out, and what their phone said - at work or stepped out
+  // (attendance /shift/presence, owner 31 Oct 2026: "when a person is not visible for a long time
+  // can we also pull up the location data just to be sure").
+  async function outsideCamera(names: Record<string, Record<string, string>>): Promise<Record<string, Record<string, PersonDay>>> {
+    const staff = await deps.getAllByPrefix('unified-employee:');
+    const idOf = new Map<string, string>(staff.filter((e: any) => e?.name && e?.employeeId).map((e: any) => [String(e.name), String(e.employeeId)]));
+    const out: Record<string, Record<string, PersonDay>> = {};
+    const jobs: Promise<void>[] = [];
+    for (const [date, bySlot] of Object.entries(names)) {
+      const midnight = Date.parse(`${date}T00:00:00+05:30`);
+      const minute = (t: string | number) => ((typeof t === 'number' ? t : Date.parse(t)) - midnight) / 60000;
+      for (const name of new Set(Object.values(bySlot))) {
+        const id = idOf.get(name);
+        if (!id) continue;
+        jobs.push(Promise.all([deps.kv.get<any>(`punch:${id}:${date}`), deps.kv.get<PresenceDay>(`presence:${id}:${date}`)]).then(([punch, presence]) => {
+          const day: PersonDay = {};
+          if (punch?.in?.at || punch?.out?.at) day.shift = { from: punch?.in?.at ? minute(punch.in.at) : undefined, to: punch?.out?.at ? minute(punch.out.at) : undefined };
+          if (presence?.spans?.length) day.phone = presence.spans.map((s) => ({ from: minute(s.from), to: minute(s.to), state: s.state, farthestM: s.farthestM }));
+          (out[date] ||= {})[name] = day;
+        }));
+      }
+    }
+    await Promise.all(jobs);
+    return out;
+  }
 
   // GET /cctv/activity?from=&to= - the owner only: per person and for the kitchen, over the days.
   app.get(`${P}/cctv/activity`, async (c: any) => {
@@ -495,10 +748,11 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
           if (n) names[d] = n;
         }
         const pieces = await piecesFolded(cam.placeId, new Set(days.map((d) => d.date)));
+        const outside = await outsideCamera(names);
         out.push({
-          camera: { id: cam.id, name: cam.name, everyMin: cam.everyMin, burst: BURST, place: await placeName(cam) },
-          ...summarise(days, names, pieces),
-          perDay: await Promise.all(days.map(async (d) => ({ date: d.date, ...summarise([d], names, await piecesFolded(cam.placeId, new Set([d.date]))).kitchen }))),
+          camera: { id: cam.id, name: cam.name, everyMin: cam.everyMin, burst: burstFor(cam.everyMin), place: await placeName(cam) },
+          ...summarise(days, names, pieces, outside),
+          perDay: await Promise.all(days.map(async (d) => ({ date: d.date, ...summarise([d], names, await piecesFolded(cam.placeId, new Set([d.date])), outside).kitchen }))),
         });
       }
       return c.json({ from, to, cameras: out, labels: ACTIVITY_LABEL });
@@ -523,24 +777,34 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
         if (!day) continue;
         const names = (await deps.kv.get<Record<string, string>>(`cctv-names:${cam.id}:${date}`)) || {};
         const photos = (await deps.kv.get<Record<string, string>>(`cctv-activity-photos:${cam.id}:${date}`)) || {};
-        const paths = [...new Set(Object.values(photos))];
+        const confirms = (await deps.kv.get<Record<string, Confirm>>(`cctv-confirm:${cam.id}:${date}`)) || {};
+        const paths = [...new Set([...Object.values(photos), ...Object.values(confirms).map((x) => x.photo).filter((p): p is string => !!p)])];
         const urls = new Map<string, string>();
         if (paths.length) {
           const { data } = await storage().from(BUCKET).createSignedUrls(paths, 3600);
           for (const x of data || []) if (x?.path && x.signedUrl) urls.set(x.path, x.signedUrl);
         }
+        const listed = whoSlots(day, names);
+        const { tags, open, ask, short, complete } = tagState(listed, confirms);
         out.push({
-          cameraId: cam.id, cameraName: cam.name, date,
-          slots: Object.entries(day.slots)
-            .filter(([, s]) => s.samples >= 2) // seen once: likely someone passing through
-            .map(([slot, s]) => ({ slot, name: names[slot] || null, first: s.first, last: s.last, photoUrl: photos[slot] ? urls.get(photos[slot]) || null : null })),
+          cameraId: cam.id, cameraName: cam.name, date, tags, open, ask, short, complete,
+          slots: listed.map(({ slot, name }) => {
+            const s = day.slots[slot];
+            const cf = confirms[slot];
+            return {
+              slot, name, first: s.first, last: s.last, photoUrl: photos[slot] ? urls.get(photos[slot]) || null : null,
+              ...(cf?.photo ? { confirmUrl: urls.get(cf.photo) || null, confirmAt: cf.at, confirmed: !!cf.name && cf.name === name } : {}),
+            };
+          }),
         });
       }
       return c.json({ date, cameras: out, staff });
     } catch (err) { return fail(c, err); }
   });
 
-  // POST /cctv/whois {cameraId, date, slot, name} - name a colour for the day (name null clears it).
+  // POST /cctv/whois {cameraId, date, slot, name, confirm?} - name a person for the day (name null
+  // clears it). confirm 'yes': the later photo is still them (their second tag); 'no': it is `name` -
+  // the number takes that name and keeps only the looks from that photo on, asked again later.
   app.post(`${P}/cctv/whois`, async (c: any) => {
     const r = await actorOf(deps, c);
     if (r.error) return r.error;
@@ -552,8 +816,43 @@ export function registerCameraRoutes(app: any, deps: KpiDeps) {
       const key = `cctv-names:${cam.id}:${body.date}`;
       const names = (await deps.kv.get<Record<string, string>>(key)) || {};
       const name = clip(body.name, 60);
-      if (name) names[clip(body.slot, 20)] = name; else delete names[clip(body.slot, 20)];
+      const slot = clip(body.slot, 20);
+      const was = names[slot];
+      const cKey = `cctv-confirm:${cam.id}:${body.date}`;
+      const confirms = (await deps.kv.get<Record<string, Confirm>>(cKey)) || {};
+      const cf = confirms[slot];
+      if (body.confirm === 'yes') {
+        if (!was || !cf?.photo) return c.json({ error: 'Nothing to confirm' }, 400);
+        confirms[slot] = { ...cf, name: was, by: r.actor!.name, on: new Date().toISOString() };
+        await deps.kv.set(cKey, confirms);
+        return c.json({ names });
+      }
+      if (name) names[slot] = name; else delete names[slot];
       await deps.kv.set(key, names);
+      if (body.confirm === 'no' && cf?.photo && cf.at) {
+        confirms[slot] = { after: cf.at };
+        await deps.kv.set(cKey, confirms);
+        // Bunny had two people under this number: keep only the looks from the later photo on.
+        const pKey = `cctv-people:${cam.id}:${body.date}`;
+        const day = await deps.kv.get<DayPeople>(pKey);
+        const person = day?.people.find((p) => slotOf(p.id) === slot);
+        if (day && person) {
+          const gone = person.refs.filter((x) => x.at < cf.at!).map((x) => x.path);
+          person.refs = person.refs.filter((x) => x.at >= cf.at!);
+          await deps.kv.set(pKey, day);
+          if (gone.length) await storage().from(BUCKET).remove(gone).catch(() => undefined);
+        }
+      }
+      // Not a person: keep the box's spot, so the object is left out from the next burst on; taking it
+      // back removes the spot saved for it that day.
+      if (/^p\d+$/.test(slot) && (name === NOT_A_PERSON || was === NOT_A_PERSON)) {
+        let spots = (await deps.kv.get<IgnoreSpot[]>(`cctv-ignore:${cam.id}`)) || [];
+        if (name === NOT_A_PERSON) {
+          const spot = ((await deps.kv.get<DayPeople>(`cctv-people:${cam.id}:${body.date}`))?.people || []).find((p) => slotOf(p.id) === slot)?.spot;
+          if (spot) spots = addSpot(spots, { box: spot, from: body.date, slot, by: r.actor!.name });
+        } else spots = spots.filter((sp) => !(sp.from === body.date && sp.slot === slot));
+        await deps.kv.set(`cctv-ignore:${cam.id}`, spots);
+      }
       return c.json({ names });
     } catch (err) { return fail(c, err); }
   });

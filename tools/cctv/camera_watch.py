@@ -2,11 +2,15 @@
 
 Runs on a PC on the same Wi-Fi (2.4 GHz) as a Tapo camera and talks to the Bunny server (cctv.ts):
   - in working hours: one still every N minutes (the server's setting), checked for cap, gloves
-    and apron; a kitchen-activity camera instead takes a burst - 20 frames 15 seconds apart, sent
-    together - then waits N minutes;
+    and apron; a kitchen-activity camera instead takes bursts of 20 frames sent together, spread
+    over the N minutes (35: one every 105 seconds), one burst after the other (owner, 31 Oct 2026:
+    "Spread the 20 pictures over the 35 minutes"; until then 15 seconds apart, then a wait);
   - outside them: watches the camera's small stream for movement and sends a still when something
     moves; the server's AI says whether anyone is there and raises the "after hours" alert.
 The server keeps the schedule, the working hours and the AI budget; this only grabs pictures.
+With the kitchen model set up (tools/kitchen-ai, owner 30 Oct 2026), a burst's people are found here
+and a numbered box drawn round each before it goes, with a small crop and a photo of each: the server
+then keeps everyone under one number all day. Without it, bursts go as before.
 
 Settings: %LOCALAPPDATA%\\BunnyCamera\\camera_watch.ini (never in the project folder - it holds
 the camera's password and key): a [server] section, then one [camera] section, or several named
@@ -32,6 +36,7 @@ except Exception:  # noqa: BLE001
     face_book = None
 
 HOME = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "BunnyCamera")
+KITCHEN_AI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kitchen-ai")
 CONFIG = os.path.join(HOME, "camera_watch.ini")
 LOG = os.path.join(HOME, "camera_watch.log")
 
@@ -43,6 +48,8 @@ CONFIG_EVERY_S = 900      # ask the server what to do at least this often
 
 _log_lock = threading.Lock()
 _face_lock = threading.Lock()  # one face model, shared by the camera threads
+_numbers_lock = threading.Lock()  # one person finder too
+_numbers = None  # kitchen-ai's BurstNumbers, loaded on first use; False when it can't be
 
 
 def log(msg, cam=None):
@@ -74,6 +81,9 @@ def load_settings():
     sections = [sec for sec in cp.sections() if sec == "camera" or sec.startswith("camera:")]
     if not sections:
         sys.exit(f"No [camera] section in {CONFIG}")
+    # Bursts are kept next to the recordings for the kitchen model (tools/kitchen-ai).
+    rec = cp.get("record", "folder", fallback="").strip()
+    bursts = os.path.join(os.path.dirname(rec.rstrip("\\/")), "bursts") if rec else None
     cams = []
     for sec in sections:
         cam = {
@@ -83,6 +93,7 @@ def load_settings():
             "still_url": cp.get(sec, "still_url"),
             "watch_url": cp.get(sec, "watch_url"),
             "many": len(sections) > 1,
+            "bursts": bursts,
         }
         if any(x in cam["still_url"] + cam["watch_url"] for x in ("PASSWORD", "CAMERA-IP")):
             sys.exit(f"Fill in the camera account and address for {cam['id']} in {CONFIG}")
@@ -114,13 +125,13 @@ def call(s, path, body=None, timeout=90):
         return None
 
 
-def grab_still(s):
-    """One fresh full-size frame: (base64 JPEG, the frame) or (None, None)."""
+def fresh_frame(s):
+    """One fresh full-size frame from the main stream, or None (the stream is closed again after)."""
     cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
             log("camera not reachable (check the Wi-Fi band, the address and the camera account)", s)
-            return None, None
+            return None
         frame = None
         for _ in range(12):  # skip the first frames so the picture is current and complete
             ok, f = cap.read()
@@ -128,13 +139,20 @@ def grab_still(s):
                 frame = f
         if frame is None:
             log("camera sent no picture", s)
-            return None, None
-        h, w = frame.shape[:2]
-        small = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
-        ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        return (base64.b64encode(jpg.tobytes()).decode(), frame) if ok else (None, None)
+        return frame
     finally:
         cap.release()
+
+
+def grab_still(s):
+    """One fresh full-size frame: (base64 JPEG, the frame) or (None, None)."""
+    frame = fresh_frame(s)
+    if frame is None:
+        return None, None
+    h, w = frame.shape[:2]
+    small = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
+    ok, jpg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return (base64.b64encode(jpg.tobytes()).decode(), frame) if ok else (None, None)
 
 
 def faces_in(s, frame):
@@ -181,14 +199,63 @@ def jpeg(frame, width=1280, quality=65):
     return base64.b64encode(jpg.tobytes()).decode() if ok else None
 
 
-def send_burst(s, frames, gap):
-    """A burst: `frames` pictures `gap` seconds apart from the full stream, sent together."""
-    images, names, unknown = [], set(), 0
+def numberer(s):
+    """The person finder from tools/kitchen-ai, or None when its models aren't set up."""
+    global _numbers
+    with _numbers_lock:
+        if _numbers is None:
+            try:
+                if KITCHEN_AI not in sys.path:
+                    sys.path.insert(0, KITCHEN_AI)
+                from kai import config as kai_config, models as kai_models
+                from kai.people import BurstNumbers
+                ks = kai_config.load()
+                _numbers = BurstNumbers(kai_models.Finder(kai_models.path_of(ks.models, kai_models.FINDER)),
+                                        kai_models.Reader(kai_models.path_of(ks.models, kai_models.READER)))
+                log("people in bursts will be numbered (kitchen model ready)", s)
+            except Exception as e:  # noqa: BLE001
+                _numbers = False
+                log(f"people not numbered - kitchen model not ready ({type(e).__name__}: {e})", s)
+        return _numbers or None
+
+
+def number_people(s, frames):
+    """The burst's people found and boxed: (the frames with numbered boxes as JPEGs, the body's
+    "people": per-frame boxes, a crop and a Who-is-who photo per number), or (None, None)."""
+    bn = numberer(s)
+    if bn is None:
+        return None, None
+    try:
+        from kai.people import crop_of, draw_numbers, who_photo
+        with _numbers_lock:
+            fitted, per_frame, best = bn.number(frames)
+        images = [jpeg(draw_numbers(f, boxes)) for f, boxes in zip(fitted, per_frame)]
+        if not all(images):
+            return None, None
+        crops, photos = {}, {}
+        for n, (fi, box) in best.items():
+            h, w = fitted[fi].shape[:2]
+            crop = crop_of(fitted[fi], box)
+            if crop.size:
+                crops[n] = jpeg(crop, width=256, quality=80)
+            photos[n] = jpeg(who_photo(fitted[fi], {"n": n, "box": [box[0] / w, box[1] / h, box[2] / w, box[3] / h]}), width=640, quality=75)
+        return images, {"frames": per_frame, "crops": crops, "photos": photos}
+    except Exception as e:  # noqa: BLE001
+        log(f"people not numbered this burst ({type(e).__name__}: {e})", s)
+        return None, None
+
+
+SPREAD_GAP_S = 60  # frames at least this far apart are each taken on their own connection
+
+
+def bunched_frames(s, frames, gap):
+    """Frames seconds apart, from one connection kept reading so each picture is current."""
+    out = []
     cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
             log("camera not reachable (check the Wi-Fi band, the address and the camera account)", s)
-            return None
+            return out
         start = time.time() + 2  # let the stream settle
         for i in range(frames):
             due = start + i * gap
@@ -203,21 +270,62 @@ def send_burst(s, frames, gap):
                 cap.release()
                 cap = cv2.VideoCapture(s["still_url"], cv2.CAP_FFMPEG)
                 ok, frame = cap.read()
-            if not ok:
-                continue
-            image = jpeg(frame)
-            if image:
-                images.append(image)
-            seen = faces_in(s, frame)
-            if seen:
-                names.update(seen["names"])
-                unknown = max(unknown, seen["unknown"])
+            if ok:
+                out.append((frame, datetime.now()))
     finally:
         cap.release()
+    return out
+
+
+def spread_frames(s, frames, gap):
+    """Frames minutes apart, each on its own short connection (the camera allows only a few at once,
+    and the recorder holds one). They keep one steady beat from burst to burst: the first frame of a
+    burst comes one gap after the last frame of the one before, while it was being sent."""
+    out = []
+    now = time.time()
+    start = s.get("next_frame_at") or 0
+    if not now <= start <= now + gap:
+        start = now + 2  # first burst, or after a pause: start now
+    log(f"burst: {frames} pictures, one every {gap} seconds ({round(frames * gap / 60)} minutes)", s)
+    for i in range(frames):
+        due = start + i * gap
+        if due > time.time():
+            time.sleep(due - time.time())
+        frame = fresh_frame(s)
+        if frame is not None:
+            out.append((frame, datetime.now()))
+    s["next_frame_at"] = start + frames * gap
+    return out
+
+
+def send_burst(s, frames, gap, ends_in=None):
+    """A burst: `frames` pictures `gap` seconds apart from the full stream, sent together. A spread
+    burst stops at closing time (`ends_in` seconds of working hours left)."""
+    spread = gap >= SPREAD_GAP_S
+    if spread and ends_in:
+        frames = max(2, min(frames, 1 + int(ends_in) // gap))
+    taken = spread_frames(s, frames, gap) if spread else bunched_frames(s, frames, gap)
+    images, times, names, unknown = [], [], set(), 0
+    kept = []  # the frames at 1280 wide, for numbering the people
+    for frame, at in taken:
+        image = jpeg(frame)
+        if image:
+            images.append(image)
+            times.append(at)
+            h, w = frame.shape[:2]
+            kept.append(cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame)
+        seen = faces_in(s, frame)
+        if seen:
+            names.update(seen["names"])
+            unknown = max(unknown, seen["unknown"])
+    del taken
     if len(images) < 2:
         log(f"burst failed: only {len(images)} of {frames} frames", s)
         return None
-    body = {"kind": "scheduled", "images": images}
+    boxed, people = number_people(s, kept)
+    body = {"kind": "scheduled", "images": boxed or images, "gapSec": gap, "firstAt": times[0].astimezone().isoformat(timespec="seconds")}
+    if people:
+        body["people"] = people
     if face_book is not None:
         body["faces"] = {"names": sorted(names), "unknown": unknown}
         log_faces(s, body["faces"])
@@ -226,8 +334,32 @@ def send_burst(s, frames, gap):
         if res.get("skipped"):
             log(f"burst skipped: {res['skipped']}", s)
         else:
-            log(f"burst of {len(images)} checked: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
+            log(f"burst of {len(images)} checked{' (numbered)' if people else ''}: {res.get('peopleCount')} in view, missing {res.get('missing') or 'nothing'}, alert {res.get('alert') or 'none'}", s)
+            keep_burst(s, images, times, gap, res, people)
     return res
+
+
+def keep_burst(s, images, times, gap, res, people=None):
+    """A burst with people in it, kept on the PC with the server's reading of each frame: the first
+    labels for the kitchen model (tools/kitchen-ai). <bursts>\\<camera>\\<date>\\HH-MM-SS\\01.jpg...
+    (without boxes) plus look.json (frame times, and per person: top colour, where, an activity per
+    frame; numbered: the boxes per frame, and each box's day number - the same person all day)."""
+    if not s.get("bursts") or not res.get("peopleCount"):
+        return
+    try:
+        folder = os.path.join(s["bursts"], s["id"], times[0].strftime("%Y-%m-%d"), times[0].strftime("%H-%M-%S"))
+        os.makedirs(folder, exist_ok=True)
+        for i, image in enumerate(images, 1):
+            with open(os.path.join(folder, f"{i:02d}.jpg"), "wb") as f:
+                f.write(base64.b64decode(image))
+        look = {"camera": s["id"], "times": [t.isoformat(timespec="seconds") for t in times], "gapSec": gap,
+                "peopleCount": res.get("peopleCount"), "people": (res.get("look") or {}).get("people")}
+        if people:
+            look["boxes"] = people["frames"]
+        with open(os.path.join(folder, "look.json"), "w", encoding="utf-8") as f:
+            json.dump(look, f, indent=1)
+    except OSError as e:
+        log(f"burst not kept on the PC: {e}", s)
 
 
 def watch_for_movement(s, seconds):
@@ -290,7 +422,7 @@ def run_camera(s):
                 plan = None  # ask again: hours or settings may have changed
                 continue
             burst = plan.get("burst")
-            res = send_burst(s, int(burst["frames"]), int(burst["gapSec"])) if burst else send_still(s, "scheduled")
+            res = send_burst(s, int(burst["frames"]), int(burst["gapSec"]), plan.get("endsInSec")) if burst else send_still(s, "scheduled")
             plan, plan_at = (res, time.time()) if res and "working" in res else (None, 0.0)
             if not res:
                 time.sleep(120)
